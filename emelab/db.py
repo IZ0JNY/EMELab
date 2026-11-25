@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS decodes (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TE
 CREATE INDEX IF NOT EXISTS d_utc ON decodes(utc);
 CREATE TABLE IF NOT EXISTS setup_history (id INTEGER PRIMARY KEY AUTOINCREMENT, band TEXT NOT NULL, from_utc TEXT NOT NULL,
     dish_m REAL, dish_kind TEXT, eta REAL, power_w REAL, nf_db REAL, line_loss_db REAL, pol TEXT, notes TEXT);
+CREATE TABLE IF NOT EXISTS station_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, source TEXT NOT NULL,
+    label TEXT, n INTEGER);
 """
 QSO_COLS = ["id", "utc", "call", "band", "freq_mhz", "mode", "submode", "rst_sent", "rst_rcvd", "locator", "my_locator",
             "name", "qth", "tx_pwr", "setup_id", "comment", "qsl_sent", "qsl_rcvd", "t_c", "rh", "p_hpa", "wx_source",
@@ -188,6 +190,90 @@ class DB:
             d["data"] = json.loads(d["data"] or "{}")
             out.append(d)
         return out
+
+    # where the station data came from, and how to take it away again ------------------
+    # data keys written by each source: "call3" (CALL3.TXT), "heard" (ALL.TXT and live WSJT-X decodes),
+    # "directory" {band: …} (EME Directory PA0PLY), "qrz" (QRZ.com, which also fills name/address/QTH/country).
+    QRZ_FIELDS = ("address", "qth", "country", "email")
+
+    @staticmethod
+    def _station_sources(data: dict) -> list[str]:
+        out = []
+        if data.get("call3"):
+            out.append("call3")
+        if data.get("heard"):
+            out.append("heard")
+        out += [f"directory:{b}" for b in sorted(data.get("directory") or {})]
+        if data.get("qrz"):
+            out.append("qrz")
+        return out
+
+    def log_station_import(self, source: str, label: str, n: int):
+        self.con.execute("INSERT INTO station_imports (utc, source, label, n) VALUES (?,?,?,?)",
+                         (iso_utc(datetime.now(timezone.utc)), source, label, int(n)))
+        self.con.commit()
+
+    def station_imports(self) -> list[dict]:
+        return [dict(r) for r in self.con.execute("SELECT * FROM station_imports ORDER BY utc DESC, id DESC")]
+
+    def station_source_counts(self) -> dict[str, int]:
+        """Source key ("call3", "heard", "directory:10G", "qrz") → number of stations holding data from it."""
+        out: dict[str, int] = {}
+        for s in self.stations():
+            for k in self._station_sources(s["data"]):
+                out[k] = out.get(k, 0) + 1
+        return dict(sorted(out.items()))
+
+    def remove_station_source(self, source: str) -> tuple[int, int]:
+        """Take away everything a source brought; a station left with no source at all is deleted.
+        Returns (stations changed, stations deleted)."""
+        band = source.split(":", 1)[1] if source.startswith("directory:") else None
+        changed = deleted = 0
+        for s in self.stations():
+            data = s["data"]
+            if source not in self._station_sources(data):
+                continue
+            if band:
+                dirb = dict(data.get("directory") or {})
+                dirb.pop(band, None)
+                if dirb:
+                    data["directory"] = dirb
+                else:
+                    data.pop("directory", None)
+            else:
+                data.pop(source, None)
+            if not self._station_sources(data):
+                self.con.execute("DELETE FROM stations WHERE call = ?", (s["call"],))
+                deleted += 1
+                continue
+            row = {k: s.get(k) for k in ("locator", "name", "qth", "address", "country", "email", "eme")}
+            if source == "qrz":
+                for k in self.QRZ_FIELDS:
+                    row[k] = None
+                row["name"] = next((v.get("name") for v in (data.get("directory") or {}).values() if v.get("name")), None)
+            elif band and not data.get("qrz") and not data.get("directory"):
+                row["name"] = None                                   # the name came only from the directory
+            self.con.execute("UPDATE stations SET locator=?, name=?, qth=?, address=?, country=?, email=?, eme=?, data=?, "
+                             "updated_utc=? WHERE call=?",
+                             [row["locator"], row["name"], row["qth"], row["address"], row["country"], row["email"],
+                              row["eme"], json.dumps(data, default=str), iso_utc(datetime.now(timezone.utc)), s["call"]])
+            changed += 1
+        self.con.execute("DELETE FROM station_imports WHERE source = ?", (source,))
+        self.con.commit()
+        return changed, deleted
+
+    def delete_stations(self, calls: list[str]) -> int:
+        n = 0
+        for c in calls:
+            n += self.con.execute("DELETE FROM stations WHERE call = ?", (c.upper(),)).rowcount
+        self.con.commit()
+        return n
+
+    def clear_stations(self) -> int:
+        n = self.con.execute("DELETE FROM stations").rowcount
+        self.con.execute("DELETE FROM station_imports")
+        self.con.commit()
+        return n
 
     # QSOs -----------------------------------------------------------------------
     def add_qso(self, **q) -> int | None:

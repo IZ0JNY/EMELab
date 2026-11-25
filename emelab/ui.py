@@ -710,6 +710,7 @@ def _stations_tab(D):
         for r in rows:
             D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
         D.commit()
+        D.log_station_import("call3", up3.name, len(rows))
         st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
         dec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
@@ -722,6 +723,7 @@ def _stations_tab(D):
                      "modes": sorted(set(old.get("modes", [])) | s["modes"])}
             D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
         D.commit()
+        D.log_station_import("heard", upa.name, len(summ))
         st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
     if upp and st.button("📥 Importa i PDF", key="st_pa0ply_go"):
         _pa0ply_import(D, [(f.name, f.getvalue()) for f in upp])
@@ -733,15 +735,80 @@ def _stations_tab(D):
             d = r.get("data", {})
             h = d.get("heard", {})
             dirb = d.get("directory", {})
-            tab.append({"Nominativo": r["call"], "Locator": r.get("locator"), "Nome": r.get("name"), "QTH": r.get("qth"),
-                        "Bande (directory)": ", ".join(sorted(dirb)), "Stazione": "; ".join(f"{b}: {v.get('antenna', '')} {v.get('power_w') or ''} W"
-                                                                                  for b, v in sorted(dirb.items())),
-                        "Sentito": h.get("n"), "Ultima volta": (h.get("last") or "")[:16], "SNR migliore": h.get("snr_best"),
-                        "Bande sentite": ", ".join(h.get("bands", []))})
+            tab.append({"Nominativo": r["call"], "Locator": r.get("locator") or "", "Nome": r.get("name") or "",
+                        "QTH": r.get("qth") or "", "Bande (directory)": ", ".join(sorted(dirb)),
+                        "Stazione": "; ".join(f"{b}: {v.get('antenna', '')} {v.get('power_w') or ''} W"
+                                              for b, v in sorted(dirb.items())),
+                        "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
+                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": ", ".join(h.get("bands", []))})
         df = pd.DataFrame(tab)
         df.columns = [i18n.tr(c) for c in df.columns]
         st.dataframe(df, hide_index=True, width="stretch")
         _qrz_box(D, [r["call"] for r in rows])
+    if rows or D.station_imports():
+        _stations_manage(D, [r["call"] for r in rows])
+
+
+def _blank(v):
+    """Empty cell instead of "None" in the tables."""
+    return "" if v is None else str(v)
+
+
+def _source_label(key: str) -> str:
+    if key.startswith("directory:"):
+        return i18n.tr("EME Directory (PA0PLY)") + " · " + key.split(":", 1)[1]
+    return {"call3": i18n.tr("CALL3.TXT di WSJT-X"), "heard": i18n.tr("Ascolti (ALL.TXT e WSJT-X in diretta)"),
+            "qrz": "QRZ.com"}.get(key, key)
+
+
+def _stations_manage(D, calls):
+    with st.expander("🗑️ Cancella i dati importati"):
+        imp = D.station_imports()
+        if imp:
+            import pandas as pd
+            st.markdown("**" + i18n.tr("File importati") + "**")
+            df = pd.DataFrame([{"Data (UTC)": r["utc"][:16].replace("T", " "), "Fonte": _source_label(r["source"]),
+                                "File": r.get("label") or "", "Stazioni": _blank(r.get("n"))} for r in imp])
+            df.columns = [i18n.tr(c) for c in df.columns]
+            st.dataframe(df, hide_index=True, width="stretch")
+        counts = D.station_source_counts()
+        if counts:
+            st.markdown("**" + i18n.tr("Cancella per fonte") + "**")
+            st.caption("Toglie dal database tutto quello che è arrivato da quella fonte. Le stazioni che non hanno "
+                       "dati da altre fonti vengono eliminate.")
+            for key, n in counts.items():
+                c = st.columns([3, 1])
+                c[0].markdown(f"{_source_label(key)} — {n} " + i18n.tr("stazioni"))
+                if c[1].button("🗑️ Cancella", key=f"st_del_src_{key}"):
+                    st.session_state["st_del_pending"] = key
+            key = st.session_state.get("st_del_pending")
+            if key in counts:
+                st.warning(i18n.tr("Cancellare i dati di") + f" {_source_label(key)} ({counts[key]} " +
+                           i18n.tr("stazioni") + ")?")
+                c = st.columns(2)
+                if c[0].button("✅ Sì, cancella", key="st_del_src_yes"):
+                    ch, de = D.remove_station_source(key)
+                    st.session_state.pop("st_del_pending", None)
+                    st.success(i18n.tr("Stazioni aggiornate") + f": {ch} · " + i18n.tr("stazioni eliminate") + f": {de}")
+                    st.rerun()
+                if c[1].button("Annulla", key="st_del_src_no"):
+                    st.session_state.pop("st_del_pending", None)
+                    st.rerun()
+        if calls:
+            st.markdown("**" + i18n.tr("Cancella singole stazioni") + "**")
+            pick = st.multiselect("Stazioni da cancellare", calls, key="st_del_calls")
+            if pick and st.button("🗑️ Cancella le stazioni scelte", key="st_del_calls_go"):
+                n = D.delete_stations(pick)
+                st.session_state.pop("st_del_calls", None)
+                st.success(i18n.tr("stazioni eliminate") + f": {n}")
+                st.rerun()
+            st.markdown("**" + i18n.tr("Svuota tutto il database delle stazioni") + "**")
+            sure = st.checkbox("Confermo: cancella tutte le stazioni e l'elenco dei file importati", key="st_clear_ok")
+            if st.button("🗑️ Svuota il database delle stazioni", key="st_clear_go", disabled=not sure):
+                n = D.clear_stations()
+                st.session_state.pop("st_clear_ok", None)
+                st.success(i18n.tr("stazioni eliminate") + f": {n}")
+                st.rerun()
 
 
 def _pa0ply_update(D):
@@ -759,6 +826,7 @@ def _pa0ply_import(D, files):
     from emelab import stations as stn
     n = 0
     for name, data in files:
+        nb = 0
         nl = name.lower()
         band = "10G" if nl.startswith(("10368", "10g")) else "24G" if nl.startswith(("24048", "24g")) else \
             "47G" if nl.startswith("47") else "76G" if nl.startswith("76") else None
@@ -766,9 +834,12 @@ def _pa0ply_import(D, files):
             continue
         for r in stn.parse_pa0ply(stn.pdf_text(data), band):
             old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
-            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"]}
+            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
             D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
             n += 1
+            nb += 1
+        D.commit()
+        D.log_station_import(f"directory:{band}", name, nb)
     D.commit()
     st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
 
@@ -795,6 +866,7 @@ def _qrz_box(D, calls):
                                      country=r.get("country"), locator=r.get("locator"),
                                      data={"qrz": {k: r.get(k) for k in ("qsl_via", "lotw", "eqsl", "lat", "lon")}})
                 D.commit()
+                D.log_station_import("qrz", ", ".join(pick)[:200], len(pick))
                 st.success(i18n.tr("Aggiornati da QRZ.com") + f": {len(pick)}")
             except Exception as e:
                 st.error(f"QRZ.com: {e}")
