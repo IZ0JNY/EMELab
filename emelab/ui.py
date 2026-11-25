@@ -1067,7 +1067,8 @@ def _design_tab(D):
                "link al datasheet. EMELab non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
     rows = parts.all_parts(D)
     if rows:
-        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
+        lib = pd.DataFrame(rows).drop(columns=["id", "verified"], errors="ignore")
+        st.dataframe(lib.astype(object).where(lib.notna(), ""), hide_index=True, width="stretch")
     with st.expander("➕ Aggiungi un componente dal datasheet"):
         c = st.columns(4)
         p_part = c[0].text_input("Sigla", key="pt_part")
@@ -1337,12 +1338,9 @@ def _power_devices() -> dict:
 
 
 def _power_rows(D, band, kind):
-    from emelab import catalog, parts
-    rows = [dict(d) for d in catalog.for_band(band, kind)]
-    for p in parts.all_parts(D, band, "pa"):
-        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "psat_dbm": p.get("psat_dbm"),
-                     "gain_db": p.get("gain_db"), "notes": p.get("notes"), "source": p.get("datasheet"), "mine": True})
-    return rows
+    """catalogue devices with the user's corrections, then the user's own devices (same list as the catalogue box)"""
+    from emelab import parts
+    return parts.devices(D, band, kind)
 
 
 def _power_apply(dev, kind):
@@ -1403,7 +1401,7 @@ def _power_tab(D):
             ss[f"pw_dev_{kind}"] = 0
         i = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"pw_dev_{kind}",
                            format_func=lambda i: f"{rows[i]['part']} — {i18n.tr(rows[i]['maker'])}" +
-                                                 (" ⚠️" if rows[i].get("check") else ""),
+                                                 (" ⚠️" if rows[i].get("check") else " ✅" if rows[i].get("verified") else ""),
                            on_change=_power_save_cb, args=(D, band))
         dev = rows[i]
         if ("sp_psat" if kind == "PA" else "tw_ps") not in ss:     # numbers not on screen yet: from the device
@@ -1412,13 +1410,15 @@ def _power_tab(D):
                 f"{i18n.tr('guadagno')} {dev['gain_db']:.0f} dB" if dev.get("gain_db") else None,
                 i18n.tr(dev.get("notes")) if dev.get("notes") else None,
                 i18n.tr("fonte") + ": " + i18n.tr(dev.get("source")) if dev.get("source") else None]
-        st.info(" · ".join(x for x in info if x) + ("  \n⚠️ " + i18n.tr("valori tipici da confermare sul datasheet") if dev.get("check") else ""))
+        st.info(" · ".join(x for x in info if x) + ("  \n⚠️ " + i18n.tr("valori tipici da confermare sul datasheet") if dev.get("check") else
+                                                    "  \n✅ " + i18n.tr("valori verificati da te") if dev.get("verified") else "") +
+                "  \n" + i18n.tr("Per correggerli: «✏️ Correggi a mano» nel Catalogo dispositivi in fondo alla pagina."))
         if not cur or cur.get("part") != dev["part"] or cur.get("kind") != kind:
             if st.button("💾 Usa questo dispositivo su questa banda", key="pw_save", type="primary"):
                 _power_save_cb(D, band)
                 st.rerun()
     else:
-        c[2].info("Nessun dispositivo in catalogo per questa banda: aggiungilo dal datasheet nel catalogo qui sotto.")
+        c[2].info("Nessun dispositivo in catalogo per questa banda: aggiungilo a mano o dal datasheet nel catalogo qui sotto.")
     done = {k: v for k, v in _power_devices().items() if v.get("kind")}
     if done:
         st.markdown(i18n.tr("La tua stazione") + ": " + " · ".join(
@@ -1712,72 +1712,139 @@ def _signal_tab(D):
 
 
 # ------------------------------------------------------------------ device catalogue and heat sink
+def _num_cell(v) -> str:
+    """number for a table cell: empty instead of None / NaN"""
+    return "" if v is None or v != v else f"{v:g}"
+
+
+CAT_BANDS = [10.368, 24.048, 47.088, 76.032, 122.25, 134.928]
+_EDIT_FIELDS = [("f_lo", "Da GHz"), ("f_hi", "A GHz"), ("gain_db", "Guadagno (dB)"), ("nf_db", "NF (dB)"),
+                ("p1db_dbm", "P1dB (dBm)"), ("psat_dbm", "Psat (dBm)"), ("vdc", "Tensione (V)"), ("idc_a", "Corrente (A)")]
+_PDF_LABEL = {"f_range": "Da/A GHz", "gain_db": "Guadagno", "nf_db": "NF", "p1db_dbm": "P1dB", "psat_dbm": "Psat",
+              "vdc": "Tensione", "idc_a": "Corrente", "rth_jc": "R giunzione–case", "tj_max": "Tj max", "pae_pct": "PAE"}
+
+
 def _catalog_box(D, kinds, key):
-    """Devices for the band from EMELab's catalogue and the user's library, datasheet search and reading."""
+    """Devices for the band from EMELab's catalogue (with the user's corrections) and the user's library; every
+    device can be corrected by hand or from its datasheet PDF, and the correction can be undone."""
     import pandas as pd
     from emelab import catalog, parts
+    ss = _st.session_state
     st.subheader("📚 Catalogo dispositivi")
+    for kind_msg, msg in ss.pop(f"{key}_flash", None) or []:
+        getattr(st, kind_msg)(msg)
     c = st.columns(3)
-    band = c[0].selectbox("Banda", [10.368, 24.048, 47.088, 76.032, 122.25, 134.928], key=f"{key}_cb",
-                          format_func=lambda f: f"{f:g} GHz")
+    band = c[0].selectbox("Banda", CAT_BANDS, key=f"{key}_cb", format_func=lambda f: f"{f:g} GHz")
     kind_lbl = {k: catalog.TYPES[k] for k in kinds}
     kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
-    rows = [dict(d, origine="catalogo EMELab") for d in catalog.for_band(band, kind)]
-    pk = {"PA": "pa", "LNA": "lna", "SW": "passive", "TWT": "pa", "TRV": "mixer"}[kind]
-    for p in parts.all_parts(D, band, pk):
-        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "f_lo": p["f_lo_ghz"], "f_hi": p["f_hi_ghz"],
-                     "gain_db": p["gain_db"], "nf_db": p["nf_db"], "p1db_dbm": p.get("p1db_dbm"), "psat_dbm": p.get("psat_dbm"),
-                     "vdc": p.get("vdc"), "notes": p.get("notes"), "source": p.get("datasheet"), "origine": "la tua libreria"})
-    if not rows:
-        st.info("Nessun dispositivo per questa banda: cercalo e aggiungilo dal datasheet qui sotto.")
-        sel = None
-    else:
-        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
-                             "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
-                             "Note": i18n.tr(r.get("notes")),
-                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EMELab" else
-                             f"{i18n.tr(r['origine'])}: {r.get('source') or ''}",
-                             "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
+    rows = parts.devices(D, band, kind)
+    if rows:
+        def source(r):
+            if r["origin"] == "catalog":
+                return i18n.tr(r.get("source"))
+            who = i18n.tr("corretto da te") if r["origin"] == "edited" else i18n.tr("la tua libreria")
+            return f"{who}: {r.get('source') or ''}".rstrip(": ")
+        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": _num_cell(r.get("f_lo")),
+                             "A GHz": _num_cell(r.get("f_hi")), "Guadagno (dB)": _num_cell(r.get("gain_db")),
+                             "NF (dB)": _num_cell(r.get("nf_db")), "Psat (dBm)": _num_cell(r.get("psat_dbm")),
+                             "Note": i18n.tr(r.get("notes")) if r.get("notes") else "", "Fonte": source(r),
+                             "Verificato": "✅" if r.get("verified") else "⚠️" if r.get("check") else ""} for r in rows])
         tab.columns = [i18n.tr(x) for x in tab.columns]
         st.dataframe(tab, hide_index=True, width="stretch")
-        st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. Le celle vuote vanno lette "
-                   "dal datasheet: EMELab non inventa i numeri.")
-        sel = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"{key}_cs",
-                             format_func=lambda i: f"{rows[i]['part']} — {rows[i]['maker']}")
-        sel = rows[sel]
+        st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. ✅ = valori inseriti o "
+                   "corretti da te (restano su questo PC). Le celle vuote vanno lette dal datasheet: EMELab non inventa i numeri.")
+    else:
+        st.info("Nessun dispositivo per questa banda: aggiungilo a mano o dal datasheet qui sotto.")
+    NEW = len(rows)
+    pick = ss.pop(f"{key}_pick", None)                    # device just saved: select it
+    if pick:
+        ss[f"{key}_cs"] = next((i for i, r in enumerate(rows) if (r["part"], r["maker"]) == pick), NEW)
+    if not isinstance(ss.get(f"{key}_cs"), int) or ss[f"{key}_cs"] > NEW:
+        ss[f"{key}_cs"] = 0
+    i = c[2].selectbox("Il tuo dispositivo", range(NEW + 1), key=f"{key}_cs",
+                       format_func=lambda i: "➕ " + i18n.tr("Nuovo dispositivo") if i == NEW else
+                       f"{rows[i]['part']} — {rows[i]['maker']}" + (" ✅" if rows[i].get("verified") else ""))
+    sel = rows[i] if i < NEW else None
+    if sel:
         links = catalog.search_links(sel["part"], sel["maker"] if sel["maker"] != "—" else "")
         lc = st.columns(len(links))
         for col, (k, u) in zip(lc, links.items()):
             col.link_button("🔎 " + k, u)
-    with st.expander("📄 Leggi i valori da un datasheet (PDF) e salvali nella tua libreria"):
-        up = st.file_uploader("Datasheet PDF", type=["pdf"], key=f"{key}_ds")
-        if up is not None:
-            from emelab import stations as stn
-            try:
-                found = catalog.read_datasheet(stn.pdf_text(up.getvalue()))
-            except Exception as e:
-                found = {}
-                st.error(f"PDF: {e}")
-            st.caption("Valori trovati automaticamente: controllali sul datasheet prima di salvare.")
-            c = st.columns(4)
-            part = c[0].text_input("Sigla", up.name.rsplit(".", 1)[0], key=f"{key}_dp")
-            maker = c[1].text_input("Produttore", "", key=f"{key}_dm")
-            vals = {}
-            fields = [("f_lo_ghz", "Da GHz", found.get("f_lo")), ("f_hi_ghz", "A GHz", found.get("f_hi")),
-                      ("gain_db", "Guadagno dB", found.get("gain_db")), ("nf_db", "NF dB", found.get("nf_db")),
-                      ("p1db_dbm", "P1dB dBm", found.get("p1db_dbm")), ("psat_dbm", "Psat dBm", found.get("psat_dbm")),
-                      ("vdc", "V", found.get("vdc")), ("idc_a", "A", found.get("idc_a"))]
-            cc = st.columns(8)
-            for col, (k, lab, v) in zip(cc, fields):
-                vals[k] = col.number_input(lab, value=v, key=f"{key}_dv_{k}")
-            extra = {k: found[k] for k in ("rth_jc", "tj_max", "pae_pct") if k in found}
-            if extra:
-                st.markdown(" · ".join(f"**{k}** = {v:g}" for k, v in extra.items()))
-            if st.button("💾 Salva nella libreria", key=f"{key}_dsave", disabled=not part.strip()):
-                notes = "; ".join(f"{k}={v:g}" for k, v in extra.items())
-                parts.save(D, part=part.strip(), maker=maker.strip() or "—", type=pk, datasheet=up.name, notes=notes or None, **vals)
-                st.success("Salvato nella libreria componenti (solo su questo PC).")
+    title = (("✏️ " + i18n.tr("Correggi a mano i valori di") + f" {sel['part']} " + i18n.tr("o caricane il datasheet (PDF)"))
+             if sel else "➕ " + i18n.tr("Nuovo dispositivo: inserisci i valori a mano o caricane il datasheet (PDF)"))
+    with st.expander(title, expanded=sel is None):
+        _device_editor(D, key, kind, sel)
     return sel
+
+
+def _device_editor(D, key, kind, sel):
+    """Form to correct a device (or add a new one): values typed by hand or read from its datasheet PDF, saved in the
+    user's library as verified; a corrected catalogue device can go back to the catalogue values."""
+    from emelab import catalog, parts
+    ss = _st.session_state
+    up = st.file_uploader("📄 Datasheet PDF (facoltativo): EMELab legge i valori e li mette nei campi qui sotto",
+                          type=["pdf"], key=f"{key}_ds_{sel['part'] if sel else 'new'}")
+    found = {}
+    if up is not None:
+        from emelab import stations as stn
+        try:
+            found = catalog.read_datasheet(stn.pdf_text(up.getvalue()))
+        except Exception as e:
+            st.error(f"PDF: {e}")
+        lines = found.pop("_lines", {})
+        if lines:
+            st.caption(i18n.tr("Valori trovati nel PDF (controllali: prendo il valore tipico della riga)") + ":  \n" +
+                       "  \n".join(f"**{i18n.tr(_PDF_LABEL.get(k, k))}** ← «{v}»" for k, v in lines.items()))
+        elif not found:
+            st.warning("Nel PDF non ho trovato valori leggibili (forse è una scansione): inseriscili a mano qui sotto.")
+    base = sel or {}
+    stamp = f"{key}_{abs(hash((base.get('part'), base.get('maker'), base.get('origin'), base.get('updated'), up.file_id if up else '')))}"
+    c = st.columns([2, 2, 3])
+    fixed = bool(sel) and sel["origin"] != "mine"        # a catalogue device keeps its name: that is how it is matched
+    part = c[0].text_input("Sigla", base.get("part") or (up.name.rsplit(".", 1)[0] if up else ""), key=f"{stamp}_p",
+                           disabled=fixed)
+    maker = c[1].text_input("Produttore", base.get("maker") or "", key=f"{stamp}_m", disabled=fixed)
+    src = c[2].text_input("Fonte o link al datasheet", base.get("source") if sel and sel["origin"] != "catalog" else
+                          (up.name if up else ""), key=f"{stamp}_s")
+    vals = {}
+    cc = st.columns(len(_EDIT_FIELDS))
+    for col, (k, lab) in zip(cc, _EDIT_FIELDS):
+        v = found.get(k, base.get(k))
+        vals[k] = col.number_input(lab, value=None if v is None else float(v), key=f"{stamp}_{k}", format="%g")
+    extra = {k: found[k] for k in ("rth_jc", "tj_max", "pae_pct") if k in found}
+    notes0 = base.get("notes") or ""
+    if extra:
+        notes0 = "; ".join(x for x in [notes0, ", ".join(f"{k}={v:g}" for k, v in extra.items())] if x)
+    notes = st.text_area("Note", notes0, key=f"{stamp}_n", height=68)
+    if sel and sel["origin"] == "catalog" and sel.get("check"):
+        st.caption("⚠️ Valori tipici del catalogo: salvandoli dopo averli controllati sul datasheet diventano ✅ verificati da te.")
+    if sel and sel["origin"] == "edited":
+        cat = sel.get("catalog") or {}
+        st.caption(i18n.tr("Valori del catalogo EMELab") + ": " + " · ".join(
+            f"{i18n.tr(lab)} {_num_cell(cat.get(k)) or '—'}" for k, lab in _EDIT_FIELDS))
+    b = st.columns(3)
+    if b[0].button("💾 Salva i valori (verificati da te)", key=f"{stamp}_save", type="primary",
+                   disabled=not (part or "").strip()):
+        part_s, maker_s = (sel["part"], sel["maker"]) if fixed else (part.strip(), maker.strip() or "—")
+        if sel and sel["origin"] == "mine" and (part_s, maker_s) != (sel["part"], sel["maker"]):
+            parts.delete(D, sel["id"])                    # renamed own device: replace the old row
+        ltype = (parts.find(D, sel["part"], sel["maker"]) or {}).get("type") if sel and sel["origin"] == "mine" else None
+        parts.save(D, part=part_s, maker=maker_s, type=ltype or parts.KIND_TO_TYPE[kind], datasheet=src.strip() or None,
+                   notes=notes.strip() or None, tech=base.get("tech"), verified=1,
+                   **{lk: vals[ck] for lk, ck in parts.NUM_FIELDS})
+        ss[f"{key}_pick"] = (part_s, maker_s)
+        ss[f"{key}_flash"] = [("success", i18n.tr("Valori salvati e segnati come verificati da te (solo su questo PC)") +
+                               f": {part_s}")]
+        st.rerun()
+    if sel and sel["origin"] == "edited" and b[1].button("↩️ Ripristina i valori del catalogo", key=f"{stamp}_rev"):
+        parts.revert(D, sel["part"], sel["maker"])
+        ss[f"{key}_pick"] = (sel["part"], sel["maker"])
+        ss[f"{key}_flash"] = [("info", i18n.tr("Ripristinati i valori del catalogo EMELab") + f": {sel['part']}")]
+        st.rerun()
+    if sel and sel["origin"] == "mine" and b[1].button("🗑️ Elimina dalla tua libreria", key=f"{stamp}_del"):
+        parts.delete(D, sel["id"])
+        ss[f"{key}_flash"] = [("info", i18n.tr("Eliminato dalla tua libreria") + f": {sel['part']}")]
+        st.rerun()
 
 
 def _heatsink_box(dev, p_out_w, pae_default, key):
