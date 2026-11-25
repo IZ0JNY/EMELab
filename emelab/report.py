@@ -66,16 +66,17 @@ def log_pdf(qsos: list[dict], station: str = "") -> bytes:
     from matplotlib.backends.backend_pdf import PdfPages
     buf = io.BytesIO()
     head = ["Data UTC", "Nominativo", "Banda", "Modo", "Inv.", "Ric.", "Locator", "km", "Percorso EME (km)",
-            "EL Luna", "EL DX", "Spread (Hz)"]
+            "AZ Luna", "EL Luna", "AZ DX", "EL DX", "Spread (Hz)"]
     rows = []
     for q in qsos:
         c = q.get("calc") or {}
         rows.append([q["utc"].strftime("%Y-%m-%d %H:%M"), q["call"], band_label(q.get("band")), _mode(q),
                      q.get("rst_sent") or "", q.get("rst_rcvd") or "", q.get("locator") or "", _fmt(c.get("ground_km"), 0),
-                     _fmt(c.get("eme_path_km"), 0), _fmt(c.get("moon_el")), _fmt(c.get("dx_moon_el")), _fmt(c.get("mutual_spread_hz"), 0)])
+                     _fmt(c.get("eme_path_km"), 0), _fmt(c.get("moon_az")), _fmt(c.get("moon_el")),
+                     _fmt(c.get("dx_moon_az")), _fmt(c.get("dx_moon_el")), _fmt(c.get("mutual_spread_hz"), 0)])
     with PdfPages(buf) as pdf:
         _table_pages(pdf, "Log dei QSO EME", station, head, rows,
-                     [0.13, 0.10, 0.06, 0.06, 0.05, 0.05, 0.08, 0.07, 0.11, 0.07, 0.07, 0.08])
+                     [0.12, 0.08, 0.05, 0.065, 0.035, 0.035, 0.065, 0.05, 0.11, 0.055, 0.055, 0.055, 0.055, 0.08])
         _map_page(pdf, qsos, station)
     return buf.getvalue()
 
