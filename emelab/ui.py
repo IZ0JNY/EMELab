@@ -1117,6 +1117,8 @@ def _pointing_tab(D):
     fig.update_layout(title="Perdita contro errore di puntamento", xaxis_title="°", yaxis_title="dB", height=320,
                       margin=dict(l=10, r=10, t=40, b=10))
     st.plotly_chart(fig, width="stretch")
+    _sunscan_box(D, s, f, Dm, hp)
+    _pointing_model_box(D, hp)
     with st.expander("💡 Strategie per puntare meglio"):
         st.markdown("\n".join("- " + i18n.tr(x) for x in [
             "Misura il sole in molti punti di azimut ed elevazione: il modello di puntamento (zero AZ/EL, inclinazione dell'asse, flessione) si stima solo con dati ben distribuiti.",
@@ -1775,7 +1777,7 @@ def _wsjtx_autostart():
 
 def _wsjtx_tab(D):
     from emelab import dx
-    st.subheader("WSJT-X in diretta")
+    st.subheader("Collegamento con WSJT-X")
     st.caption("In WSJT-X: Settings → Reporting → «UDP Server» = 127.0.0.1, porta 2237, e spunta «Accept UDP requests». "
                "EMELab riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
                "di quel momento) e può colorare i nominativi e impostare il sottomodo Q65. Se usi anche JTAlert o "
@@ -1859,3 +1861,107 @@ def _wsjtx_tab(D):
         with st.expander("⚠️ Messaggi"):
             for e in list(svc.errors)[-10:]:
                 st.text(e)
+
+
+
+def _sunscan_box(D, setup, f, Dm, hp_expected):
+    import io
+    import numpy as _np
+    import pandas as pd
+    from emelab import sunscan
+    st.divider()
+    st.subheader("☀️ Scansione del Sole")
+    st.caption("Incolla o carica le letture di una scansione: a croce (in AZ e in EL attraverso il Sole) oppure a deriva "
+               "(antenna ferma, il Sole passa). EMELab adatta il modello disco solare ⊗ fascio gaussiano (IZ0JNY) e ti dà "
+               "la larghezza del fascio vera, l'errore di puntamento in quel punto e il fattore Y. L'errore si salva nel "
+               "diario e alimenta il modello di puntamento.")
+    c = st.columns(4)
+    kind = c[0].radio("Scansione", ["AZ (in croce)", "EL (in croce)", "Deriva (antenna ferma)"], key="ss_kind")
+    unit = c[1].radio("Livelli in", ["dB", "lineare"], key="ss_unit", horizontal=True)
+    t_meas = c[2].text_input("Ora della misura (UTC, AAAA-MM-GG HH:MM)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), key="ss_t")
+    up = c[3].file_uploader("CSV (due colonne)", type=["csv", "txt"], key="ss_csv",
+                            help="prima colonna: angolo rispetto al Sole calcolato (°) — oppure secondi per la deriva; "
+                                 "seconda colonna: livello")
+    txt = st.text_area("…oppure incolla qui le coppie «angolo  livello» (una per riga)", key="ss_txt", height=120,
+                       placeholder="-1.0  0.2\n-0.5  3.1\n0.0  6.0\n0.5  3.4\n1.0  0.3")
+    raw = up.getvalue().decode("utf-8", "replace") if up is not None else txt
+    pts = []
+    for line in (raw or "").splitlines():
+        v = [x for x in line.replace(";", " ").replace(",", " ").replace("\t", " ").split() if x]
+        try:
+            if len(v) >= 2:
+                pts.append((float(v[0]), float(v[1])))
+        except ValueError:
+            continue
+    if len(pts) < 7:
+        st.info("Servono almeno 7 punti, da una parte all'altra del Sole.")
+        return
+    try:
+        t = datetime.strptime(t_meas.strip(), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    except ValueError:
+        st.error("Ora non valida.")
+        return
+    stn = D.station()
+    x = _np.array([p[0] for p in pts])
+    y = _np.array([p[1] for p in pts])
+    if kind.startswith("Deriva"):
+        sun = astro.sky(t, stn.get("lat") or 0.0, stn.get("lon") or 0.0, stn.get("height_m") or 0.0).sun
+        x = sunscan.drift_angle(x - x[_np.argmax(y)], sun.dec)
+    p_lin = 10 ** (y / 10) if unit == "dB" else y
+    fit = sunscan.fit_scan(x, p_lin)
+    m = st.columns(4)
+    m[0].metric("HPBW misurata", f"{fit['hpbw_deg']:.3f}°", f"{fit['hpbw_deg'] - hp_expected:+.3f}° " + i18n.tr("rispetto al calcolo"),
+                delta_color="off")
+    m[1].metric("Errore di puntamento", f"{fit['offset_deg']:+.3f}°", f"{abs(fit['offset_deg']) / fit['hpbw_deg']:.2f} HPBW",
+                delta_color="off")
+    m[2].metric("Fattore Y del Sole", f"{fit['y_db']:.2f} dB")
+    m[3].metric("k = HPBW·D/λ", f"{fit['hpbw_deg'] * Dm / (0.299792458 / f):.1f}°",
+                help=i18n.tr("circa 58° con illuminazione uniforme, 66° con 10 dB di taper, 70° con 15 dB"))
+    xs = _np.linspace(x.min(), x.max(), 300)
+    mod = sunscan.scan_disc(xs - fit["offset_deg"], fit["hpbw_deg"])
+    fig = go.Figure(go.Scatter(x=x, y=p_lin, mode="markers", name="misura"))
+    fig.add_trace(go.Scatter(x=xs, y=fit["baseline"] + fit["amplitude"] * mod / mod.max(), name="modello disco ⊗ fascio"))
+    fig.add_vline(x=fit["offset_deg"], line_dash="dot")
+    fig.update_layout(title="Scansione del Sole e modello", xaxis_title="°", yaxis_title=i18n.tr("livello (lineare)"), height=320,
+                      margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, width="stretch")
+    if fit["rms"] > 0.1 * fit["amplitude"]:
+        st.warning("Il modello si adatta male (vento, QRM o scansione non centrata): ripeti la misura.")
+    if setup and not kind.startswith("Deriva") and st.button("💾 Salva l'errore nel diario (per il modello di puntamento)", key="ss_save"):
+        calc = analysis.snapshot(stn, setup, t, None, openems_local.load_settings().get("emelab_flux"))
+        az = fit["offset_deg"] if kind.startswith("AZ") else None
+        el = fit["offset_deg"] if kind.startswith("EL") else None
+        D.add(utc=t, setup_id=setup["id"], band_ghz=float(setup["band_ghz"]), kind="sun", y_db=fit["y_db"],
+              az_off=az, el_off=el, notes=i18n.tr("scansione del Sole") + f" ({kind}), HPBW {fit['hpbw_deg']:.3f}°",
+              calc=_clean(calc))
+        st.success("Salvato nel diario misure.")
+
+
+def _pointing_model_box(D, hp):
+    import numpy as _np
+    st.divider()
+    st.subheader("📐 Modello di puntamento")
+    pm = analysis.pointing_model(D.measurements())
+    if not pm:
+        st.info("Servono almeno 3 misure di Sole o Luna con l'errore in AZ e in EL (dalle scansioni qui sopra o dalla scheda "
+                "Nuova misura), meglio se a elevazioni diverse.")
+        return
+    m = st.columns(4)
+    m[0].metric("Zero AZ (encoder)", f"{pm['az_zero']:+.3f}°")
+    m[1].metric("Inclinazione dell'asse", f"{pm['az_tilt']:+.3f}°", help=i18n.tr("termine in tan(EL): il supporto non è in bolla"))
+    m[2].metric("Zero EL", f"{pm['el_zero']:+.3f}°")
+    m[3].metric("Flessione (cos EL)", f"{pm['el_sag']:+.3f}°", help=i18n.tr("il peso del feed fa scendere il fascio più in basso"))
+    rms = math.hypot(pm["rms_az"], pm["rms_el"])
+    ok = rms <= hp / 10
+    (st.success if ok else st.warning)(
+        i18n.tr("Residuo dopo la correzione") + f" {rms:.3f}° ({rms / hp:.2f} HPBW) — " +
+        (i18n.tr("ottimo: sotto HPBW/10") if ok else i18n.tr("sopra HPBW/10: aggiungi misure a elevazioni diverse e controlla gioco e vento")))
+    st.caption(f"{pm['n']} " + i18n.tr("misure. Correzioni da impostare nel controllo del rotore: AZ −(zero AZ)/cos(EL) − inclinazione·tan(EL), "
+                                       "EL −(zero EL) − flessione·cos(EL)."))
+    el = _np.linspace(5, 85, 50)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=el, y=pm["az_zero"] + pm["az_tilt"] * _np.tan(_np.radians(el)), name="errore AZ·cos(EL)"))
+    fig.add_trace(go.Scatter(x=el, y=pm["el_zero"] + pm["el_sag"] * _np.cos(_np.radians(el)), name="errore EL"))
+    fig.update_layout(title="Errore previsto contro elevazione", xaxis_title="EL (°)", yaxis_title="°", height=300,
+                      margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, width="stretch")
