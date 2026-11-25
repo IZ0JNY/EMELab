@@ -169,6 +169,11 @@ class DB:
         cur = self.station_of(call) or {"call": call, "data": {}}
         data = {**cur.get("data", {}), **(kw.pop("data", None) or {})}
         row = {**{k: v for k, v in cur.items() if k != "data"}, **{k: v for k, v in kw.items() if v not in (None, "")}}
+        for k, v in (data.get("manual") or {}).items():       # corrections made by hand win over every import
+            if k in self.MANUAL_FIELDS:
+                if kw.get(k) not in (None, ""):
+                    data.setdefault("orig", {})[k] = kw[k]
+                row[k] = v
         row.update(call=call, data=json.dumps(data, default=str), updated_utc=iso_utc(datetime.now(timezone.utc)))
         keys = ["call", "locator", "name", "qth", "address", "country", "email", "eme", "data", "updated_utc"]
         self.con.execute(f"INSERT OR REPLACE INTO stations ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
@@ -208,7 +213,69 @@ class DB:
         out += [f"directory:{b}" for b in sorted(data.get("directory") or {})]
         if data.get("qrz"):
             out.append("qrz")
+        if data.get("manual"):
+            out.append("manual")
         return out
+
+    # corrections made by hand ------------------------------------------------------
+    # data["manual"] = {"locator"/"name"/"qth": value, "bands": {band: {"antenna", "power_w"}}}; data["orig"] keeps the
+    # imported value of a corrected field, so that taking the correction away gives it back.
+    MANUAL_FIELDS = ("locator", "name", "qth")
+
+    @staticmethod
+    def directory_of(data: dict) -> dict:
+        """Station per band: the EME Directory, with the bands corrected by hand on top."""
+        out = {b: dict(v) for b, v in (data.get("directory") or {}).items()}
+        for b, v in ((data.get("manual") or {}).get("bands") or {}).items():
+            out[b] = {**out.get(b, {}), **v}
+        return out
+
+    def set_station_manual(self, call: str, fields: dict | None = None, bands: dict | None = None):
+        """Correct fields by hand. A blank value takes the correction away (the imported value comes back);
+        bands: {band: {"antenna": …, "power_w": …}} or {band: None} to take that band's correction away."""
+        call = call.upper()
+        cur = self.station_of(call) or {"call": call, "data": {}}
+        data = cur["data"]
+        man, orig = dict(data.get("manual") or {}), dict(data.get("orig") or {})
+        row = {k: cur.get(k) for k in self.MANUAL_FIELDS}
+        for k, v in (fields or {}).items():
+            if k not in self.MANUAL_FIELDS:
+                continue
+            v = (v or "").strip() or None
+            if v is None:
+                if k in man:
+                    man.pop(k)
+                    row[k] = orig.pop(k, None)
+                continue
+            if k not in man:
+                orig[k] = cur.get(k)
+            man[k] = v
+            row[k] = v
+        mb = dict(man.get("bands") or {})
+        for b, v in (bands or {}).items():
+            if v:
+                mb[b] = {"antenna": (v.get("antenna") or "").strip(), "power_w": v.get("power_w")}
+            else:
+                mb.pop(b, None)
+        if mb:
+            man["bands"] = mb
+        else:
+            man.pop("bands", None)
+        for k, v in (("manual", man), ("orig", orig)):
+            if v:
+                data[k] = v
+            else:
+                data.pop(k, None)
+        if cur.get("updated_utc") is None and not man:
+            return
+        self.con.execute("INSERT OR REPLACE INTO stations (call, locator, name, qth, address, country, email, eme, data, "
+                         "updated_utc) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         [call, row["locator"], row["name"], row["qth"], cur.get("address"), cur.get("country"),
+                          cur.get("email"), cur.get("eme"), json.dumps(data, default=str),
+                          iso_utc(datetime.now(timezone.utc))])
+        if not self._station_sources(data):
+            self.con.execute("DELETE FROM stations WHERE call = ?", (call,))
+        self.con.commit()
 
     def log_station_import(self, source: str, label: str, n: int):
         self.con.execute("INSERT INTO station_imports (utc, source, label, n) VALUES (?,?,?,?)",
@@ -235,7 +302,12 @@ class DB:
             data = s["data"]
             if source not in self._station_sources(data):
                 continue
-            if band:
+            if source == "manual":
+                orig = data.pop("orig", {})
+                for k in data.pop("manual", {}):
+                    if k in self.MANUAL_FIELDS:
+                        s[k] = orig.get(k)
+            elif band:
                 dirb = dict(data.get("directory") or {})
                 dirb.pop(band, None)
                 if dirb:
@@ -255,6 +327,11 @@ class DB:
                 row["name"] = next((v.get("name") for v in (data.get("directory") or {}).values() if v.get("name")), None)
             elif band and not data.get("qrz") and not data.get("directory"):
                 row["name"] = None                                   # the name came only from the directory
+            for k, v in (data.get("manual") or {}).items():          # a correction by hand stays
+                if k in self.MANUAL_FIELDS:
+                    if row[k] != s.get(k):                           # the imported value under it changed
+                        data.setdefault("orig", {})[k] = row[k]
+                    row[k] = v
             self.con.execute("UPDATE stations SET locator=?, name=?, qth=?, address=?, country=?, email=?, eme=?, data=?, "
                              "updated_utc=? WHERE call=?",
                              [row["locator"], row["name"], row["qth"], row["address"], row["country"], row["email"],

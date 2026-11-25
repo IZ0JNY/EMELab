@@ -734,19 +734,107 @@ def _stations_tab(D):
         for r in rows:
             d = r.get("data", {})
             h = d.get("heard", {})
-            dirb = d.get("directory", {})
+            dirb = D.directory_of(d)
             tab.append({"Nominativo": r["call"], "Locator": r.get("locator") or "", "Nome": r.get("name") or "",
                         "QTH": r.get("qth") or "", "Bande (directory)": ", ".join(sorted(dirb)),
-                        "Stazione": "; ".join(f"{b}: {v.get('antenna', '')} {v.get('power_w') or ''} W"
-                                              for b, v in sorted(dirb.items())),
+                        "Stazione": _station_text(dirb), "✏️": "✏️" if d.get("manual") else "",
                         "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
                         "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": ", ".join(h.get("bands", []))})
         df = pd.DataFrame(tab)
-        df.columns = [i18n.tr(c) for c in df.columns]
-        st.dataframe(df, hide_index=True, width="stretch")
+        cols = list(df.columns)
+        df.columns = [i18n.tr(c) for c in cols]
+        st.caption("Puoi correggere a mano Locator, Nome e QTH direttamente nella tabella, poi premi «Salva le correzioni». "
+                   "Le correzioni a mano (✏️) restano anche quando importi di nuovo i file.")
+        editable = {i18n.tr(c) for c in ("Locator", "Nome", "QTH")}
+        ed = st.data_editor(df, hide_index=True, width="stretch", key="st_table" + _lang_key(),
+                            disabled=[c for c in df.columns if c not in editable])
+        if st.button("💾 Salva le correzioni", key="st_table_save"):
+            st.session_state["st_flash"] = _save_station_edits(D, df, ed, cols)
+            st.session_state.pop("st_table" + _lang_key(), None)      # the edits are in the database now
+            st.rerun()
+        for kind, msg in st.session_state.pop("st_flash", None) or []:
+            getattr(st, kind)(msg)
+        _station_edit_box(D, rows)
         _qrz_box(D, [r["call"] for r in rows])
     if rows or D.station_imports():
         _stations_manage(D, [r["call"] for r in rows])
+
+
+def _station_text(dirb: dict) -> str:
+    out = []
+    for b, v in sorted(dirb.items()):
+        pw = v.get("power_w")
+        out.append(f"{b}: " + " ".join(x for x in ((v.get("antenna") or "").strip(), f"{pw:g} W" if pw else "") if x))
+    return "; ".join(out)
+
+
+def _save_station_edits(D, df, ed, cols):
+    """Write back the Locator/Nome/QTH cells changed in the table as corrections by hand."""
+    from emelab import stations as stn
+    names = dict(zip(df.columns, cols))
+    n, bad = 0, []
+    for (_, a), (_, b) in zip(df.iterrows(), ed.iterrows()):
+        ch = {}
+        for c in df.columns:
+            k = {"Locator": "locator", "Nome": "name", "QTH": "qth"}.get(names[c])
+            if k and str(a[c] or "").strip() != str(b[c] if b[c] is not None else "").strip():
+                ch[k] = str(b[c] if b[c] is not None else "").strip()
+        if not ch:
+            continue
+        if ch.get("locator"):
+            ch["locator"] = ch["locator"].upper()
+            if not stn.LOC_RX.match(ch["locator"]):
+                bad.append(f"{a.iloc[0]}: {ch['locator']}")
+                continue
+        D.set_station_manual(str(a.iloc[0]), ch)
+        n += 1
+    out = [("success", i18n.tr("Stazioni corrette a mano") + f": {n}")]
+    if bad:
+        out.append(("error", i18n.tr("Locator non valido") + ": " + ", ".join(bad)))
+    return out
+
+
+def _station_edit_box(D, rows):
+    from emelab import dx, stations as stn
+    with st.expander("✏️ Correggi a mano una stazione (anche antenna e potenza per banda)"):
+        calls = [r["call"] for r in rows]
+        call = st.selectbox("Nominativo", [""] + calls, key="st_ed_call", format_func=lambda c: c or "—")
+        new = st.text_input("…oppure un nominativo nuovo", "", key="st_ed_new").strip().upper()
+        call = new or call
+        if not call:
+            return
+        r = D.station_of(call) or {"call": call, "data": {}}
+        man = r["data"].get("manual") or {}
+        dirb = D.directory_of(r["data"])
+        c = st.columns(3)
+        loc = c[0].text_input("Locator", r.get("locator") or "", key=f"st_ed_loc_{call}")
+        name = c[1].text_input("Nome", r.get("name") or "", key=f"st_ed_name_{call}")
+        qth = c[2].text_input("QTH", r.get("qth") or "", key=f"st_ed_qth_{call}")
+        bands = {}
+        for b in dx.BAND_GHZ:
+            v = dirb.get(b) or {}
+            c = st.columns([1, 3, 2])
+            c[0].markdown(f"**{b}**" + (" ✏️" if b in (man.get("bands") or {}) else ""))
+            ant = c[1].text_input("Antenna", v.get("antenna") or "", key=f"st_ed_ant_{call}_{b}",
+                                  placeholder="es. 3m dish", label_visibility="collapsed" if b != list(dx.BAND_GHZ)[0] else "visible")
+            pw = c[2].number_input("Potenza (W)", 0.0, 100000.0, float(v.get("power_w") or 0), 1.0, key=f"st_ed_pw_{call}_{b}",
+                                   label_visibility="collapsed" if b != list(dx.BAND_GHZ)[0] else "visible")
+            if ant.strip() != (v.get("antenna") or "").strip() or pw != float(v.get("power_w") or 0):
+                bands[b] = {"antenna": ant, "power_w": pw or None} if (ant.strip() or pw) else None
+        c = st.columns(2)
+        if c[0].button("💾 Salva la stazione", key=f"st_ed_save_{call}"):
+            if loc and not stn.LOC_RX.match(loc.strip()):
+                st.error(i18n.tr("Locator non valido") + f": {loc}")
+            else:
+                f = {k: v for k, v in (("locator", loc.strip().upper()), ("name", name), ("qth", qth))
+                     if (v or "") != (r.get(k) or "")}
+                D.set_station_manual(call, {k: v or "" for k, v in f.items()}, bands)
+                st.success(i18n.tr("Salvato") + f": {call}")
+                st.rerun()
+        if man and c[1].button("↩️ Togli le correzioni a mano", key=f"st_ed_undo_{call}"):
+            D.set_station_manual(call, {k: "" for k in D.MANUAL_FIELDS}, {b: None for b in man.get("bands") or {}})
+            st.success(i18n.tr("Tornati i dati importati") + f": {call}")
+            st.rerun()
 
 
 def _blank(v):
@@ -758,7 +846,7 @@ def _source_label(key: str) -> str:
     if key.startswith("directory:"):
         return i18n.tr("EME Directory (PA0PLY)") + " · " + key.split(":", 1)[1]
     return {"call3": i18n.tr("CALL3.TXT di WSJT-X"), "heard": i18n.tr("Ascolti (ALL.TXT e WSJT-X in diretta)"),
-            "qrz": "QRZ.com"}.get(key, key)
+            "qrz": "QRZ.com", "manual": i18n.tr("Correzioni a mano")}.get(key, key)
 
 
 def _stations_manage(D, calls):
@@ -1647,7 +1735,7 @@ def _dx_models(D, band):
     from emelab import dx
     out = []
     for r in D.stations():
-        e = (r.get("data", {}).get("directory") or {}).get(band)
+        e = D.directory_of(r.get("data", {})).get(band)
         if not e or not r.get("locator"):
             continue
         m = dx.from_directory(e, band)
