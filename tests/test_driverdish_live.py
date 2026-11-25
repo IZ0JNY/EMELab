@@ -110,7 +110,7 @@ def test_tracking_tab_live_in_english(tmp_path, monkeypatch):
     monkeypatch.setenv("EMELAB_LANG", "en")
     _demo_station(tmp_path)
     from emelab import settings
-    settings.save_settings(dd_host="127.0.0.1", dd_port=srv.getsockname()[1], dd_live=True)
+    settings.save_settings(dd_host="127.0.0.1", dd_port=srv.getsockname()[1], dd_live=True, dd_alarm=False)  # AppTest has no dialogs
     try:
         at = AppTest.from_file(os.path.join(ROOT, "emelab_main.py"), default_timeout=120)
         at.run()
@@ -127,3 +127,44 @@ def test_tracking_tab_live_in_english(tmp_path, monkeypatch):
         i18n.set_lang("it")
         srv.close()
     assert set(received) <= set(ea3hmj.READ_COMMANDS)
+
+
+def _hist(now, n, step, **kw):
+    from datetime import timedelta
+    out = []
+    for i in range(n):
+        h = {"tracking": True, "dish_az": 150.0, "dish_el": 30.0, "target_az": 150.0 + 0.01 * i, "target_el": 30.0,
+             "err_az": 0.01, "err_el": 0.01, "target": "Moon"}
+        h.update({k: (v(i) if callable(v) else v) for k, v in kw.items()})
+        out.append((now - timedelta(seconds=step * (n - 1 - i)), h))
+    return out
+
+
+def _bad(checks):
+    return {c["key"] for c in checks if c["ok"] is False}
+
+
+def test_health_checks():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 25, 18, 0, tzinfo=timezone.utc)
+    # unreachable
+    assert _bad(ea3hmj.health(None, "Connection refused", [], now, 0.6)) == {"telnet"}
+    # all fine: dish follows the target, small error, ephemerides agree
+    h = _hist(now, 70, 2, dish_az=lambda i: 150.0 + 0.01 * i)
+    last = dict(h[-1][1], utc=now)
+    assert _bad(ea3hmj.health(last, None, h, now, 0.6, (last["target_az"], 30.0))) == set()
+    # stale data
+    assert "fresh" in _bad(ea3hmj.health(dict(last, utc=now - timedelta(seconds=30)), None, h, now, 0.6))
+    # dish frozen while tracking and the target moves
+    h = _hist(now, 70, 2)
+    assert "moving" in _bad(ea3hmj.health(dict(h[-1][1], utc=now), None, h, now, 0.6))
+    # big error for more than 30 s
+    h = _hist(now, 70, 2, dish_az=lambda i: 150.0 + 0.01 * i, err_az=1.0)
+    assert "error" in _bad(ea3hmj.health(dict(h[-1][1], utc=now), None, h, now, 0.6))
+    # tracking off (Ivan's screenshot): a 133° error is not an alarm
+    h = _hist(now, 70, 2, tracking=False, err_az=133.1, err_el=-103.6)
+    assert _bad(ea3hmj.health(dict(h[-1][1], utc=now), None, h, now, 0.6)) == set()
+    # DriverDish Moon differs from EMELab's
+    h = _hist(now, 70, 2, dish_az=lambda i: 150.0 + 0.01 * i)
+    last = dict(h[-1][1], utc=now)
+    assert "ephem" in _bad(ea3hmj.health(last, None, h, now, 0.6, (last["target_az"] + 1.0, 30.0)))

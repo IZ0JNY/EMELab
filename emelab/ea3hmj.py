@@ -307,3 +307,67 @@ def _read_until_quiet(s, quiet: float = 0.25, total: float = 2.0) -> bytes:
     finally:
         s.settimeout(4.0)
     return data
+
+
+# ------------------------------------------------------------------ health check of DriverDish (for the alarm pop-up)
+def health(last: dict | None, error: str | None, history, now, hpbw_deg: float | None = None,
+           moon_azel: tuple[float, float] | None = None, stale_s: float = 10.0, frozen_s: float = 120.0,
+           big_err_s: float = 30.0) -> list[dict]:
+    """Checks on the live DriverDish data. Returns one dict per check:
+        {"key", "ok" (True/False/None = not applicable), "label", "detail"}
+    Problems (ok False) are what the alarm pop-up shows. `history` is [(utc, status dict)], oldest first."""
+    out = []
+
+    def add(key, ok, label, detail=""):
+        out.append({"key": key, "ok": ok, "label": label, "detail": detail})
+
+    if last is None:
+        add("telnet", False if error else None, "DriverDish raggiungibile (telnet)", error or "")
+        return out
+    age = (now - last["utc"]).total_seconds()
+    add("telnet", error is None or age <= stale_s, "DriverDish raggiungibile (telnet)", error or "")
+    add("fresh", age <= stale_s, "Dati aggiornati", f"{age:.0f} s")
+    has_pos = last.get("dish_az") is not None and last.get("dish_el") is not None
+    add("status", has_pos, "«status» con la posizione dell'antenna")
+    el = last.get("dish_el")
+    add("sensor", None if el is None else -10.0 <= el <= 100.0, "Lettura degli encoder plausibile",
+        "" if el is None else f"EL {el:.3f}°")
+    tracking = last.get("tracking") is True
+    recent = [(t, h) for t, h in history if (now - t).total_seconds() <= frozen_s]
+    span = (now - recent[0][0]).total_seconds() if recent else 0.0
+    frozen = None
+    if tracking and span >= frozen_s * 0.9 and all(h.get("tracking") for _, h in recent):
+        def spread(k1, k2):
+            pts = [(h[k1], h[k2]) for _, h in recent if h.get(k1) is not None and h.get(k2) is not None]
+            return max((angle_between(*pts[0], *p) for p in pts), default=0.0) if pts else 0.0
+        frozen = spread("dish_az", "dish_el") < 0.005 and spread("target_az", "target_el") > 0.05
+    add("moving", None if frozen is None else not frozen, "L'antenna segue il bersaglio",
+        f"{frozen_s / 60:.0f} min" if frozen else "")
+    thr = (hpbw_deg / 2) if hpbw_deg else 0.5
+    big = None
+    if tracking:
+        win = [(t, _err_deg(h)) for t, h in history if (now - t).total_seconds() <= big_err_s and h.get("tracking")]
+        win = [(t, e) for t, e in win if e is not None]
+        if win and win[-1][1] <= thr:
+            big = False
+        elif win and (now - win[0][0]).total_seconds() >= big_err_s * 0.8:
+            big = min(e for _, e in win) > thr
+    e_now = _err_deg(last)
+    add("error", None if big is None else not big, "Errore di inseguimento entro HPBW/2" if hpbw_deg else "Errore di inseguimento entro 0.5°",
+        "" if e_now is None else f"{e_now:.3f}° / {thr:.3f}°")
+    tgt = (last.get("target") or "").strip().lower()
+    eph = None
+    d = None
+    if moon_azel and tgt.startswith(("moon", "luna")) and last.get("target_az") is not None and last.get("target_el") is not None \
+            and moon_azel[1] > 0:
+        d = angle_between(last["target_az"], last["target_el"], *moon_azel)
+        eph = d <= max(0.1, (hpbw_deg or 1.0) / 4)
+    add("ephem", eph, "Effemeridi della Luna coerenti con EMELab", "" if d is None else f"{d:.3f}°")
+    return out
+
+
+def _err_deg(h: dict) -> float | None:
+    import math
+    if h.get("err_az") is None or h.get("err_el") is None:
+        return None
+    return math.hypot(h["err_az"] * math.cos(math.radians(h.get("dish_el") or 0.0)), h["err_el"])

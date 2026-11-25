@@ -139,6 +139,7 @@ def _status(D, hp):
     if (host, int(port), live) != (sets.get("dd_host"), sets.get("dd_port"), sets.get("dd_live")):
         openems_local.save_settings(dd_host=host, dd_port=int(port), dd_live=bool(live))
     if not live:
+        _st.session_state["ea_problems"] = []
         old = _st.session_state.pop("ea_mon_key", None)
         if old:
             _monitor(*old).stop()
@@ -155,6 +156,12 @@ def _status(D, hp):
     if not mon.alive:
         _monitor.clear()
         mon = _monitor(*key)
+    alarm = st.checkbox("🚨 Pop-up di allarme se DriverDish non funziona", bool(sets.get("dd_alarm", True)), key="ea_alarm",
+                        help="DriverDish che non risponde, dati fermi, antenna ferma durante l'inseguimento, errore oltre HPBW/2, "
+                             "effemeridi della Luna diverse da quelle di EMELab")
+    if alarm != sets.get("dd_alarm", True):
+        openems_local.save_settings(dd_alarm=bool(alarm))
+    _st.session_state["ea_alarm_on"] = alarm
     _live_status(D, mon, hp)
     st.caption("Solo lettura: EMELab chiede a DriverDish soltanto «status» e «moving», mai comandi che muovono la "
                "parabola. La posizione della Luna è calcolata da EMELab per la tua stazione (con rifrazione radio).")
@@ -169,10 +176,38 @@ def _fmt(v, nd=3, unit="°"):
     return "—" if v is None else f"{v:.{nd}f}{unit}"
 
 
+_ICON = {True: "✅", False: "❌", None: "➖"}
+
+
+def _health_box(D, mon, hp, now):
+    stn = D.station() or {}
+    moon = None
+    if stn.get("lat") is not None and stn.get("lon") is not None:
+        moon = astro.sky(now, stn["lat"], stn["lon"], stn.get("height_m") or 0.0).moon
+    checks = ea3hmj.health(mon.last, mon.error, list(mon.history), now, hp,
+                           (moon.az, moon.el_radio) if moon is not None else None)
+    probs = [c for c in checks if c["ok"] is False]
+    S = _st.session_state
+    S["ea_problems"] = probs
+    with st.expander(("🚨 " if probs else "🩺 ") + i18n.tr("Controllo di DriverDish") +
+                     (f": {len(probs)} " + i18n.tr("problemi") if probs else ": " + i18n.tr("tutto a posto")), expanded=bool(probs)):
+        st.markdown("\n".join(f"- {_ICON[c['ok']]} {i18n.tr(c['label'])}" + (f" · {c['detail']}" if c["detail"] else "")
+                               for c in checks))
+    keys = sorted(c["key"] for c in probs)
+    acked = S.setdefault("ea_acked", set())
+    acked &= set(keys)                               # a problem that went away and comes back alarms again
+    if S.get("ea_alarm_on", True) and set(keys) - acked and keys != S.get("ea_alert_keys"):
+        S["ea_alert_keys"] = keys
+        _st.rerun(scope="app")                       # full run: app.py opens the pop-up
+    S["ea_alert_keys"] = keys
+    return moon
+
+
 @_frag(2)
 def _live_status(D, mon, hp):
     from datetime import datetime
     now = datetime.now(timezone.utc)
+    moon = _health_box(D, mon, hp, now)
     r = mon.last
     if r is None:
         if mon.error:
@@ -200,9 +235,7 @@ def _live_status(D, mon, hp):
     m[0].metric("Errore AZ / EL (DriverDish)", f"{_fmt(r.get('err_az'))} / {_fmt(r.get('err_el'))}")
     m[1].metric("Offset AZ / EL", f"{_fmt(r.get('off_az'))} / {_fmt(r.get('off_el'))}")
     stn = D.station() or {}
-    moon = None
-    if stn.get("lat") is not None and stn.get("lon") is not None:
-        moon = astro.sky(now, stn["lat"], stn["lon"], stn.get("height_m") or 0.0).moon
+    if moon is not None:
         m[2].metric("Luna calcolata da EMELab AZ / EL", f"{moon.az:.3f}° / {moon.el_radio:.3f}°")
     else:
         m[2].metric("Luna calcolata da EMELab AZ / EL", "—", help=i18n.tr("inserisci la posizione nella scheda Stazione"))
@@ -253,3 +286,37 @@ def _live_status(D, mon, hp):
     with st.expander("Risposta completa di «status»"):
         st.text(r.get("raw") or "")
     st.caption(i18n.tr("Ultima lettura da DriverDish") + f": {r['utc']:%H:%M:%S} UTC ({age:.0f} s)")
+
+
+# ------------------------------------------------------------------ alarm pop-up (opened by app.py on a full run)
+def _alarm_body(items):
+    for a in items:
+        st.error(i18n.tr(a["label"]) + " — " + i18n.tr("non va") + (f" ({a['detail']})" if a.get("detail") else ""))
+    st.caption("EMELab legge soltanto: controlla DriverDish e la parabola. L'allarme torna se il problema sparisce e "
+               "poi si ripresenta; si spegne nella scheda 🎯 Tracking.")
+    if st.button("Ho visto", type="primary", key="ea_alarm_ok"):
+        _ack()
+        _st.rerun()
+
+
+def _ack():
+    S = _st.session_state
+    S.setdefault("ea_acked", set()).update(c["key"] for c in S.get("ea_problems") or [])
+
+
+try:
+    _alarm = _st.dialog("🚨 DriverDish", width="large", on_dismiss=_ack)(_alarm_body)
+except TypeError:                                   # older Streamlit: no on_dismiss
+    _alarm = _st.dialog("🚨 DriverDish", width="large")(_alarm_body)
+
+
+def popup():
+    S = _st.session_state
+    if not S.get("ea_alarm_on", True) or not S.get("ea_mon_key"):
+        return
+    if S.get("wj_alert_keys"):                      # the WSJT-X pop-up is open: one dialog at a time
+        return
+    probs = S.get("ea_problems") or []
+    items = [c for c in probs if c["key"] not in S.get("ea_acked", set())]
+    if items:
+        _alarm(items)
