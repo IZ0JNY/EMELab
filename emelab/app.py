@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, ui, ui_camera, ui_gpsdo, ui_moon, ui_wsjtx_panel
+from emelab import coach, i18n, tab_order, ui, ui_camera, ui_gpsdo, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -123,7 +123,7 @@ TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
      ("design", "🧪 Laboratorio", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
     ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
-OFF_BY_DEFAULT = {"camera"}           # shown only when chosen in «Schede da mostrare»
+OFF_BY_DEFAULT = {"camera"}           # shown only when chosen in «Schede da mostrare e ordine» (Assistant)
 _saved = openems_local.load_settings().get("tabs")
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
@@ -139,22 +139,57 @@ if "tabs_on" not in S:
     S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k not in OFF_BY_DEFAULT) or (_saved and k in _saved)]
 
 
+if "tabs_order" not in S:
+    S["tabs_order"] = tab_order.merge([k for k, _, _ in TABS[1:]], openems_local.load_settings().get("tabs_order"))
+
+
 def _save_tabs():
     try:
-        openems_local.save_settings(tabs=S["tabs_on"])
+        openems_local.save_settings(tabs=S["tabs_on"], tabs_order=S["tabs_order"])
     except Exception:
         pass
 
 
-with st.sidebar:
-    with st.expander("⚙️ Schede da mostrare"):
-        st.multiselect("Schede", [k for k, _, _ in TABS[2:]], key="tabs_on", on_change=_save_tabs,
-                       format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
-                       help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
+def _toggle_tab(k):
+    on = [x for x in S["tabs_on"] if x != k]
+    S["tabs_on"] = on + [k] if S.get(f"tabvis_{k}") else on
+    _save_tabs()
+
+
+def _move_tab(k, delta):
+    S["tabs_order"] = tab_order.move(S["tabs_order"], k, delta)
+    _save_tabs()
+
+
+def _reset_tab_order():
+    S["tabs_order"] = [k for k, _, _ in TABS[1:]]
+    _save_tabs()
+
+
+def _tabs_settings():
+    """In the Assistant: which tabs to show and in which order (🧭 Assistente stays first, 🏠 Stazione always shown)."""
+    with st.expander("⚙️ Schede da mostrare e ordine"):
+        st.caption("Spunta le schede che usi e spostale con ⬆️ ⬇️: la scelta resta salvata su questo PC. "
+                   "🧭 Assistente resta sempre la prima.")
+        labels = {k: l for k, l, _ in TABS}
+        order = S["tabs_order"]
+        for i, k in enumerate(order):
+            S[f"tabvis_{k}"] = k == "station" or k in S["tabs_on"]
+            c = st.columns([8, 1, 1], vertical_alignment="center")
+            c[0].checkbox(labels[k], key=f"tabvis_{k}", on_change=_toggle_tab, args=(k,), disabled=k == "station",
+                          help="sempre visibile" if k == "station" else None)
+            c[1].button("⬆️", key=f"tabup_{k}", on_click=_move_tab, args=(k, -1), disabled=i == 0, help="sposta prima")
+            c[2].button("⬇️", key=f"tabdn_{k}", on_click=_move_tab, args=(k, 1), disabled=i == len(order) - 1,
+                        help="sposta dopo")
+        st.button("↩️ Ordine originale", key="tab_order_reset", on_click=_reset_tab_order,
+                  help="rimette le schede nell'ordine di EMELab (la scelta di quelle visibili resta)")
+
+
 if "camera" not in S["tabs_on"]:
     from emelab import moontrack as _mt
     _mt.stop()                                # tab hidden: the camera is released for ASICap and the others
-shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
+_by_key = {t[0]: t for t in TABS}
+shown = [TABS[0]] + [_by_key[k] for k in S["tabs_order"] if k == "station" or k in S["tabs_on"]]
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
     tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
 except TypeError:                                   # Streamlit without state on tabs
@@ -167,6 +202,9 @@ for tab, (k, _, fn) in zip(tabs, shown):
             st.subheader("🧪 Cosa misurare o provare adesso")
             for sgg in coach.suggestions(D)[:8]:
                 st.markdown("- " + i18n.tr(sgg["text"]))
+        elif k == "wizard":
+            _tabs_settings()
+            fn(D)
         elif k == "guide":
             ui._guide()
         else:
