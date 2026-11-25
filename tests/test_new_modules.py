@@ -66,3 +66,16 @@ def test_horizon_and_windows():
     assert ws and all(w["best_el"] >= 10 for w in ws)
     assert "IZ0JNY" in wizard.sked_text("en", "IZ0JNY", "JN61", "OK1KIR", None, "24G", ws[0]["start"], ws[0]["end"], "60D",
                                         True, -15, -16)
+
+
+def test_station_history(tmp_path):
+    from emelab import db as edb
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.save_history("10G", [{"from_utc": datetime(2024, 7, 1, tzinfo=timezone.utc), "dish_m": 1.0, "power_w": 20},
+                           {"from_utc": datetime(2025, 6, 20, tzinfo=timezone.utc), "dish_m": 1.2, "power_w": 20},
+                           {"from_utc": datetime(2026, 9, 1, tzinfo=timezone.utc), "dish_m": 2.4, "power_w": 6}])
+    assert D.setup_at("10G", datetime(2025, 1, 1, tzinfo=timezone.utc))["dish_m"] == 1.0
+    assert D.setup_at("10G", datetime(2026, 1, 1, tzinfo=timezone.utc))["dish_m"] == 1.2
+    assert D.setup_at("10G", datetime(2026, 11, 1, tzinfo=timezone.utc))["power_w"] == 6
+    assert D.setup_at("10G", datetime(2024, 1, 1, tzinfo=timezone.utc)) is None
+    assert D.setup_at("24G", datetime(2026, 1, 1, tzinfo=timezone.utc)) is None

@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS qsos (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT 
     qth TEXT, tx_pwr TEXT, setup_id INTEGER, comment TEXT, qsl_sent TEXT, qsl_rcvd TEXT, t_c REAL, rh REAL,
     p_hpa REAL, wx_source TEXT, calc TEXT, adif TEXT, UNIQUE(utc, call, band));
 CREATE INDEX IF NOT EXISTS q_utc ON qsos(utc);
+CREATE TABLE IF NOT EXISTS decodes (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, call TEXT, grid TEXT,
+    snr INTEGER, dt REAL, df INTEGER, mode TEXT, message TEXT, band TEXT, dial_mhz REAL, client TEXT,
+    UNIQUE(utc, message, df));
+CREATE INDEX IF NOT EXISTS d_utc ON decodes(utc);
+CREATE TABLE IF NOT EXISTS setup_history (id INTEGER PRIMARY KEY AUTOINCREMENT, band TEXT NOT NULL, from_utc TEXT NOT NULL,
+    dish_m REAL, dish_kind TEXT, eta REAL, power_w REAL, nf_db REAL, line_loss_db REAL, pol TEXT, notes TEXT);
 """
 QSO_COLS = ["id", "utc", "call", "band", "freq_mhz", "mode", "submode", "rst_sent", "rst_rcvd", "locator", "my_locator",
             "name", "qth", "tx_pwr", "setup_id", "comment", "qsl_sent", "qsl_rcvd", "t_c", "rh", "p_hpa", "wx_source",
@@ -227,6 +233,55 @@ class DB:
         return out
 
     # CSV ----------------------------------------------------------------------
+    # decodes received live from WSJT-X ---------------------------------------
+    def add_decode(self, **d) -> bool:
+        keys = ["utc", "call", "grid", "snr", "dt", "df", "mode", "message", "band", "dial_mhz", "client"]
+        if isinstance(d.get("utc"), datetime):
+            d["utc"] = iso_utc(d["utc"])
+        cur = self.con.execute(f"INSERT OR IGNORE INTO decodes ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                               [d.get(k) for k in keys])
+        self.con.commit()
+        return bool(cur.rowcount)
+
+    def decodes(self, since: str | None = None, call: str | None = None, limit: int = 500) -> list[dict]:
+        q, a = "SELECT * FROM decodes WHERE 1=1", []
+        if since:
+            q += " AND utc >= ?"
+            a.append(since)
+        if call:
+            q += " AND call = ?"
+            a.append(call.upper())
+        return [dict(r) for r in self.con.execute(q + " ORDER BY utc DESC LIMIT ?", a + [limit])]
+
+    # station history (what was used on each band, from which date) -----------------
+    HIST_COLS = ["band", "from_utc", "dish_m", "dish_kind", "eta", "power_w", "nf_db", "line_loss_db", "pol", "notes"]
+
+    def history(self, band: str | None = None) -> list[dict]:
+        q, a = "SELECT * FROM setup_history", []
+        if band:
+            q += " WHERE band = ?"
+            a.append(band)
+        return [dict(r) for r in self.con.execute(q + " ORDER BY band, from_utc", a)]
+
+    def save_history(self, band: str, rows: list[dict]):
+        """Replace the history of one band with these periods (each valid from its date to the next one)."""
+        self.con.execute("DELETE FROM setup_history WHERE band = ?", (band,))
+        for r in rows:
+            r = {**r, "band": band}
+            if isinstance(r.get("from_utc"), datetime):
+                r["from_utc"] = iso_utc(r["from_utc"])
+            keys = [k for k in self.HIST_COLS if r.get(k) not in (None, "")]
+            self.con.execute(f"INSERT INTO setup_history ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                             [r[k] for k in keys])
+        self.con.commit()
+
+    def setup_at(self, band: str, t: datetime) -> dict | None:
+        """The station period in force on band at time t (latest period that started before t)."""
+        t = iso_utc(t) if isinstance(t, datetime) else str(t)
+        r = self.con.execute("SELECT * FROM setup_history WHERE band = ? AND from_utc <= ? ORDER BY from_utc DESC LIMIT 1",
+                             (band, t)).fetchone()
+        return dict(r) if r else None
+
     def export_csv(self) -> str:
         buf = io.StringIO()
         w = csv.writer(buf)

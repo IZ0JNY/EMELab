@@ -36,3 +36,32 @@ def test_not_wsjtx_and_encoders():
     assert h[:4] == struct.pack(">I", wsjtx.MAGIC) and struct.unpack(">I", h[8:12])[0] == 13
     c = wsjtx.configure("WSJT-X", "Q65", "D", 60)
     assert struct.unpack(">I", c[8:12])[0] == 15
+
+
+def test_sender_of_messages():
+    from emelab.wsjtx_service import sender_of
+    assert sender_of("CQ DL7YC JO62") == ("DL7YC", "JO62")
+    assert sender_of("IZ0JNY OK1DFC JN79") == ("OK1DFC", "JN79")
+    assert sender_of("IZ0JNY OK1DFC -18") == ("OK1DFC", None)
+    assert sender_of("CQ EU OZ1LPR JO44") == ("OZ1LPR", "JO44")
+    assert sender_of("OK1DFC IZ0JNY RR73")[0] == "IZ0JNY"
+
+
+def test_service_logs_qso_and_decodes(tmp_path):
+    from datetime import datetime, timezone
+    from emelab import db as edb
+    from emelab.wsjtx_service import Service
+    D = edb.DB(tmp_path / "t.sqlite")
+    s = Service(lambda: D, lambda: "JN61PM")
+    s.on_message({"type": "status", "id": "WSJT-X", "dial_hz": 24_048_000_000, "submode": "D"}, None)
+    s.on_message({"type": "decode", "id": "WSJT-X", "new": True, "ms_since_midnight": 3_600_000, "snr": -17, "dt": 2.5,
+                  "df": 700, "mode": "~", "message": "CQ OK1KIR JN79", "low_confidence": False, "off_air": False}, None)
+    assert D.decodes()[0]["call"] == "OK1KIR" and D.decodes()[0]["band"] == "24G"
+    t = datetime(2026, 2, 25, 17, 2, tzinfo=timezone.utc)
+    s.on_message({"type": "qso_logged", "id": "WSJT-X", "time_off": t, "time_on": t, "dx_call": "OK1KIR", "dx_grid": "JN79DW",
+                  "tx_freq_hz": 24_048_200_000, "mode": "Q65", "report_sent": "-17", "report_rcvd": "-14", "tx_power": "15",
+                  "comments": "", "name": "", "operator": "", "my_call": "IZ0JNY", "my_grid": "JN61PM",
+                  "exch_sent": "", "exch_rcvd": ""}, None)
+    q = D.qsos()[0]
+    assert q["call"] == "OK1KIR" and q["band"] == "24G" and q["submode"] == "D" and q["calc"].get("moon_el") is not None
+    assert not s.errors

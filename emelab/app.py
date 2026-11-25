@@ -34,6 +34,7 @@ def _credits_dialog():
 
 
 D = ui._db()
+ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
 if "coach_seen" not in S:                          # invitations to measure, once per launch
     S["coach_seen"] = True
     try:
@@ -67,7 +68,7 @@ with st.sidebar:
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
-    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Puntamento", ui._pointing_tab), ("lna", "🔊 LNA", ui._lna_tab), ("sspa", "🔥 SSPA", ui._sspa_tab),

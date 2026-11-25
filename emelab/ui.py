@@ -145,6 +145,53 @@ def _setups(D):
         if dl and st.button("🗑️ Elimina", key="em_del_setup_btn"):
             D.delete_setup(dl)
             st.rerun()
+    _history_editor(D)
+
+
+def _history_editor(D):
+    import pandas as pd
+    from emelab import dx
+    st.divider()
+    st.subheader("📜 Storico della stazione")
+    st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EMELab usa il periodo giusto per "
+               "ogni QSO quando confronta i rapporti con la teoria e impara la correzione della tua stazione periodo per "
+               "periodo. Ogni riga vale dalla sua data fino alla riga successiva.")
+    band = st.selectbox("Banda", list(dx.BAND_GHZ), key="hist_band", format_func=lambda b: b.replace("G", " GHz"))
+    rows = D.history(band)
+    df = pd.DataFrame([{"Dal (data)": (r["from_utc"] or "")[:10], "Parabola (m)": r.get("dish_m"),
+                        "Tipo": "offset" if r.get("dish_kind") == "offset" else "fuoco primario",
+                        "Efficienza (%)": round(100 * r["eta"], 1) if r.get("eta") else None, "Potenza al feed (W)": r.get("power_w"),
+                        "NF ricevitore (dB)": r.get("nf_db"), "Perdite prima dell'LNA (dB)": r.get("line_loss_db"),
+                        "Polarizzazione": r.get("pol") or "V", "Note": r.get("notes") or ""} for r in rows]
+                      or [{"Dal (data)": "", "Parabola (m)": None, "Tipo": "offset", "Efficienza (%)": None,
+                           "Potenza al feed (W)": None, "NF ricevitore (dB)": None, "Perdite prima dell'LNA (dB)": None,
+                           "Polarizzazione": "V", "Note": ""}])
+    ed = st.data_editor(df, num_rows="dynamic", hide_index=True, width="stretch", key=f"hist_ed_{band}",
+                        column_config={"Dal (data)": st.column_config.TextColumn(help="AAAA-MM-GG (UTC)"),
+                                       "Tipo": st.column_config.SelectboxColumn(options=["offset", "fuoco primario"]),
+                                       "Polarizzazione": st.column_config.SelectboxColumn(options=["V", "H", "HV"])})
+    if st.button("💾 Salva lo storico della banda", key="hist_save"):
+        out, bad = [], []
+        for r in ed.to_dict("records"):
+            d = str(r.get("Dal (data)") or "").strip()
+            if not d:
+                continue
+            try:
+                t = datetime.fromisoformat(d[:10]).replace(tzinfo=timezone.utc)
+            except ValueError:
+                bad.append(d)
+                continue
+            num = lambda k: None if r.get(k) is None or (isinstance(r.get(k), float) and r.get(k) != r.get(k)) else float(r[k])
+            out.append({"from_utc": t, "dish_m": num("Parabola (m)"), "dish_kind": "offset" if r.get("Tipo") == "offset" else "prime",
+                        "eta": (num("Efficienza (%)") or 0) / 100 or None, "power_w": num("Potenza al feed (W)"),
+                        "nf_db": num("NF ricevitore (dB)"), "line_loss_db": num("Perdite prima dell'LNA (dB)"),
+                        "pol": r.get("Polarizzazione") or None, "notes": r.get("Note") or None})
+        if bad:
+            st.error(i18n.tr("Date non valide (usa AAAA-MM-GG)") + ": " + ", ".join(bad))
+        else:
+            D.save_history(band, out)
+            _st.session_state.pop("em_off_key", None)
+            st.success("Storico salvato.")
 
 
 # ------------------------------------------------------------------ new measurement
@@ -1245,24 +1292,45 @@ def _dx_models(D, band):
     return out
 
 
-def _learned_offset(D, band, me, my_loc, models):
-    """Median of (reported − predicted) on the QSOs of this band: what EMELab has learned about your station."""
+def _model_at(D, band, t, me_now):
+    """Your station as it was at time t on this band (station history), or the current configuration."""
     from emelab import dx
-    key = ("em_offset", band, len(D.qsos(band=band)))
+    h = D.setup_at(band, t)
+    if not h or not h.get("dish_m"):
+        return me_now, None
+    m = dx.station(band, float(h["dish_m"]), h.get("power_w") or me_now.get("power_w"), h.get("dish_kind") or "offset",
+                   tsys_K=None, eta=h.get("eta") or None)
+    if h.get("nf_db") is not None:
+        tsys_setup = {"nf_db": h["nf_db"], "line_loss_db": h.get("line_loss_db") or 0.0, "spill": 0.9}
+        m["tsys_K"] = analysis.tsys_cold(tsys_setup, 0.0)["sys"]
+    else:
+        m["tsys_K"] = me_now["tsys_K"]
+    m["pol"] = h.get("pol") or me_now.get("pol")
+    return m, h["from_utc"][:10]
+
+
+def _learned_offset(D, band, me, my_loc, models):
+    """Median of (reported − predicted) on the QSOs of this band, each QSO with the station of its period (station
+    history): what EMELab has learned about your station, overall and period by period."""
+    from emelab import dx
+    key = ("em_offset", band, len(D.qsos(band=band)), len(D.history(band)))
     if _st.session_state.get("em_off_key") == key:
         return _st.session_state["em_off"]
     by = {m["call"]: m for m in models}
-    pairs = []
-    for q in D.qsos(band=band)[-150:]:
+    pairs, per = [], {}
+    for q in D.qsos(band=band)[-200:]:
         m = by.get(q["call"])
         v = _num_rst(q.get("rst_sent"))
         if not m or v is None:
             continue
         t = edb.parse_utc(q["utc"]) if isinstance(q["utc"], str) else q["utc"]
-        r = dx.link_at(t, me, my_loc, m["model"], m["loc"], band)
+        mine, epoch = _model_at(D, band, t, me)
+        r = dx.link_at(t, mine, my_loc, m["model"], m["loc"], band)
         if r:
             pairs.append((v, r["snr_a_hears_b"]))
+            per.setdefault(epoch or "configurazione attuale", []).append((v, r["snr_a_hears_b"]))
     res = dx.learn_offset(pairs)
+    res["epochs"] = {k: dx.learn_offset(v) for k, v in sorted(per.items())}
     _st.session_state["em_off_key"], _st.session_state["em_off"] = key, res
     return res
 
@@ -1300,6 +1368,13 @@ def _signal_tab(D):
     m[2].metric("Correzione appresa dai QSO", f"{off['offset_db']:+.1f} dB" if off["n"] else "–",
                 f"n={off['n']}" + (f", ±{off['mad_db']:.1f} dB" if off.get("mad_db") else ""), delta_color="off")
     m[3].metric("Stazioni con dati", len(models))
+    if len(off.get("epochs", {})) > 1 or (off.get("epochs") and "configurazione attuale" not in off["epochs"]):
+        with st.expander("📜 Correzione per periodo (storico della stazione)"):
+            st.dataframe([{"Dal": i18n.tr(k), "QSO": v["n"], "Misura − teoria (dB)": round(v["offset_db"], 1),
+                           "Dispersione (dB)": round(v["mad_db"], 1) if v.get("mad_db") is not None else None}
+                          for k, v in off["epochs"].items()], hide_index=True, width="stretch")
+            st.caption("Quanto i rapporti che hai dato (come ricevevi l'altra stazione) si scostano dal modello in ogni "
+                       "periodo: un valore molto negativo indica perdite, puntamento o Tsys peggiori del previsto.")
     t1, t2 = st.tabs(["🏆 Chi posso collegare", "📶 Segnale di una stazione"])
     with t1:
         c = st.columns(3)
@@ -1671,3 +1746,116 @@ def _wz_plan(D, stn, hz, fc):
             language=None)
     st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EMELab non conserva le email: "
                "l'indirizzo lo trovi su QRZ.com o sul sito della stazione.")
+
+
+# ------------------------------------------------------------------ WSJT-X live
+@_st.cache_resource
+def _wsjtx_service():
+    from emelab import wsjtx_service
+
+    def wx(t):
+        stn = edb.DB().station()
+        if not stn.get("lat"):
+            return None
+        return weather.open_meteo(stn["lat"], stn["lon"], t)
+    return wsjtx_service.Service(edb.DB, lambda: edb.DB().station().get("locator"), wx)
+
+
+def _wsjtx_autostart():
+    sets = openems_local.load_settings()
+    svc = _wsjtx_service()
+    if sets.get("wsjtx_on") and not svc.running:
+        try:
+            svc.start(sets.get("wsjtx_host", "127.0.0.1"), int(sets.get("wsjtx_port", 2237)), sets.get("wsjtx_mcast") or None)
+            svc.auto_log = bool(sets.get("wsjtx_autolog", True))
+        except OSError as e:
+            svc.errors.append(f"avvio: {e}")
+    return svc
+
+
+def _wsjtx_tab(D):
+    from emelab import dx
+    st.subheader("WSJT-X in diretta")
+    st.caption("In WSJT-X: Settings → Reporting → «UDP Server» = 127.0.0.1, porta 2237, e spunta «Accept UDP requests». "
+               "EMELab riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
+               "di quel momento) e può colorare i nominativi e impostare il sottomodo Q65. Se usi anche JTAlert o "
+               "GridTracker, metti in WSJT-X un indirizzo multicast (per esempio 224.0.0.1) e lo stesso qui.")
+    sets = openems_local.load_settings()
+    svc = _wsjtx_autostart()
+    c = st.columns(5)
+    host = c[0].text_input("Indirizzo", sets.get("wsjtx_host", "127.0.0.1"), key="wj_host")
+    port = c[1].number_input("Porta UDP", 1024, 65535, int(sets.get("wsjtx_port", 2237)), key="wj_port")
+    mcast = c[2].text_input("Gruppo multicast (facoltativo)", sets.get("wsjtx_mcast", ""), key="wj_mcast")
+    auto = c[3].checkbox("Registra i QSO nel log", bool(sets.get("wsjtx_autolog", True)), key="wj_auto")
+    svc.auto_log = auto
+    if not svc.running:
+        if c[4].button("▶️ Collega", type="primary", key="wj_start"):
+            try:
+                svc.start(host.strip(), int(port), mcast.strip() or None)
+                openems_local.save_settings(wsjtx_on=True, wsjtx_host=host.strip(), wsjtx_port=int(port),
+                                            wsjtx_mcast=mcast.strip(), wsjtx_autolog=auto)
+                st.rerun()
+            except OSError as e:
+                st.error(i18n.tr("Porta non disponibile (forse un altro programma la usa)") + f": {e}")
+    elif c[4].button("⏹️ Scollega", key="wj_stop"):
+        svc.stop()
+        openems_local.save_settings(wsjtx_on=False)
+        st.rerun()
+    if not svc.running:
+        st.info("Non collegato.")
+        return
+    s = svc.status
+    if not svc.last_seen:
+        st.warning("In ascolto: nessun messaggio da WSJT-X finora. Controlla le impostazioni di Reporting in WSJT-X.")
+    else:
+        age = (datetime.now(timezone.utc) - svc.last_seen).total_seconds()
+        st.markdown(f"**{svc.client or 'WSJT-X'}** · " + i18n.tr("ultimo messaggio") + f" {age:.0f} s · "
+                    + (f"**{s['dial_hz'] / 1e6:,.3f} MHz** · " if s.get("dial_hz") else "")
+                    + f"**{s.get('mode', '')} {s.get('submode', '')}** · DX **{s.get('dx_call') or '—'}** {s.get('dx_grid') or ''} · "
+                    + ("🔴 TX" if s.get("transmitting") else "🟢 RX"))
+    st.button("🔄 Aggiorna", key="wj_refresh")
+    stn = D.station()
+    band = None
+    if s.get("dial_hz"):
+        from emelab import stations as _stns
+        band = _stns.band_of(s["dial_hz"] / 1e6)
+    # recommended Q65 submode for the DX in WSJT-X
+    if band and s.get("dx_call") and stn.get("lat"):
+        dxs = D.station_of(s["dx_call"])
+        grid = s.get("dx_grid") or (dxs or {}).get("locator")
+        if grid:
+            try:
+                L = astro.locator_to_latlon(grid)
+                mut = astro.mutual(datetime.now(timezone.utc), (stn["lat"], stn["lon"]), L)
+                spread = mut["spread_hz_per_ghz"] * dx.BAND_GHZ.get(band, 10.368)
+                mode, thr = dx.best_mode(spread)
+                c = st.columns([3, 1])
+                c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz → " + i18n.tr("modo consigliato") +
+                          f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)")
+                if c[1].button(f"⚙️ Imposta Q65-{mode} in WSJT-X", key="wj_setmode"):
+                    st.success("Inviato a WSJT-X.") if svc.set_q65(mode) else st.error("WSJT-X non raggiungibile.")
+            except Exception:
+                pass
+    rec = list(svc.recent)[:60]
+    if rec:
+        st.markdown("#### " + i18n.tr("Ultime decodifiche"))
+        worked = {q["call"] for q in D.qsos(band=band)} if band else set()
+        st.dataframe([{"UTC": r["utc"].strftime("%H:%M"), "Nominativo": r["call"], "Locator": r["grid"], "SNR (dB)": r["snr"],
+                       "DT (s)": round(r["dt"], 1), "DF (Hz)": r["df"], "Messaggio": r["message"],
+                       "Già collegato": "✓" if r["call"] in worked else ""} for r in rec], hide_index=True, width="stretch")
+        if st.button("🎨 Colora in WSJT-X: verde chi ti manca, grigio chi hai già collegato", key="wj_hl"):
+            n = 0
+            for call in {r["call"] for r in rec if r["call"]}:
+                n += svc.highlight(call, "#c8e6c9" if call not in worked else "#e0e0e0")
+            st.success(i18n.tr("Nominativi colorati") + f": {n}")
+    if svc.logged:
+        st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
+        st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q["band"],
+                       "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
+                       "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
+                       "Stato": i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")} for q in svc.logged],
+                     hide_index=True, width="stretch")
+    if svc.errors:
+        with st.expander("⚠️ Messaggi"):
+            for e in list(svc.errors)[-10:]:
+                st.text(e)
