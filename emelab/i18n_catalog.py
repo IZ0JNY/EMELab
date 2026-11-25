@@ -1060,4 +1060,11 @@ ENTRIES = [
     ("Confermo: cancella tutte le stazioni e l'elenco dei file importati", 'I confirm: delete all stations and the list of imported files'),
     ('🗑️ Svuota il database delle stazioni', '🗑️ Empty the station database'),
     ('Stazioni', 'Stations'),
+    ('🗑️ Cancella i QSO importati o svuota il log', '🗑️ Delete imported QSOs or empty the log'),
+    ('File ADIF importati', 'Imported ADIF files'),
+    ('Cancellare i QSO importati da', 'Delete the QSOs imported from'),
+    ('Svuota tutto il log', 'Empty the whole log'),
+    ('Cancella tutti i QSO del log, così puoi importare di nuovo i file ADIF da capo. Le Stazioni EME e le misure restano.', 'Deletes every QSO in the log, so you can import the ADIF files again from scratch. EME stations and measurements stay.'),
+    ('Confermo: cancella tutti i QSO', 'I confirm: delete all QSOs'),
+    ('🗑️ Svuota il log QSO', '🗑️ Empty the QSO log'),
 ]

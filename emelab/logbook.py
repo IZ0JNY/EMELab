@@ -149,18 +149,36 @@ def enrich(q: dict, my_locator: str, my_h: float = 0.0, wx: dict | None = None) 
     return conditions(q["utc"], my, latlon(q.get("locator")), f, wx, my_h)
 
 
+def fill_locators(D, my_locator: str, my_h: float = 0.0) -> int:
+    """QSOs without a locator (common in ADIF files of other loggers): take it from the EME stations database and
+    recompute distance, EME path, Moon elevations and spread. Returns how many QSOs were completed."""
+    n = 0
+    known = {}
+    for q in D.qsos():
+        if q.get("locator"):
+            continue
+        if q["call"] not in known:
+            s = D.station_of(q["call"])
+            known[q["call"]] = (s or {}).get("locator") if s and latlon((s or {}).get("locator")) else None
+        loc = known[q["call"]]
+        if not loc:
+            continue
+        q["locator"] = loc
+        D.update_qso(q["id"], locator=loc, calc=enrich(q, my_locator, my_h))
+        n += 1
+    return n
+
+
 # ------------------------------------------------------------------ statistics
 def statistics(qsos: list[dict]) -> dict:
     """Distributions of the conditions over the logged QSOs: what the successful ones had in common."""
     import numpy as np
     rows = [q for q in qsos if q.get("calc")]
     out = {"n": len(qsos), "n_with_conditions": len(rows)}
-    if not rows:
-        return out
     def arr(k):
         return np.array([q["calc"].get(k) for q in rows if q["calc"].get(k) is not None], float)
     for k in ("moon_el", "dx_moon_el", "mutual_spread_hz", "path_loss_vs_perigee_db", "sun_moon_deg", "atm_db", "moon_dec"):
-        a = arr(k)
+        a = arr(k) if rows else np.array([])
         if a.size:
             out[k] = {"median": float(np.median(a)), "p10": float(np.percentile(a, 10)), "p90": float(np.percentile(a, 90))}
     out["by_band"] = {}

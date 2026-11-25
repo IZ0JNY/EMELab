@@ -929,6 +929,7 @@ def _logbook_tab(D):
         ups = st.file_uploader("File ADIF (.adi, .adif)", type=["adi", "adif", "txt"], accept_multiple_files=True, key="q_adif")
         only_eme = st.checkbox("Solo i QSO EME e delle bande da 10 GHz in su", True, key="q_adif_eme")
         if ups and st.button("📥 Importa", key="q_adif_go"):
+            id0 = D.max_qso_id()
             n = dup = skipped = 0
             bar = st.progress(0.0)
             recs = [r for f in ups for r in lb.parse_adif(f.getvalue().decode("utf-8", "replace"))]
@@ -955,6 +956,8 @@ def _logbook_tab(D):
                 bar.progress((k + 1) / max(len(recs), 1))
             st.success(i18n.tr("QSO importati") + f": {n}" + (f" · " + i18n.tr("già presenti") + f": {dup}" if dup else "")
                        + (f" · " + i18n.tr("non EME o sotto i 10 GHz, lasciati fuori") + f": {skipped}" if skipped else ""))
+            D.log_qso_import(", ".join(f.name for f in ups), id0)
+    lb.fill_locators(D, my_loc, stn.get("height_m") or 0)
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
@@ -962,10 +965,12 @@ def _logbook_tab(D):
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
                         "Banda": q.get("band"), "Modo": " ".join(x for x in (q.get("mode"), q.get("submode")) if x),
-                        "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
-                        "Distanza (km)": _r(q["calc"].get("ground_km"), 0), "Percorso EME (km)": _r(q["calc"].get("eme_path_km"), 0),
-                        "EL Luna": _r(q["calc"].get("moon_el"), 1), "EL DX": _r(q["calc"].get("dx_moon_el"), 1),
-                        "Spread (Hz)": _r(q["calc"].get("mutual_spread_hz"), 0), "Note": q.get("comment")} for q in qs])
+                        "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                        "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
+                        "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
+                        "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
+                        "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
+                       for q in qs])
     df.columns = [i18n.tr(c) for c in df.columns]
     st.dataframe(df, hide_index=True, width="stretch")
     cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
@@ -980,6 +985,38 @@ def _logbook_tab(D):
     if dl and c[1].button("🗑️ Elimina", key="q_del_go"):
         D.delete_qso(dl)
         st.rerun()
+    _qsos_manage(D, len(qs))
+
+
+def _qsos_manage(D, n_qsos):
+    with st.expander("🗑️ Cancella i QSO importati o svuota il log"):
+        imp = [r for r in D.qso_imports() if r["n"]]
+        if imp:
+            st.markdown("**" + i18n.tr("File ADIF importati") + "**")
+            for r in imp:
+                c = st.columns([3, 1])
+                c[0].markdown(f"{r['utc'][:16].replace('T', ' ')} UTC · {r.get('label') or ''} — {r['n']} QSO")
+                if c[1].button("🗑️ Cancella", key=f"q_imp_del_{r['id']}"):
+                    st.session_state["q_imp_pending"] = r["id"]
+            pend = next((r for r in imp if r["id"] == st.session_state.get("q_imp_pending")), None)
+            if pend:
+                st.warning(i18n.tr("Cancellare i QSO importati da") + f" {pend.get('label') or ''} ({pend['n']} QSO)?")
+                c = st.columns(2)
+                if c[0].button("✅ Sì, cancella", key="q_imp_yes"):
+                    D.delete_qso_import(pend["id"])
+                    st.session_state.pop("q_imp_pending", None)
+                    st.rerun()
+                if c[1].button("Annulla", key="q_imp_no"):
+                    st.session_state.pop("q_imp_pending", None)
+                    st.rerun()
+        st.markdown("**" + i18n.tr("Svuota tutto il log") + "**")
+        st.caption("Cancella tutti i QSO del log, così puoi importare di nuovo i file ADIF da capo. "
+                   "Le Stazioni EME e le misure restano.")
+        sure = st.checkbox(i18n.tr("Confermo: cancella tutti i QSO") + f" ({n_qsos})", key="q_clear_ok")
+        if st.button("🗑️ Svuota il log QSO", key="q_clear_go", disabled=not sure):
+            D.clear_qsos()
+            st.session_state.pop("q_clear_ok", None)
+            st.rerun()
 
 
 def _qso_stats_tab(D):

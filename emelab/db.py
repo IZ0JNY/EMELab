@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS setup_history (id INTEGER PRIMARY KEY AUTOINCREMENT, 
     dish_m REAL, dish_kind TEXT, eta REAL, power_w REAL, nf_db REAL, line_loss_db REAL, pol TEXT, notes TEXT);
 CREATE TABLE IF NOT EXISTS station_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, source TEXT NOT NULL,
     label TEXT, n INTEGER);
+CREATE TABLE IF NOT EXISTS qso_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, label TEXT,
+    ids TEXT);
 """
 QSO_COLS = ["id", "utc", "call", "band", "freq_mhz", "mode", "submode", "rst_sent", "rst_rcvd", "locator", "my_locator",
             "name", "qth", "tx_pwr", "setup_id", "comment", "qsl_sent", "qsl_rcvd", "t_c", "rh", "p_hpa", "wx_source",
@@ -300,6 +302,45 @@ class DB:
     def delete_qso(self, qid: int):
         self.con.execute("DELETE FROM qsos WHERE id=?", (qid,))
         self.con.commit()
+
+    # ADIF imports: which QSOs came from which file(s), so that an import can be taken back ------------
+    def max_qso_id(self) -> int:
+        return int(self.con.execute("SELECT IFNULL(MAX(id), 0) FROM qsos").fetchone()[0])
+
+    def log_qso_import(self, label: str, since_id: int) -> int:
+        """Record the QSOs added after `since_id` (by an import just finished) under `label`; returns how many."""
+        ids = [r[0] for r in self.con.execute("SELECT id FROM qsos WHERE id > ? ORDER BY id", (since_id,))]
+        if ids:
+            self.con.execute("INSERT INTO qso_imports (utc, label, ids) VALUES (?,?,?)",
+                             (iso_utc(datetime.now(timezone.utc)), label, json.dumps(ids)))
+            self.con.commit()
+        return len(ids)
+
+    def qso_imports(self) -> list[dict]:
+        """Every import, newest first, with how many of its QSOs are still in the log."""
+        have = {r[0] for r in self.con.execute("SELECT id FROM qsos")}
+        out = []
+        for r in self.con.execute("SELECT * FROM qso_imports ORDER BY utc DESC, id DESC"):
+            d = dict(r)
+            d["ids"] = json.loads(d["ids"] or "[]")
+            d["n"] = sum(1 for i in d["ids"] if i in have)
+            out.append(d)
+        return out
+
+    def delete_qso_import(self, imp_id: int) -> int:
+        r = self.con.execute("SELECT ids FROM qso_imports WHERE id = ?", (imp_id,)).fetchone()
+        n = 0
+        for qid in json.loads(r["ids"] or "[]") if r else []:
+            n += self.con.execute("DELETE FROM qsos WHERE id = ?", (qid,)).rowcount
+        self.con.execute("DELETE FROM qso_imports WHERE id = ?", (imp_id,))
+        self.con.commit()
+        return n
+
+    def clear_qsos(self) -> int:
+        n = self.con.execute("DELETE FROM qsos").rowcount
+        self.con.execute("DELETE FROM qso_imports")
+        self.con.commit()
+        return n
 
     def qsos(self, band: str | None = None, call: str | None = None) -> list[dict]:
         q, a = "SELECT * FROM qsos WHERE 1=1", []
