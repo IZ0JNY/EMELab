@@ -17,13 +17,75 @@ from datetime import datetime, timedelta, timezone
 
 import streamlit as _st
 
-from emelab import gpsdo, i18n, stations, wsjtx_check, wsjtx_ini
+import os
+import time
+
+from emelab import gpsdo, i18n, stations, timesync, wsjtx_check, wsjtx_ini
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
 S = _st.session_state
 CONFIRM_HOURS = 12.0
 OK, BAD, ASK = "✅", "⚠️", "❔"
+PROC_EVERY_S, NTP_EVERY_S = 60, 600           # BktTimeSync process check / NTP offset measurement
+
+
+# ------------------------------------------------------------------ PC clock (BktTimeSync)
+def clock_state(measure: bool = False) -> dict:
+    """{"bkt": bkt_running(), "ntp": ntp_offset() or None}, cached: process every minute, NTP every 10 minutes on
+    Windows (elsewhere only on request). Read-only: EMELab never changes the clock nor BktTimeSync."""
+    now = time.monotonic()
+    t, bkt = S.get("ts_proc", (None, None))
+    if bkt is None or now - t > PROC_EVERY_S:
+        bkt = timesync.bkt_running()
+        S["ts_proc"] = (now, bkt)
+    t, ntp = S.get("ts_ntp", (None, None))
+    if measure or (os.name == "nt" and (ntp is None or now - t > NTP_EVERY_S)):
+        ntp = timesync.ntp_offset()
+        S["ts_ntp"] = (now, ntp)
+    return {"bkt": bkt, "ntp": ntp}
+
+
+def clock_alerts(state: dict) -> list[dict]:
+    """Pop-up alerts: BktTimeSync not running, PC clock off by more than 0.5 s."""
+    out = []
+    if state["bkt"].get("running") is False:
+        out.append({"key": "bktsync", "msg": "BktTimeSync non è in esecuzione",
+                    "detail": i18n.tr("avvialo per tenere l'orologio del PC allineato (DT di WSJT-X)"), "action": None})
+    ntp = state.get("ntp") or {}
+    if timesync.verdict(ntp.get("offset_s")) in ("warn", "bad"):
+        out.append({"key": "clock", "msg": "Orologio del PC fuori di più di 0,5 s",
+                    "detail": f"{ntp['offset_s']:+.2f} s " + i18n.tr("rispetto a") + f" {ntp['server']}", "action": None})
+    return out
+
+
+def _clock_box():
+    st.markdown("#### " + i18n.tr("🕒 Orologio del PC (BktTimeSync)"))
+    c = st.columns([3, 3, 1])
+    measure = c[2].button("🔄 Misura", key="ts_measure", help="Una richiesta SNTP al server NTP (UDP 123). EMELab "
+                          "non cambia l'ora del PC né le impostazioni di BktTimeSync.")
+    if measure:
+        S.pop("ts_proc", None)
+    stt = clock_state(measure)
+    bkt, ntp = stt["bkt"], stt["ntp"]
+    if bkt.get("running"):
+        c[0].success(i18n.tr("BktTimeSync in esecuzione") + f" ({bkt['process']})")
+    elif bkt.get("running") is False:
+        c[0].error("BktTimeSync non è in esecuzione: avvialo (anche ridotto nella barra di sistema).")
+    else:
+        c[0].info("Controllo del processo BktTimeSync disponibile solo su Windows.")
+    if not ntp:
+        c[1].info("Premi «🔄 Misura» per confrontare l'orologio del PC con il server NTP.")
+    elif ntp.get("error"):
+        c[1].warning(i18n.tr("Server NTP non raggiungibile") + f" ({ntp['server']}): {i18n.tr(ntp['error'])}")
+    else:
+        v = timesync.verdict(ntp["offset_s"])
+        txt = (i18n.tr("Scarto dell'orologio del PC") + f" {ntp['offset_s']:+.3f} s " + i18n.tr("rispetto a")
+               + f" {ntp['server']} (stratum {ntp['stratum']}, " + i18n.tr("ritardo") + f" {ntp['delay_s'] * 1000:.0f} ms)")
+        {"ok": c[1].success, "warn": c[1].warning, "bad": c[1].error}[v](txt)
+    st.caption("Q65 e gli altri modi di WSJT-X vogliono l'orologio del PC entro pochi decimi di secondo (colonna DT): "
+               "oltre ±0,5 s le decodifiche peggiorano, oltre ±1 s si perdono. EMELab controlla soltanto: non tocca "
+               "l'ora di sistema né BktTimeSync.")
 
 
 # ------------------------------------------------------------------ state
@@ -93,6 +155,7 @@ def alerts(svc, sets: dict) -> list[dict]:
         if gpsdo.reminder_due(sets):
             out.append({"key": "gpsdo", "msg": "GPSDO: controlla che sia acceso e agganciato",
                         "detail": "GPS signal OK · PLL lock OK", "action": "gpsdo"})
+        out += clock_alerts(clock_state())
     return out
 
 
@@ -356,6 +419,7 @@ def render(svc, sets):
     """Live panel, control check, preset editor, automatic corrections and pop-up settings."""
     st.markdown("#### " + i18n.tr("🖥️ WSJT-X in tempo reale"))
     _live_fragment(svc)
+    _clock_box()
     band = _band(svc)
     st.markdown("#### " + i18n.tr("✅ Controllo dei parametri per il QSO"))
     st.caption("EMELab confronta i valori di WSJT-X con il preset della banda (10GHz: Q65-60D, Tx e Rx 1000 Hz, CFOM; "

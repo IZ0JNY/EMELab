@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, ui, ui_gpsdo, ui_moon, ui_wsjtx_panel
+from emelab import coach, i18n, ui, ui_camera, ui_gpsdo, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -116,24 +116,27 @@ with st.sidebar:
     st.caption("Tutti i dati restano su questo PC. Orari in UTC.")
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
-    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("moon", "🌙 Luna", ui_moon.tab), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
-    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("moon", "🌙 Luna", ui_moon.tab), ("setups", "🛰️ Configurazioni", ui._setups),
+    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
-    ("pointing", "🎯 Tracking", ui._pointing_tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
+    ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
      ("design", "🧪 Laboratorio", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
     ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
+OFF_BY_DEFAULT = {"camera"}           # shown only when chosen in «Schede da mostrare»
 _saved = openems_local.load_settings().get("tabs")
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
         _saved = [k for k in _saved if k not in ("sspa", "twt")] + ["power"]
+    if _saved is not None and "signal" in _saved:                    # 0.1.8: «Segnale e stazioni» is inside the Planner
+        _saved = [k for k in _saved if k != "signal"] + ([] if "planner" in _saved else ["planner"])
     if _saved is not None and "gpsdo" not in _saved and not openems_local.load_settings().get("tabs_gpsdo_offered"):
         _saved = list(_saved) + ["gpsdo"]                             # 0.1.6: new GPSDO tab shown once by default
         openems_local.save_settings(tabs=_saved, tabs_gpsdo_offered=True)
     if _saved is not None and "moon" not in _saved and not openems_local.load_settings().get("tabs_moon_offered"):
         _saved = list(_saved) + ["moon"]                              # new Moon tab shown once by default
         openems_local.save_settings(tabs=_saved, tabs_moon_offered=True)
-    S["tabs_on"] = [k for k, _, _ in TABS[2:] if _saved is None or k in _saved]
+    S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k not in OFF_BY_DEFAULT) or (_saved and k in _saved)]
 
 
 def _save_tabs():
@@ -148,6 +151,9 @@ with st.sidebar:
         st.multiselect("Schede", [k for k, _, _ in TABS[2:]], key="tabs_on", on_change=_save_tabs,
                        format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
                        help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
+if "camera" not in S["tabs_on"]:
+    from emelab import moontrack as _mt
+    _mt.stop()                                # tab hidden: the camera is released for ASICap and the others
 shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
     tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
