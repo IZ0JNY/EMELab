@@ -17,6 +17,8 @@ from datetime import datetime
 
 import numpy as np
 
+from .stations import band_label
+
 LABELS = {
     "rst_sent_db": "Rapporto inviato (dB)", "rst_rcvd_db": "Rapporto ricevuto (dB)", "snr_db": "SNR misurato (dB)",
     "y_db": "Fattore Y (dB)", "moon_el": "Elevazione Luna (°)", "moon_az": "Azimut Luna (°)", "dx_moon_el": "Elevazione Luna DX (°)",
@@ -60,7 +62,7 @@ def _mode(q: dict) -> str:
 def rows_from_qsos(qsos: list[dict]) -> list[dict]:
     out = []
     for q in qsos:
-        r = {"call": q.get("call"), "band": q.get("band"), "mode": _mode(q), "locator": q.get("locator")}
+        r = {"call": q.get("call"), "band": band_label(q.get("band")) or None, "mode": _mode(q), "locator": q.get("locator")}
         t = _utc(q.get("utc"))
         if t:
             r.update(utc=t, date=t.timestamp() / 86400.0, hour=t.hour + t.minute / 60, month=t.month, doy=t.timetuple().tm_yday)
@@ -78,7 +80,7 @@ def rows_from_qsos(qsos: list[dict]) -> list[dict]:
 def rows_from_measurements(ms: list[dict]) -> list[dict]:
     out = []
     for m in ms:
-        r = {"kind": m.get("kind"), "band": f"{m.get('band_ghz'):g} GHz" if m.get("band_ghz") else None}
+        r = {"kind": m.get("kind"), "band": band_label(m.get("band_ghz")) or None}
         t = _utc(m.get("utc"))
         if t:
             r.update(utc=t, date=t.timestamp() / 86400.0, hour=t.hour + t.minute / 60, month=t.month, doy=t.timetuple().tm_yday)

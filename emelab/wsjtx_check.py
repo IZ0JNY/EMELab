@@ -43,7 +43,7 @@ def check(status: dict, station: dict | None = None) -> list[dict]:
         tr = None if tr in (None, 0, NULL) else int(tr)
         have = f"{mode}" + (f"-{tr or ''}{sub}" if mode.upper().startswith("Q65") else (f" {sub}" if sub else ""))
         if not mode.upper().startswith("Q65") or sub != want[-1] or (tr is not None and tr != int(want[:-1])):
-            out.append({"code": "mode", "msg": "Modo diverso da quello della banda", "detail": f"{have} → Q65-{want} ({band})",
+            out.append({"code": "mode", "msg": "Modo diverso da quello della banda", "detail": f"{have} → Q65-{want} ({stations.band_label(band)})",
                         "fix": want})
     stn = station or {}
     my_call = (stn.get("callsign") or "").upper().strip()

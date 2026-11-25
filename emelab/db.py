@@ -387,7 +387,15 @@ class DB:
 
     def delete_qso(self, qid: int):
         self.con.execute("DELETE FROM qsos WHERE id=?", (qid,))
+        self._reset_qso_ids_if_empty()
         self.con.commit()
+
+    def _reset_qso_ids_if_empty(self):
+        """An empty log starts again from ID 1 (AUTOINCREMENT would otherwise go on from the last ID ever used)."""
+        if not self.con.execute("SELECT 1 FROM qsos LIMIT 1").fetchone():
+            self.con.execute("DELETE FROM qso_imports")
+            for t in ("qsos", "qso_imports"):
+                self.con.execute("DELETE FROM sqlite_sequence WHERE name = ?", (t,))
 
     # ADIF imports: which QSOs came from which file(s), so that an import can be taken back ------------
     def max_qso_id(self) -> int:
@@ -419,12 +427,13 @@ class DB:
         for qid in json.loads(r["ids"] or "[]") if r else []:
             n += self.con.execute("DELETE FROM qsos WHERE id = ?", (qid,)).rowcount
         self.con.execute("DELETE FROM qso_imports WHERE id = ?", (imp_id,))
+        self._reset_qso_ids_if_empty()
         self.con.commit()
         return n
 
     def clear_qsos(self) -> int:
         n = self.con.execute("DELETE FROM qsos").rowcount
-        self.con.execute("DELETE FROM qso_imports")
+        self._reset_qso_ids_if_empty()
         self.con.commit()
         return n
 

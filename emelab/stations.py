@@ -29,6 +29,23 @@ def band_of(freq_mhz: float | None) -> str | None:
     return None
 
 
+def band_label(band) -> str:
+    """Band as shown to the user: «10GHz», «24GHz», «122GHz»… from the internal key ("10G") or a frequency in GHz
+    (10.368). The internal keys and the ADIF bands stay as they are; only what is displayed changes."""
+    if band is None or band == "":
+        return ""
+    if isinstance(band, (int, float)):
+        return f"{int(band)}GHz"
+    b = str(band)
+    return f"{b[:-1]}GHz" if b.endswith("G") and b[:-1].isdigit() else b
+
+
+def band_sort_key(label: str):
+    """Order band labels by frequency («10GHz» before «24GHz» before «122GHz»), anything else after."""
+    m = re.match(r"^(\d+(?:\.\d+)?)", str(label or ""))
+    return (0, float(m.group(1))) if m else (1, str(label))
+
+
 # ------------------------------------------------------------------ WSJT-X CALL3.TXT
 def parse_call3(text: str) -> list[dict]:
     """CALL3.TXT lines: CALL,GRID[,EME][,previous call][,date] ; '//' lines are comments."""

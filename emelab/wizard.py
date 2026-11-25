@@ -8,6 +8,7 @@ import math
 from datetime import datetime, timedelta, timezone
 
 from . import astro, atmos
+from .stations import band_label
 
 PERIGEE_KM = 356400.0
 DAYS_IT = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
@@ -137,13 +138,13 @@ def sked_text(lang: str, my_call: str, my_loc: str, dx_call: str, dx_name: str |
     qrg = MODES_FREQ.get(band, "")
     if lang == "it":
         hi = f"Ciao {dx_name}," if dx_name else "Ciao,"
-        return (f"{hi}\nsono {my_call} ({my_loc}). Ti propongo uno sked EME a {band.replace('G', ' GHz')} il "
+        return (f"{hi}\nsono {my_call} ({my_loc}). Ti propongo uno sked EME a {band_label(band)} il "
                 f"{t0:%d/%m/%Y} dalle {t0:%H:%M} alle {t1:%H:%M} UTC, quando la Luna è visibile da entrambi.\n"
                 f"QRG {qrg} MHz, Q65-{mode}; io trasmetto nel periodo {'pari (primo)' if my_first else 'dispari (secondo)'}.\n"
                 f"Secondo il mio calcolo dovremmo riceverci intorno a {snr_me:.0f} dB (io) e {snr_dx:.0f} dB (tu).\n"
                 f"Se ti va bene confermami, altrimenti proponimi un altro orario.\n73 de {my_call}")
     hi = f"Hi {dx_name}," if dx_name else "Hi,"
-    return (f"{hi}\nthis is {my_call} ({my_loc}). I would like to propose an EME sked on {band.replace('G', ' GHz')} on "
+    return (f"{hi}\nthis is {my_call} ({my_loc}). I would like to propose an EME sked on {band_label(band)} on "
             f"{t0:%Y-%m-%d} from {t0:%H:%M} to {t1:%H:%M} UTC, when the Moon is up at both ends.\n"
             f"QRG {qrg} MHz, Q65-{mode}; I transmit {'first (even)' if my_first else 'second (odd)'} period.\n"
             f"My estimate is about {snr_me:.0f} dB at my end and {snr_dx:.0f} dB at yours.\n"

@@ -75,8 +75,16 @@ with st.sidebar:
     if stn.get("callsign") or stn.get("locator"):
         st.markdown(f"**{i18n.tr('Stazione')}:** {stn.get('callsign') or ''} · {stn.get('locator') or ''}")
     c = st.columns(2)
-    c[0].metric("Misure", len(D.measurements()))
-    c[1].metric("QSO", len(D.qsos()))
+    _counters = (c[0].empty(), c[1].empty())      # filled again after the tabs: an import must show at once
+
+
+def _show_counters():
+    _counters[0].metric("Misure", len(D.measurements()))
+    _counters[1].metric("QSO", len(D.qsos()))
+
+
+_show_counters()
+with st.sidebar:
     st.divider()
     st.caption(f"Versione {emelab.__version__} · © Ivan De Cesaris IZ0JNY")
     st.selectbox("Lingua / Language", list(i18n.LANGS), key="lang", format_func=lambda k: i18n.LANGS[k],
@@ -145,3 +153,5 @@ for tab, (k, _, fn) in zip(tabs, shown):
             ui._guide()
         else:
             fn(D)
+
+_show_counters()                            # QSO/measurements added or deleted in this run (ADIF import, WSJT-X…)

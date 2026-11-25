@@ -16,7 +16,23 @@ from emelab import analysis, astro, atmos, bridge, db as edb, i18n, planner, wea
 from emelab import settings as openems_local   # same interface: load_settings / save_settings
 
 st = i18n.wrap(_st)
-BANDS = {"10.368 GHz": 10.368, "24.048 GHz": 24.048, "47.088 GHz": 47.088}
+def _bl(band) -> str:
+    """Band as shown everywhere: «10GHz», «24GHz»… (internal keys "10G" and ADIF bands stay unchanged)."""
+    from emelab.stations import band_label
+    return band_label(band)
+
+
+def _bsk(label):
+    from emelab.stations import band_sort_key
+    return band_sort_key(label)
+
+
+def _bands_text(bands) -> str:
+    """«10GHz, 24GHz» from band keys, in frequency order."""
+    return ", ".join(sorted((_bl(b) for b in bands), key=_bsk))
+
+
+BANDS = {"10GHz": 10.368, "24GHz": 24.048, "47GHz": 47.088}
 
 
 def _db():
@@ -261,7 +277,7 @@ def _setups(D):
             st.success("Configurazione salvata.")
     rows = D.setups()
     if rows:
-        st.dataframe([{"ID": r["id"], "Nome": r["name"], "Banda (GHz)": r["band_ghz"], "Parabola (m)": r.get("D_m"),
+        st.dataframe([{"ID": r["id"], "Nome": r["name"], "Banda": _bl(r["band_ghz"]), "Parabola (m)": r.get("D_m"),
                        "Guadagno (dBi)": round(r.get("gain_dbi", 0), 2), "Efficienza (%)": round(100 * r.get("eta_ap", 0), 1),
                        "Taper (dB)": round(r.get("edge_taper_db", 0), 1), "NF (dB)": r.get("nf_db"),
                        "Perdite (dB)": r.get("line_loss_db"), "TX (W)": r.get("tx_w"), "Origine": r.get("source")}
@@ -304,7 +320,7 @@ def _history_editor(D):
     st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EMELab usa il periodo giusto per "
                "ogni QSO quando confronta i rapporti con la teoria e impara la correzione della tua stazione periodo per "
                "periodo. Ogni riga vale dalla sua data fino alla riga successiva.")
-    band = st.selectbox("Banda", list(dx.BAND_GHZ), key="hist_band", format_func=lambda b: b.replace("G", " GHz"))
+    band = st.selectbox("Banda", list(dx.BAND_GHZ), key="hist_band", format_func=_bl)
     rows = D.history(band)
     df = pd.DataFrame([{"Dal (data)": (r["from_utc"] or "")[:10], "Parabola (m)": r.get("dish_m"),
                         "Tipo": "offset" if r.get("dish_kind") == "offset" else "fuoco primario",
@@ -485,7 +501,7 @@ def _log(D):
             ev = analysis.evaluate_measurement(r, sets[r["setup_id"]]) if r.get("setup_id") in sets else {}
             c = r.get("calc") or {}
             src = c.get("moon" if r["kind"] in ("moon", "echo", "qso") else "sun") or {}
-            tab.append({"ID": r["id"], "UTC": r["utc"].replace("T", " ").replace("Z", ""), "GHz": r["band_ghz"], "Tipo": edb.KINDS.get(r["kind"], r["kind"]),
+            tab.append({"ID": r["id"], "UTC": r["utc"].replace("T", " ").replace("Z", ""), "Banda": _bl(r["band_ghz"]), "Tipo": edb.KINDS.get(r["kind"], r["kind"]),
                         "Y (dB)": r["y_db"], "Y atteso": _r(ev.get("y_expected")), "ΔY": _r(ev.get("y_delta")),
                         "G/T misurato": _r(ev.get("gt_measured")), "ΔG/T": _r(ev.get("gt_delta")), "SNR": r["snr_db"],
                         "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
@@ -758,10 +774,10 @@ def _stations_tab(D):
             h = d.get("heard", {})
             dirb = D.directory_of(d)
             tab.append({"Nominativo": r["call"], "Locator": r.get("locator") or "", "Nome": r.get("name") or "",
-                        "QTH": r.get("qth") or "", "Bande (directory)": ", ".join(sorted(dirb)),
+                        "QTH": r.get("qth") or "", "Bande (directory)": _bands_text(dirb),
                         "Stazione": _station_text(dirb), "✏️": "✏️" if d.get("manual") else "",
                         "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
-                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": ", ".join(h.get("bands", []))})
+                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": _bands_text(h.get("bands", []))})
         df = pd.DataFrame(tab)
         cols = list(df.columns)
         df.columns = [i18n.tr(c) for c in cols]
@@ -836,7 +852,7 @@ def _station_edit_box(D, rows):
         for b in dx.BAND_GHZ:
             v = dirb.get(b) or {}
             c = st.columns([1, 3, 2])
-            c[0].markdown(f"**{b}**" + (" ✏️" if b in (man.get("bands") or {}) else ""))
+            c[0].markdown(f"**{_bl(b)}**" + (" ✏️" if b in (man.get("bands") or {}) else ""))
             ant = c[1].text_input("Antenna", v.get("antenna") or "", key=f"st_ed_ant_{call}_{b}",
                                   placeholder="es. 3m dish", label_visibility="collapsed" if b != list(dx.BAND_GHZ)[0] else "visible")
             pw = c[2].number_input("Potenza (W)", 0.0, 100000.0, float(v.get("power_w") or 0), 1.0, key=f"st_ed_pw_{call}_{b}",
@@ -1009,7 +1025,7 @@ def _logbook_tab(D):
         known = D.station_of(call) if call else None
         loc = c[3].text_input("Locator", (known or {}).get("locator") or "", key=f"q_loc_{call}")
         c = st.columns(5)
-        band = c[0].selectbox("Banda", list(lb.BAND_F), key="q_band")
+        band = c[0].selectbox("Banda", list(lb.BAND_F), key="q_band", format_func=_bl)
         freq = c[1].number_input("Frequenza (MHz)", 1000.0, 300000.0, lb.BAND_F[band] * 1000, 0.001, format="%.3f", key=f"q_f_{band}")
         mode = c[2].selectbox("Modo", ["Q65", "JT65", "JT4", "CW", "SSB", "FST4", "Altro"], key="q_mode")
         if mode == "Q65":
@@ -1090,26 +1106,29 @@ def _logbook_tab(D):
         return
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
-                        "Banda": q.get("band"), "Modo": lb.mode_label(q)[0],
+                        "Banda": _bl(q.get("band")), "Modo": lb.mode_label(q)[0],
                         "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                         "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
                         "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
                         "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
                         "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
                        for q in qs])
+    raw_cols = list(df.columns)
     df.columns = [i18n.tr(c) for c in df.columns]
     assumed = [lb.mode_label(q)[1] for q in qs]
     mcol = i18n.tr("Modo")
     sty = df.style.format(precision=1, na_rep="").apply(
         lambda col: [f"color: {ASSUMED_COLOR}" if a else "" for a in assumed], subset=[mcol])
-    st.dataframe(sty, hide_index=True, width="stretch")
+    st.dataframe(sty, hide_index=True, width="stretch", key="q_log_table",
+                 column_config=_col_config("log_qso", list(df.columns), raw_cols))
+    _col_widths_editor("log_qso", raw_cols)
     if any(assumed):
         st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
             "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
             "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
     cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
-              f"{q['call']} {q.get('band') or ''}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
+              f"{q['call']} {_bl(q.get('band'))}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
     st.plotly_chart(world_fig(paths[-300:], height=460), width="stretch")
     c = st.columns(3)
     c[0].download_button("⬇️ Esporta ADIF", lb.to_adif(qs, stn.get("callsign") or ""), file_name="emelab_log.adi",
@@ -1153,6 +1172,45 @@ def _qsos_manage(D, n_qsos):
             st.rerun()
 
 
+def _saved_widths(table: str) -> dict:
+    return ((openems_local.load_settings().get("col_widths") or {}).get(table) or {})
+
+
+def _col_config(table: str, shown: list, raw: list) -> dict:
+    """Column widths the user chose for this table (saved on this PC): {shown name: Column(width=px)}."""
+    w = _saved_widths(table)
+    return {s: _st.column_config.Column(width=int(w[r])) for s, r in zip(shown, raw) if w.get(r)}
+
+
+def _col_widths_save(table: str, raw: list):
+    allw = openems_local.load_settings().get("col_widths") or {}
+    allw[table] = {r: int(_st.session_state.get(f"cw_{table}_{r}") or 0) for r in raw
+                   if _st.session_state.get(f"cw_{table}_{r}")}
+    openems_local.save_settings(col_widths=allw)
+
+
+def _col_widths_reset(table: str, raw: list):
+    allw = openems_local.load_settings().get("col_widths") or {}
+    allw.pop(table, None)
+    openems_local.save_settings(col_widths=allw)
+    for r in raw:
+        _st.session_state[f"cw_{table}_{r}"] = 0
+
+
+def _col_widths_editor(table: str, raw: list):
+    """Widths of the table columns in pixels, remembered on this PC: the table opens the same way every time."""
+    w = _saved_widths(table)
+    with st.popover("↔️ Larghezza delle colonne"):
+        st.caption("Larghezza in pixel di ogni colonna, ricordata su questo PC. 0 = automatica.")
+        c = st.columns(4)
+        for i, r in enumerate(raw):
+            k = f"cw_{table}_{r}"
+            if k not in _st.session_state:
+                _st.session_state[k] = int(w.get(r) or 0)
+            c[i % 4].number_input(r, 0, 1000, step=10, key=k, on_change=_col_widths_save, args=(table, raw))
+        st.button("↩️ Larghezze automatiche", key=f"cw_{table}_reset", on_click=_col_widths_reset, args=(table, raw))
+
+
 def _qso_band_filter(qs, lb):
     """One switch per band found in the log (10 GHz, 24 GHz, 47 GHz…): the statistics follow the bands left on."""
     order = list(lb.BAND_F)
@@ -1166,7 +1224,7 @@ def _qso_band_filter(qs, lb):
     c = st.columns(6)
     on = set()
     for i, b in enumerate(bands):
-        name = f"{b[:-1]} GHz" if b.endswith("G") and b[:-1].isdigit() else b
+        name = _bl(b)
         if c[i % len(c)].toggle(f"{name} ({count[b]})", value=True, key=f"qs_band_{b}"):
             on.add(b)
     return [q for q in qs if (q.get("band") or "?") in on]
@@ -1185,7 +1243,7 @@ def _qso_stats_tab(D):
     s = lb.statistics(qs)
     c = st.columns(4)
     c[0].metric("QSO", s["n"])
-    c[1].metric("Bande", ", ".join(f"{b}: {n}" for b, n in sorted(s["by_band"].items())))
+    c[1].metric("Bande", ", ".join(f"{_bl(b)}: {n}" for b, n in sorted(s["by_band"].items(), key=lambda x: _bsk(_bl(x[0])))))
     if "moon_el" in s:
         c[2].metric("EL Luna mediana", f"{s['moon_el']['median']:.0f}°")
     if "mutual_spread_hz" in s:
@@ -1230,7 +1288,7 @@ def _prints_tab(D):
     with c[2]:
         qs = D.qsos()
         pick = st.multiselect("QSO per le etichette QSL", [q["id"] for q in qs], key="pr_qsl_pick",
-                              format_func=lambda i: next(f"{q['call']} {q['utc']:%Y-%m-%d} {q.get('band') or ''}" for q in qs if q["id"] == i))
+                              format_func=lambda i: next(f"{q['call']} {q['utc']:%Y-%m-%d} {_bl(q.get('band'))}" for q in qs if q["id"] == i))
         if st.button("🏷️ Etichette QSL", key="pr_qsl", disabled=not pick):
             sel = []
             for q in qs:
@@ -1381,7 +1439,7 @@ def _charts_tab(D):
     if not rows:
         st.info("Ancora nessun dato: registra o importa QSO e misure.")
         return
-    cats = sorted({r.get("band") for r in rows if r.get("band")})
+    cats = sorted({r.get("band") for r in rows if r.get("band")}, key=_bsk)
     c = st.columns(4)
     sel_b = c[0].multiselect("Bande", cats, cats, key="pl_bands")
     rows = [r for r in rows if not cats or r.get("band") in sel_b]
@@ -1493,7 +1551,7 @@ def _setup_pick(D, key):
     if not sets:
         return None
     sid = st.selectbox("Configurazione", [s["id"] for s in sets], key=key,
-                       format_func=lambda i: next(f"{s['name']} ({s['band_ghz']:g} GHz)" for s in sets if s["id"] == i))
+                       format_func=lambda i: next(f"{s['name']} ({_bl(s['band_ghz'])})" for s in sets if s["id"] == i))
     return next(s for s in sets if s["id"] == sid)
 
 
@@ -1647,7 +1705,7 @@ def _power_tab(D):
     allp = _power_devices()
     ss = _st.session_state
     c = st.columns([1, 1, 2])
-    band = c[0].selectbox("Banda", POWER_BANDS, key="pw_band", format_func=lambda f: f"{f:g} GHz")
+    band = c[0].selectbox("Banda", POWER_BANDS, key="pw_band", format_func=_bl)
     cur = allp.get(f"{band:g}", {})
     if ss.get("pw_band_prev") != band:                   # new band: show what was saved for it
         ss["pw_band_prev"] = band
@@ -1688,7 +1746,7 @@ def _power_tab(D):
     done = {k: v for k, v in _power_devices().items() if v.get("kind")}
     if done:
         st.markdown(i18n.tr("La tua stazione") + ": " + " · ".join(
-            f"**{float(b):g} GHz** {'SSPA' if v['kind'] == 'PA' else 'TWT'} {v.get('part') or ''}" for b, v in
+            f"**{_bl(float(b))}** {'SSPA' if v['kind'] == 'PA' else 'TWT'} {v.get('part') or ''}" for b, v in
             sorted(done.items(), key=lambda x: float(x[0]))))
     st.divider()
     if kind == "PA":
@@ -1901,7 +1959,7 @@ def _signal_tab(D):
     sets = openems_local.load_settings()
     std = dx.Q65_STANDARD.get(band, "60E")
     cur = dx.band_mode(band, sets)
-    q65 = st.selectbox(f"Modo Q65 su {band}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur), key=f"sg_q65_{band}",
+    q65 = st.selectbox(f"Modo Q65 su {_bl(band)}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur), key=f"sg_q65_{band}",
                        format_func=lambda k: f"Q65-{k}" + (" (" + i18n.tr("standard della banda") + ")" if k == std else ""),
                        help="Soglie e margini sono calcolati per questo sottomodo. Di solito 60D a 10 GHz e 60E da 24 GHz in "
                             "su. La scelta viene ricordata per la banda.")
@@ -2022,7 +2080,7 @@ def _catalog_box(D, kinds, key):
     for kind_msg, msg in ss.pop(f"{key}_flash", None) or []:
         getattr(st, kind_msg)(msg)
     c = st.columns(3)
-    band = c[0].selectbox("Banda", CAT_BANDS, key=f"{key}_cb", format_func=lambda f: f"{f:g} GHz")
+    band = c[0].selectbox("Banda", CAT_BANDS, key=f"{key}_cb", format_func=_bl)
     kind_lbl = {k: catalog.TYPES[k] for k in kinds}
     kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
     rows = parts.devices(D, band, kind)
@@ -2277,7 +2335,7 @@ def _wz_plan(D, stn, hz, fc):
         return
     c = st.columns(3)
     sid = c[0].selectbox("Con quale configurazione?", [s["id"] for s in sets], key="wz_setup",
-                         format_func=lambda i: next(f"{s['name']} ({s['band_ghz']:g} GHz)" for s in sets if s["id"] == i))
+                         format_func=lambda i: next(f"{s['name']} ({_bl(s['band_ghz'])})" for s in sets if s["id"] == i))
     setup = next(s for s in sets if s["id"] == sid)
     days = c[1].slider("Quanti giorni guardare avanti?", 1, 16, 7, key="wz_days",
                        help="le previsioni meteo arrivano a 16 giorni")
@@ -2448,26 +2506,37 @@ def _wsjtx_file_box(svc, sets):
                "EMELab lo legge entro pochi secondi. Non serve nessuna porta UDP, quindi non disturba JTAlert, GridTracker "
                "o altri logger. Il file è nella cartella che WSJT-X apre con File → Open log directory.")
     found = wsjtx_logfile.find_default()
-    c = st.columns([4, 1])
-    path = c[0].text_input("Percorso di wsjtx_log.adi", sets.get("wsjtx_file") or (str(found) if found else ""), key="wj_file")
+    if not (_st.session_state.get("wj_file") or "").strip():          # empty box: fill it with the file found on this PC
+        _st.session_state["wj_file"] = sets.get("wsjtx_file") or (str(found) if found else "")
+    c = st.columns([4, 2])
+    path = c[0].text_input("Percorso di wsjtx_log.adi", key="wj_file",
+                           help="incolla il percorso del file o della cartella che WSJT-X apre con File → Open log directory")
     from pathlib import Path
-    ok = bool(path.strip()) and Path(path.strip()).is_file()
+    clean = wsjtx_logfile.clean_path(path)
+    ok = bool(clean) and Path(clean).is_file()
     if not svc.file_running:
+        st.caption("Con il pulsante «Importa automaticamente i nuovi QSO da WSJT-X» EMELab resta in ascolto del file: "
+                   "ogni QSO che registri in WSJT-X entra da solo nel Log QSO di EMELab, senza importare l'ADIF a mano. "
+                   "La scelta viene ricordata e riparte all'avvio di EMELab.")
         past = st.checkbox("Importa anche i QSO già presenti nel file (i doppioni vengono saltati)", False, key="wj_file_past")
-        if c[1].button("▶️ Segui il file", type="primary", key="wj_file_on", disabled=not ok):
-            p = path.strip()
+        if c[1].button("▶️ Importa automaticamente i nuovi QSO da WSJT-X", type="primary", key="wj_file_on", disabled=not ok):
+            p = clean
             openems_local.save_settings(wsjtx_file_on=True, wsjtx_file=p, wsjtx_file_pos={})
             svc.on_tail_pos = _wsjtx_save_pos
             svc.start_file(p, 0 if past else None)
             st.rerun()
         if path.strip() and not ok:
             st.warning("File non trovato: controlla il percorso (in WSJT-X: File → Open log directory).")
+        elif not path.strip():
+            st.warning(i18n.tr("Non ho trovato wsjtx_log.adi nelle cartelle di WSJT-X di questo PC. In WSJT-X apri "
+                               "File → Open log directory, copia il percorso della cartella e incollalo qui sopra.")
+                       + "  \n" + i18n.tr("Cercato in") + ": " + ", ".join(f"`{p.parent}`" for p in wsjtx_logfile.default_paths()[:3]))
     else:
-        if c[1].button("⏹️ Smetti", key="wj_file_off"):
+        if c[1].button("⏹️ Smetti di importare da WSJT-X", key="wj_file_off"):
             svc.stop_file()
             openems_local.save_settings(wsjtx_file_on=False)
             st.rerun()
-        st.markdown(i18n.tr("Seguo") + f" `{svc.tail.path}`" + (" · " + i18n.tr("ultimo QSO letto") +
+        st.markdown(i18n.tr("Importo automaticamente i nuovi QSO da") + f" `{svc.tail.path}`" + (" · " + i18n.tr("ultimo QSO letto") +
                     f" {svc.file_seen:%H:%M:%S} UTC" if svc.file_seen else ""))
 
 
@@ -2483,7 +2552,7 @@ def _wsjtx_logged_table(svc):
             why = i18n.tr("propagazione") + why[12:] if why.startswith("propagazione ") else i18n.tr(why)
             return i18n.tr("lasciato fuori") + ": " + why
         return i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")
-    st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q.get("band"),
+    st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": _bl(q.get("band")),
                    "Modo": lb.mode_label(q)[0],
                    "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                    "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
