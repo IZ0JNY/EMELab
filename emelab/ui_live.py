@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
 """🔴 Live: everything needed while operating, on one page.
 
-Four quadrants (Moon from the camera with the offset and the rotor corrections · DriverDish · WSJT-X decodes ·
+Four quadrants (Moon from the camera with the offset and the rotor corrections · DriverDish · watchdogs ·
 Moon and clock) and, underneath, one compact strip with the QSO parameters read from WSJT-X (sked, Tx and Rx
 frequency, mode, F Tol, Split, 1st/2nd, Doppler), BktTimeSync with the PC clock and DT, and the GPSDO lock."""
 from __future__ import annotations
@@ -174,9 +174,11 @@ def tab(D):
         _driverdish_quadrant(sets)
     q = st.columns(2)
     with q[0].container(border=True):
-        _decodes_quadrant()
+        _watchdog_quadrant()
     with q[1].container(border=True):
         _moon_quadrant(D)
+    with st.container(border=True):
+        _frag(2)(_wsjtx_checks_live)()
     with st.container(border=True):
         _bottom_strip()
 
@@ -288,22 +290,74 @@ def _driverdish_live():
                + (f" · {d['utc']:%H:%M:%S} UTC" if isinstance(d.get("utc"), datetime) else ""))
 
 
-def _decodes_quadrant():
-    _frag(2)(_decodes_live)()
-
-
-def _decodes_live():
-    st.markdown("**" + i18n.tr("📻 WSJT-X: ultime decodifiche") + "**")
+def watchdog_items(D=None) -> list[dict]:
+    """Current state of the watchdogs (emelab/watchdog.py), from the readers already running (all read-only)."""
+    from emelab import ui_wsjtx_panel, watchdog
+    sets = openems_local.load_settings()
     svc = _svc()
-    if not _wsjtx_live(svc):
-        st.info("WSJT-X non collegato: attiva l'ascolto UDP nella scheda 📻 WSJT-X.")
+    d, err = dd_status()
+    mon_since = None
+    try:
+        if sets.get("dd_live"):
+            from emelab import ui_tracking
+            mon_since = ui_tracking._monitor(sets.get("dd_host", "127.0.0.1"), int(sets.get("dd_port", 9999))).error_since
+    except Exception:
+        pass
+    clock = ui_wsjtx_panel.clock_state()
+    live = _wsjtx_live(svc)
+    dt, n = dt_median(svc) if live else (None, 0)
+    probs = [p.get("msg", "") for p in (getattr(svc, "problems", None) or []) if not p.get("soft")] if live else []
+    cam_on = bool(sets.get("cam_enabled"))
+    src = mt.current() if cam_on else None
+    age = (time.time() - src.latest()[1]) if src and src.latest()[0] is not None else None
+    gp_on = bool(sets.get("gpsdo_use", True) and sets.get("gpsdo_ok_utc"))      # a GPSDO that has been seen working
+    return watchdog.checks(gpsdo=gpsdo_state() if gp_on else None, gpsdo_on=gp_on,
+                           dd=d, dd_err=None if err == "off" else err, dd_on=bool(sets.get("dd_live")), dd_err_since=mon_since,
+                           wsjtx_on=bool(svc and svc.running), wsjtx_last=getattr(svc, "last_seen", None), wsjtx_problems=probs,
+                           bkt=clock.get("bkt") if svc and svc.running else None, ntp=clock.get("ntp"), dt=dt if n >= 3 else None,
+                           cam_on=cam_on, cam_age_s=age, cam_error=getattr(src, "error", None) if src else None)
+
+
+_ICON = {"ok": "🟢", "warn": "🟡", "bad": "🔴"}
+
+
+def _watchdog_quadrant():
+    _frag(5)(_watchdog_live)()
+
+
+def _watchdog_live():
+    st.markdown("**" + i18n.tr("🐕 Watchdog") + "**")
+    items = watchdog_items()
+    if not items:
+        st.info("Nessun controllo attivo: accendi GPSDO, DriverDish, WSJT-X o la telecamera nelle loro schede.")
         return
-    rows = [{"UTC": f"{d['utc']:%H:%M}", "dB": d["snr"], "DT": round(d["dt"], 1), "DF": d["df"], "Messaggio": d["message"]}
-            for d in list(svc.recent)[:8]]
-    if rows:
-        st.dataframe(rows, hide_index=True, width="stretch", height=300)
-    else:
-        st.caption("Ancora nessuna decodifica.")
+    rows = "".join(f"<div class='wd {i['state']}'><span>{_ICON[i['state']]}</span><b>{html.escape(i18n.tr(i['name']))}</b>"
+                   f"<i>{html.escape(i18n.tr(i['msg']))}</i></div>" for i in items)
+    h = ("<style>.wd{display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-radius:6px;margin:3px 0;"
+         "font-size:15px}.wd b{min-width:110px}.wd i{font-style:normal;opacity:.85}.wd.bad{background:#3a141622;"
+         "border:1px solid #f85149}.wd.warn{border:1px solid #d29922}.wd.ok{border:1px solid #2ea04366}</style>" + rows)
+    st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
+    st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni minuto.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
+
+
+def watchdog_sidebar(D):
+    """Runs from the sidebar on every page (any tab open): camera alarm and «🚨 Watchdog» toasts."""
+    _frag(5)(_watchdog_bg)(D)
+
+
+def _watchdog_bg(D):
+    from emelab import watchdog
+    sets = openems_local.load_settings()
+    if sets.get("cam_enabled") and ui_camera.start_from_settings(sets) is not None:
+        cfg = ui_camera.cfg_from_settings(D, sets)
+        ui_camera.alarm_feedback(ui_camera.measure(cfg), cfg)       # the out-of-tracking alarm with any tab open
+    items = watchdog_items(D)
+    prev = S.setdefault("wd_prev", {})
+    for i in watchdog.newly_bad(items, prev):
+        _st.toast(watchdog.TOAST_PREFIX + i18n.tr(i["msg"]), icon="🚨")
+    bad = [i for i in items if i["state"] == "bad"]
+    if bad:
+        st.error("🚨 " + " · ".join(i18n.tr(i["name"]) for i in bad))
 
 
 def _moon_quadrant(D):
@@ -363,6 +417,27 @@ def _moon_live(D):
         st.caption(i18n.tr("spread proprio") + f" {sk.spread_hz_per_ghz * f_ghz:.0f} Hz · " + i18n.tr("Distanza")
                    + f" {sk.moon.dist_km:,.0f} km · RA {moon.ra_hms(sk.moon.ra)} Dec {moon.dec_dms(sk.moon.dec)} · "
                    + i18n.tr("lo spread reciproco compare quando WSJT-X ha un DX Call con il locator"))
+
+
+def _wsjtx_checks_live():
+    """The same control check as the 📻 WSJT-X tab (preset of the band vs WSJT-X now), without its buttons."""
+    from emelab import ui_wsjtx_panel
+    st.markdown("**" + i18n.tr("📻 Controllo di WSJT-X") + "**")
+    svc = _svc()
+    if not _wsjtx_live(svc):
+        st.info("WSJT-X non collegato: attiva l'ascolto UDP nella scheda 📻 WSJT-X.")
+        return
+    band = ui_wsjtx_panel._band(svc)
+    if not band:
+        st.caption("WSJT-X non è su una banda EME (10 GHz e oltre).")
+        return
+    rows = ui_wsjtx_panel.check_rows(svc, openems_local.load_settings(), band)
+    st.caption(stations.band_label(band) + " · " + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu"))
+    cells = "".join(f"<span class='{'bad' if r['Stato'] == ui_wsjtx_panel.BAD else 'ok' if r['Stato'] == ui_wsjtx_panel.OK else ''}'>"
+                    f"<i>{html.escape(i18n.tr(r['Parametro']))}</i><b>{html.escape(str(r['WSJT-X adesso']))}</b> {r['Stato']}</span>"
+                    for r in rows)
+    h = _CSS + f"<div class='lv'>{cells}</div>"
+    st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
 
 
 def _bottom_strip():

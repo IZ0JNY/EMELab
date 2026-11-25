@@ -151,9 +151,11 @@ with st.sidebar:
         st.multiselect("Schede", [k for k, _, _ in TABS[2:]], key="tabs_on", on_change=_save_tabs,
                        format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
                        help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
-if not ({"camera", "live"} & set(S["tabs_on"])):
+if not openems_local.load_settings().get("cam_enabled"):
     from emelab import moontrack as _mt
-    _mt.stop()                                # tab hidden: the camera is released for ASICap and the others
+    _mt.stop()                                # camera switched off: released for ASICap and the others
+with st.sidebar:
+    ui_live.watchdog_sidebar(D)               # watchdogs and camera alarm with any tab open
 shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
     tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
