@@ -1,3 +1,19 @@
+## EMELab 0.1.7 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.7.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.7-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🛰️ GPSDO:** la lettura del Leo Bodnar mini è corretta e provata su una stazione vera. Mostra il segnale GPS, l'aggancio del PLL e le perdite di segnale, la configurazione (frequenza di uscita, drive, divisori del PLL), poi i satelliti usati e il tipo di fix.
+- **🎯 Tracking:** lo stato di DriverDish (EA3HMJ) si legge in tempo reale ed è confrontato con la Luna calcolata, con l'errore rispetto a HPBW. Se DriverDish smette di funzionare compare un avviso di allarme. EMELab si limita a leggere.
+- **🌙 Nuova scheda Luna:** la Luna vista dalla stazione adesso, aggiornata ogni 30 s. Mostra posizione, distanza e perdita di percorso, Doppler e spread per banda, librazione, fase, sorgere/culminazione/tramonto e quando la Luna libera l'orizzonte. C'è anche il peggioramento rispetto al caso ideale, con prossimi perigeo/apogeo e il grafico polare del percorso di oggi.
+- **📅 Pianificatore:** si apre da «Chi posso collegare» e mostra la probabilità di QSO, l'ora locale del DX, la Luna da entrambi i lati e l'orizzonte libero. I passaggi migliori sono in verde e un clic sulla riga apre il dettaglio ogni 30 minuti.
+
+### 🇬🇧 What's new
+- **🛰️ GPSDO:** the Leo Bodnar mini is now read correctly, tested on a real station. It shows the GPS signal, PLL lock and signal losses, its configuration (output frequency, drive, PLL dividers), then the satellites in use and the fix type.
+- **🎯 Tracking:** DriverDish (EA3HMJ) status is read live and compared with the computed Moon, with the error against the HPBW. An alarm pop-up appears when DriverDish stops working. EMELab only reads.
+- **🌙 New Moon tab:** the Moon as seen from the station right now, refreshed every 30 s. It shows position, distance and path loss, Doppler and spread per band, libration, phase, rise/transit/set and when the Moon clears the horizon. It also shows the loss against the ideal case, next perigee/apogee and a polar plot of today's track.
+- **📅 Planner:** opens from «Who can I work» and shows the QSO probability, the DX local time, the Moon from both sides and the free horizon. The best passes are in green and a click on a row opens the 30-minute detail.
+
 ## EMELab 0.1.6 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.6.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.6-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

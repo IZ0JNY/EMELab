@@ -37,8 +37,14 @@ def test_partner_by_callsign(tmp_path, monkeypatch):
     assert any("JO31AB" in c.value and "✏️" in c.value for c in at.caption)
     at.button(key="em_p_go").click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert at.session_state["em_plan_dx"] == ("DF3GJ", "JO31AB")
+    dxs = at.session_state["em_plan_dx"]
+    assert (dxs["call"], dxs["locator"]) == ("DF3GJ", "JO31AB")
     assert any("DF3GJ · JO31AB" in c.value for c in at.caption)
+    labels = [m.label for m in at.metric]
+    assert any("Ora locale da DF3GJ" in x for x in labels) and "Probabilità di QSO adesso" in labels
+    tab = next(d.value for d in at.dataframe if "Probabilità QSO" in getattr(d.value, "columns", []))
+    assert {"Ora locale DX", "Luna da te AZ/EL (°)", "Luna dal DX AZ/EL (°)", "Migliore"} <= set(tab.columns)
+    assert (tab["Migliore"] == "✅").any()
 
 
 def test_unknown_callsign_locator_by_hand_and_added(tmp_path, monkeypatch):
@@ -55,3 +61,48 @@ def test_unknown_callsign_locator_by_hand_and_added(tmp_path, monkeypatch):
     assert any("KP20LG" in c.value for c in at.caption)
     from emelab import i18n
     i18n.set_lang("it")
+
+
+def test_qso_chances_and_horizon():
+    from datetime import datetime, timezone
+    from emelab import astro, dx, planner
+    stn = {"lat": 41.6, "lon": 13.0, "height_m": 100.0}
+    setup = {"band_ghz": 24.048, "D_m": 2.4, "eta_ap": 0.6, "gain_dbi": 52, "tx_w": 18, "nf_db": 0.7,
+             "line_loss_db": 0.2, "spill": 0.9, "edge_taper_db": 12}
+    t0 = datetime(2026, 11, 25, tzinfo=timezone.utc)
+    dxl = astro.locator_to_latlon("JO70EB")
+    smp = planner.windows(stn, setup, t0, 2, 15, 10.0, dxl)
+    rows = planner.daily(smp)
+    me = dx.station("24G", 2.4, 18, "offset")
+    planner.qso_chances(rows, me, (stn["lat"], stn["lon"]), dx.station("24G", 4.5, 30), dxl, "24G", "60E")
+    q = rows[0]["qso"]
+    assert 0 <= q["probability"] <= 1 and rows[0]["start"] <= q["utc"] <= rows[0]["end"]
+    assert q["el_me"] >= 10 and q["el_dx"] >= 10 and 0 <= q["az_me"] < 360
+    # a wall towards the south-east hides part of every pass: no sample behind it
+    wall = [{"az_da": 0, "az_a": 120, "el_min": 5}, {"az_da": 120, "az_a": 200, "el_min": 80},
+            {"az_da": 200, "az_a": 360, "el_min": 5}]
+    smp2 = planner.windows(stn, setup, t0, 2, 15, 10.0, horizon=wall)
+    assert smp2 and all(not (120 <= s["az"] <= 200) or s["el"] >= 80 for s in smp2)
+    assert len(smp2) < len(planner.windows(stn, setup, t0, 2, 15, 10.0))
+
+
+def test_best_rows_and_local_time():
+    from datetime import datetime, timezone
+    from emelab import tz, ui
+    rows = [{"sun_moon_deg": 90, "snr_spread": -1.0}, {"sun_moon_deg": 90, "snr_spread": -1.8},
+            {"sun_moon_deg": 5, "snr_spread": 3.0}, {"sun_moon_deg": 90, "snr_spread": -4.0}]
+    assert ui.planner_best_rows(rows, 10.0) == [True, True, False, False]
+    lt, name, assumed = tz.local_time(50.0, 14.4, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc))
+    assert lt.hour == 14 and (assumed or name == "Europe/Prague")
+
+
+def test_click_in_who_can_i_work_opens_planner(monkeypatch):
+    from emelab import ui
+    rk = [{"call": "OK1KIR"}, {"call": "DF3GJ"}]
+    # the callback works on streamlit's session state: call it with a plain dict standing in
+    fake = {"sg_rank_sel_0": {"selection": {"rows": [], "cells": [[1, "Nominativo"]]}}, "tabs_on": ["signal"]}
+    monkeypatch.setattr(ui, "_st", type("S", (), {"session_state": fake}))
+    ui._open_in_planner_cb("sg_rank_sel_0", rk, {"id": 7}, 12.0)
+    assert fake["em_p_pcall"] == "DF3GJ" and fake["em_p_setup"] == 7 and fake["em_p_minel"] == 12.0
+    assert fake["em_p_auto"] and fake["main_tab"] == "🗓️ Pianificatore" and "planner" in fake["tabs_on"]
+    assert fake["sg_rank_sel_n"] == 1

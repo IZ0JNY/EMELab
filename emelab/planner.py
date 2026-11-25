@@ -10,8 +10,10 @@ from . import analysis, astro
 
 def windows(station: dict, setup: dict, start: datetime, days: int = 14, step_min: int = 10, min_el: float = 10.0,
             partner: tuple[float, float] | None = None, wx_series: list[dict] | None = None,
-            partner_min_el: float = 10.0) -> list[dict]:
-    """Samples every step_min minutes while the Moon is above min_el (and above the partner's horizon)."""
+            partner_min_el: float = 10.0, horizon: list[dict] | None = None) -> list[dict]:
+    """Samples every step_min minutes while the Moon is above min_el and above your free horizon (sectors of azimuth
+    with their lowest usable elevation, see wizard.el_min), and above the partner's horizon."""
+    from .wizard import el_min
     start = astro.utc(start)
     wx_by_hour = {w["utc"].replace(minute=0, second=0, microsecond=0): w for w in (wx_series or [])}
     out = []
@@ -19,7 +21,7 @@ def windows(station: dict, setup: dict, start: datetime, days: int = 14, step_mi
     for i in range(n):
         t = start + timedelta(minutes=i * step_min)
         s = astro.sky(t, station["lat"], station["lon"], station.get("height_m") or 0.0)
-        if s.moon.el < min_el:
+        if s.moon.el < min_el or (horizon and s.moon.el < el_min(horizon, s.moon.az)):
             continue
         pel = None
         if partner:
@@ -164,3 +166,32 @@ def weather_quality(f_ghz: float, row: dict, series_me: list[dict] | None, serie
         fair += 1
     out["label"] = "❌ sconsigliate" if bad else ("⚠️ discrete" if fair else "✅ buone")
     return out
+
+
+def qso_chances(rows: list[dict], me: dict, my_loc: tuple, dx_model: dict, dx_loc: tuple, band: str,
+                mode: str | None = None, offset_db: float = 0.0, step_min: float = 30.0, h_me: float = 0.0) -> None:
+    """For every Moon pass with the other station: the moment with the best QSO margin (Q65, both directions, the
+    same model as the ranking of who you can work), the estimated probability there and where the Moon is (AZ/EL)
+    from both stations at that moment. Written into each row as row["qso"] (None when no common moment)."""
+    from . import dx
+    for r in rows:
+        n = max(int((r["end"] - r["start"]).total_seconds() / 60 / step_min), 0)
+        times = sorted({r["start"] + timedelta(minutes=step_min * i) for i in range(n + 1)} | {r["best_utc"], r["end"]})
+        best = None
+        for t in times:
+            k = dx.link_at(t, me, my_loc, dx_model, dx_loc, band, h_a=h_me, mode=mode)
+            if k and (best is None or k["margin_db"] > best["margin_db"]):
+                best = k
+        if best is None:
+            r["qso"] = None
+            continue
+        r["qso"] = {**moon_both(best["utc"], my_loc, dx_loc, h_me), "utc": best["utc"], "margin_db": best["margin_db"],
+                    "probability": dx.probability(best["margin_db"], offset_db), "mode": best["mode"],
+                    "snr_me": best["snr_a_hears_b"] + offset_db, "snr_dx": best["snr_b_hears_a"]}
+
+
+def moon_both(t: datetime, my_loc: tuple, dx_loc: tuple, h_me: float = 0.0) -> dict:
+    """Moon azimuth and elevation (°) from your station and from the other station at time t."""
+    a = astro.sky(t, my_loc[0], my_loc[1], h_me).moon
+    b = astro.sky(t, dx_loc[0], dx_loc[1], 0.0).moon
+    return {"az_me": a.az, "el_me": a.el, "az_dx": b.az, "el_dx": b.el}
