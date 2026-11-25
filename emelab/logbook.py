@@ -57,7 +57,7 @@ def to_adif(qsos: list[dict], my_call: str = "", program: str = "EMELab") -> str
     for q in qsos:
         t = q["utc"] if isinstance(q["utc"], datetime) else datetime.strptime(q["utc"].replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
         rec = (_f("CALL", q["call"]) + _f("QSO_DATE", t.strftime("%Y%m%d")) + _f("TIME_ON", t.strftime("%H%M%S")) +
-               _f("BAND", BAND_ADIF.get(q.get("band"), q.get("band"))) + _f("FREQ", f"{q['freq_mhz'] / 1000:.6f}" if q.get("freq_mhz") else None) +
+               _f("BAND", BAND_ADIF.get(q.get("band"), q.get("band"))) + _f("FREQ", f"{q['freq_mhz']:.6f}" if q.get("freq_mhz") else None) +
                _f("MODE", q.get("mode")) + _f("SUBMODE", q.get("submode")) + _f("RST_SENT", q.get("rst_sent")) +
                _f("RST_RCVD", q.get("rst_rcvd")) + _f("GRIDSQUARE", q.get("locator")) + _f("MY_GRIDSQUARE", q.get("my_locator")) +
                _f("STATION_CALLSIGN", my_call or None) + _f("NAME", q.get("name")) + _f("QTH", q.get("qth")) +
@@ -76,7 +76,7 @@ def from_adif_record(r: dict) -> dict | None:
     f = None
     if r.get("FREQ"):
         try:
-            f = float(r["FREQ"]) * 1000
+            f = float(r["FREQ"])                  # ADIF FREQ is in MHz
         except ValueError:
             f = None
     band = stations.band_of(f) or ADIF_BANDS.get((r.get("BAND") or "").lower())
