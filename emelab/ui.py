@@ -820,9 +820,12 @@ def _stations_tab(D):
         upp = st.file_uploader("…oppure carica i PDF", type=["pdf"], accept_multiple_files=True, key="st_pa0ply_up")
     if up3 is not None and st.button("📥 Importa CALL3.TXT", key="st_call3_go"):
         allrows = stn.parse_call3(up3.getvalue().decode("utf-8", "replace"))
-        known = {r["call"] for r in D.stations() if r.get("eme")} | {q["call"] for q in D.qsos()}
-        rows = stn.eme_only(allrows, known)
-        st.info(i18n.tr("Righe in CALL3.TXT") + f": {len(allrows)} · " + i18n.tr("stazioni EME tenute") + f": {len(rows)}")
+        rows = stn.eme_only(allrows, D.eme_10g_calls())
+        st.info(i18n.tr("Righe in CALL3.TXT") + f": {len(allrows)} · " + i18n.tr("stazioni EME da 10 GHz in su tenute")
+                + f": {len(rows)}")
+        if not rows:
+            st.warning("CALL3.TXT non dice chi fa EME: completa solo il locator delle stazioni EME già note. "
+                       "Importa prima la EME Directory (o ALL.TXT, o il log QSO), poi CALL3.TXT.")
         _import_or_ask(D, "call3", (rows, up3.name), {r["call"] for r in rows})
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
         alldec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
@@ -1075,7 +1078,9 @@ def _import_apply(D, kind, payload):
     if kind == "call3":
         rows, name = payload
         for r in rows:
-            D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
+            old = (D.station_of(r["call"]) or {}).get("locator") or ""
+            loc = r["locator"] if len(r["locator"]) > len(old) else None      # never a less precise locator
+            D.upsert_station(r["call"], locator=loc, eme=1, data={"call3": True})
         D.commit()
         D.log_station_import("call3", name, len(rows))
         st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")

@@ -201,7 +201,7 @@ def test_big_import_asks_for_ok(tmp_path):
 def test_call3_and_all_keep_only_eme():
     from emelab import stations as stn
     rows = stn.parse_call3("1A0C,JN61FV\n2E0AAG,IO82VE\nOK1KIR,JO70EB,EME\nDF3GJ,JO31\n")
-    assert [r["call"] for r in stn.eme_only(rows, {"DF3GJ"})] == ["OK1KIR", "DF3GJ"]
+    assert [r["call"] for r in stn.eme_only(rows, {"DF3GJ"})] == ["DF3GJ"]      # the EME mark alone is not enough
     dec = [{"call": "K1JT", "band": "10G"}, {"call": "EA1XX", "band": None}, {"call": "PA0PLY", "band": None}]
     assert [d["call"] for d in stn.eme_decodes(dec, {"PA0PLY"})] == ["K1JT", "PA0PLY"]
 
@@ -214,3 +214,38 @@ def test_big_table_is_limited_and_searchable(tmp_path, monkeypatch):
     assert not any("Mostro le prime" in c.value for c in at.caption)
     from emelab import i18n
     i18n.set_lang("it")
+
+
+def test_eme_10g_calls(tmp_path):
+    from datetime import datetime, timezone
+    from emelab import db as edb
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.upsert_station("PA0PLY", data={"directory": {"10G": {"antenna": "3m dish"}}})
+    D.upsert_station("K1JT", data={"heard": {"n": 2, "bands": ["10G"]}})
+    D.upsert_station("EA1XX", data={"heard": {"n": 2, "bands": []}})       # heard live, band unknown
+    D.upsert_station("2E0AAG", data={"call3": True})
+    D.commit()
+    D.add_qso(utc=datetime(2026, 1, 1, tzinfo=timezone.utc), call="OK1KIR", band="24G")
+    D.add_qso(utc=datetime(2026, 1, 1, tzinfo=timezone.utc), call="G4ABC", band="2m")
+    assert D.eme_10g_calls() == {"PA0PLY", "K1JT", "OK1KIR"}
+
+
+def test_real_call3_keeps_only_known_eme_10g():
+    """Head of a real WSJT-X CALL3.TXT (133 087 lines, none marked EME, no band information)."""
+    from emelab import stations as stn
+    text = ("// Version: 2024-08-14_14:10Z\n1A0C,JN61FV,,,\n2E0AAG,IO82VE,,,\n3B8DU,LG89,,,\n3B8EME,LG89QT,,,\n"
+            "9A5AA,JN75XT,,,\nDF3GJ,JO31,,,\n")
+    rows = stn.parse_call3(text)
+    assert len(rows) == 6
+    assert [r["call"] for r in stn.eme_only(rows, {"3B8DU", "9A5AA", "OH2DG"})] == ["3B8DU", "9A5AA"]
+
+
+def test_call3_does_not_spoil_a_precise_locator(tmp_path):
+    from emelab import db as edb, ui
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.upsert_station("3B8DU", locator="LG89SQ", data={"directory": {"10G": {"antenna": "3m dish"}}})
+    D.upsert_station("9A5AA", locator="JN75", data={"directory": {"10G": {"antenna": "2.4m dish"}}})
+    D.commit()
+    ui._import_apply(D, "call3", ([{"call": "3B8DU", "locator": "LG89", "eme": False},
+                                   {"call": "9A5AA", "locator": "JN75XT", "eme": False}], "CALL3.TXT"))
+    assert D.station_of("3B8DU")["locator"] == "LG89SQ" and D.station_of("9A5AA")["locator"] == "JN75XT"

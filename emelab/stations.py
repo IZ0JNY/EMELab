@@ -63,9 +63,10 @@ def parse_call3(text: str) -> list[dict]:
 
 
 def eme_only(rows: list[dict], known_eme: set[str]) -> list[dict]:
-    """CALL3.TXT holds every station WSJT-X knows (tens of thousands): keep only those marked EME, or already known
-    as EME stations (EME Directory, heard on 10 GHz and up, in the log)."""
-    return [r for r in rows if r.get("eme") or r["call"] in known_eme]
+    """CALL3.TXT holds every station WSJT-X knows (over 100 000, with no band and usually no EME mark): keep only
+    the stations already known to do EME from 10 GHz up (EME Directory, heard on 10 GHz and up, QSOs in the log).
+    CALL3 then only completes their locator."""
+    return [r for r in rows if r["call"] in known_eme]
 
 
 # ------------------------------------------------------------------ WSJT-X ALL.TXT

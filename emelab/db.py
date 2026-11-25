@@ -277,6 +277,19 @@ class DB:
             self.con.execute("DELETE FROM stations WHERE call = ?", (call,))
         self.con.commit()
 
+    def eme_10g_calls(self) -> set[str]:
+        """Stations with evidence of EME from 10 GHz up: a band in the EME Directory (or corrected by hand), heard on
+        10 GHz and up (ALL.TXT, live WSJT-X), or a QSO in the log on 10 GHz and up."""
+        out = set()
+        for s in self.stations():
+            d = s["data"]
+            if self.directory_of(d) or (d.get("heard") or {}).get("bands"):
+                out.add(s["call"])
+        bands = ("10G", "24G", "47G", "76G", "122G", "134G")
+        out |= {r[0] for r in self.con.execute(
+            f"SELECT DISTINCT call FROM qsos WHERE band IN ({','.join('?' * len(bands))})", bands)}
+        return out
+
     def log_station_import(self, source: str, label: str, n: int):
         self.con.execute("INSERT INTO station_imports (utc, source, label, n) VALUES (?,?,?,?)",
                          (iso_utc(datetime.now(timezone.utc)), source, label, int(n)))
