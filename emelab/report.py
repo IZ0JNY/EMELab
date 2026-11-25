@@ -88,7 +88,7 @@ def _map_page(pdf, qsos, station):
     _header(fig, "Mappa dei QSO", station)
     ax = fig.add_axes([0.06, 0.40, 0.88, 0.50])
     world_outline(ax)
-    cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
+    cols = logbook.BAND_COLORS
     for q in qsos:
         my, dx = logbook.latlon(q.get("my_locator")), logbook.latlon(q.get("locator"))
         if my and dx:

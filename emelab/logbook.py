@@ -16,6 +16,8 @@ from . import astro, atmos, stations
 ADIF_BANDS = {"3cm": "10G", "1.25cm": "24G", "6mm": "47G", "4mm": "76G", "2.5mm": "122G", "2mm": "134G"}
 BAND_ADIF = {v: k for k, v in ADIF_BANDS.items()}
 BAND_F = {"10G": 10.3682, "24G": 24.0482, "47G": 47.0882, "76G": 76.0322, "122G": 122.2502, "134G": 134.9282}
+BAND_COLORS = {"10G": "#1f77b4", "24G": "#ff7f0e", "47G": "#d62728", "76G": "#f2c200", "122G": "#8c564b",
+               "134G": "#2ca02c"}         # same colours everywhere: maps, statistics, PDF
 PERIGEE_KM = 356400.0
 
 
