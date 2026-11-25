@@ -11,6 +11,32 @@ def test_q65_thresholds_and_best_mode():
     assert m in ("60D", "60E", "120E") and -32 < thr < -20
 
 
+def test_band_mode_is_the_operating_standard_not_the_lowest_threshold():
+    assert dx.band_mode("10G", {}) == "60D"
+    assert dx.band_mode("24G", {}) == "60E"
+    assert dx.band_mode("47G", {}) == "60E"
+    assert dx.band_mode("24G", {"q65_modes": {"24G": "120E"}}) == "120E"
+    assert dx.band_mode("24G", {"q65_modes": {"24G": "bogus"}}) == "60E"
+    assert dx.best_mode(260)[0] == "120E"          # lowest threshold, but not what is used on the air
+
+
+def test_q65_threshold_penalised_beyond_spread_tolerance():
+    assert dx.spread_ok("60D", 500) and not dx.spread_ok("60D", 700)
+    at, beyond = dx.q65_threshold_db("60D", 550), dx.q65_threshold_db("60D", 800)
+    assert beyond > at + 1.0                        # keeps rising instead of staying flat
+
+
+def test_link_uses_the_band_mode():
+    a = dx.station("24G", 2.4, 20)
+    t = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
+    for h in range(0, 24):
+        r = dx.link_at(t.replace(hour=h), a, (42.0, 13.0), a, (52.0, 5.0), "24G", mode="60E")
+        if r:
+            assert r["mode"] == "60E"
+            assert abs(r["threshold_db"] - dx.q65_threshold_db("60E", r["spread_hz"])) < 1e-9
+            break
+
+
 def test_bistatic_link_symmetric_for_equal_stations():
     a = dx.station("10G", 2.4, 50)
     t = datetime(2026, 1, 15, 12, tzinfo=timezone.utc)
