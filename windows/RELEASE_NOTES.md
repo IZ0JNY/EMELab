@@ -1,3 +1,21 @@
+## EMELab 0.1.4 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.4.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.4-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📊 Statistiche QSO a colori:** ogni banda ha il suo colore (10 GHz blu, 24 GHz arancione, 47 GHz rosso, 76 GHz giallo, 134 GHz verde), istogrammi impilati da 10 GHz in su e interruttori colorati; gli stessi colori su mappe e PDF.
+- **Bande in GHz ovunque:** «10GHz», «24GHz»… in tutte le schede, nei PDF e nel testo dello sked.
+- **📻 WSJT-X:** il file `wsjtx_log.adi` viene trovato da solo (anche WSJT-X con nome della radio, WSJT-X Improved e JTDX); va bene anche la cartella o un percorso tra virgolette. Nuovo pulsante «Importa automaticamente i nuovi QSO da WSJT-X» con la spiegazione.
+- **Log QSO:** la larghezza delle colonne scelta da te resta ricordata; con il log vuoto gli ID ripartono da 1.
+- **Barra laterale:** i contatori di Misure e QSO si aggiornano subito dopo un'importazione (prima restavano a 0).
+
+### 🇬🇧 What's new
+- **📊 QSO statistics in colour:** each band has its own colour (10 GHz blue, 24 GHz orange, 47 GHz red, 76 GHz yellow, 134 GHz green), stacked histograms from 10 GHz up and coloured switches; the same colours on maps and PDFs.
+- **Bands in GHz everywhere:** «10GHz», «24GHz»… in every tab, in the PDFs and in the sked text.
+- **📻 WSJT-X:** the `wsjtx_log.adi` file is found by itself (also WSJT-X with the rig name, WSJT-X Improved and JTDX); the folder or a quoted path work too. New «Import new QSOs from WSJT-X automatically» button with an explanation.
+- **QSO log:** the column widths you choose are remembered; with an empty log the IDs start again from 1.
+- **Sidebar:** the Measurements and QSO counters update right after an import (they used to stay at 0).
+
 ## EMELab 0.1.3 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.3.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.3-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
