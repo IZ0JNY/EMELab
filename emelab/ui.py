@@ -604,8 +604,8 @@ def _planner(D):
     days = c[1].number_input("Giorni", 1, 60, 14, key="em_p_days")
     min_el = c[2].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="em_p_minel",
                                help="sotto i 10–15° a 24/47 GHz l'atmosfera e il rumore di terra pesano molto")
-    ploc = c[3].text_input("Locator della stazione corrispondente", "", key="em_p_ploc",
-                           help="facoltativo: mostra solo le finestre in cui la Luna è visibile da entrambi")
+    with c[3]:
+        pcall, ploc = _planner_partner(D)
     use_fc = c[4].checkbox("Usa le previsioni meteo", False, key="em_p_fc",
                            help="umidità prevista da Open-Meteo (16 giorni): a 24 GHz cambia l'attenuazione")
     if st.button("🗓️ Calcola", type="primary", key="em_p_go"):
@@ -615,6 +615,7 @@ def _planner(D):
                 partner = astro.locator_to_latlon(ploc)
             except Exception:
                 st.warning("Locator non valido.")
+        _st.session_state["em_plan_dx"] = (pcall, ploc.strip().upper()) if partner else None
         series = None
         if use_fc:
             try:
@@ -640,6 +641,10 @@ def _planner(D):
         if not rows:
             st.info("Nessuna finestra nel periodo con questi limiti.")
             return
+        dx_shown = _st.session_state.get("em_plan_dx")
+        if dx_shown:
+            st.caption(i18n.tr("Finestre con la Luna visibile da te e da") + " **"
+                       + " · ".join(x for x in dx_shown if x) + "**")
         st.dataframe([{"Inizio (UTC)": r["start"].strftime("%Y-%m-%d %H:%M"), "Fine (UTC)": r["end"].strftime("%Y-%m-%d %H:%M"),
                        "Ore": round(r["hours"], 1), "Momento migliore (UTC)": r["best_utc"].strftime("%Y-%m-%d %H:%M"),
                        "EL max (°)": round(r["best_el"], 1), "Distanza (km)": round(r["dist_km"]),
@@ -680,6 +685,52 @@ def _planner(D):
                            "Eco rispetto al perigeo (dB)": round(-40 * math.log10(d / min(x[1] for x in pts)), 2)}
                           for t, d, k in pts], hide_index=True, width="stretch")
         st.caption("Al perigeo le eco sono fino a 2.2 dB più forti che all'apogeo (la perdita di tratta va con R⁴).")
+
+
+_DX_NONE, _DX_NEW = "", "\u2795"
+
+
+def _planner_partner(D) -> tuple[str, str]:
+    """The other station of the planner, chosen by callsign from the EME stations database (corrections by hand
+    included); its locator comes from there. A callsign that is not there yet, or has no locator, takes a locator
+    typed by hand, which can be kept in the database. Returns (callsign, locator), both "" when none is chosen."""
+    from emelab import stations as stn
+    rows = D.stations()
+    loc_of = {r["call"]: (r.get("locator") or "").upper() for r in rows}
+    man = {r["call"] for r in rows if "locator" in ((r.get("data") or {}).get("manual") or {})}
+
+    def label(c):
+        if c == _DX_NONE:
+            return "— nessuna —"
+        if c == _DX_NEW:
+            return "➕ Altro nominativo o solo locator"
+        return f"{c} · {loc_of[c]}" if loc_of.get(c) else f"{c} · ?"
+
+    if "em_p_pcall_next" in _st.session_state:      # a station just added: pick it (before the widget exists)
+        _st.session_state["em_p_pcall"] = _st.session_state.pop("em_p_pcall_next")
+    call = st.selectbox("Stazione corrispondente", [_DX_NONE] + list(loc_of) + [_DX_NEW], key="em_p_pcall",
+                        format_func=label,
+                        help="scrivi il nominativo per cercarlo nelle Stazioni EME: il locator viene da lì. "
+                             "Facoltativo: mostra solo le finestre in cui la Luna è visibile da entrambi")
+    if call == _DX_NONE:
+        return "", ""
+    if call != _DX_NEW and loc_of.get(call):
+        st.caption("📍 " + i18n.tr("Locator") + f": **{loc_of[call]}**" + (" ✏️" if call in man else ""))
+        return call, loc_of[call]
+    if call == _DX_NEW:
+        call = st.text_input("Nominativo", "", key="em_p_newcall", placeholder="es. OK1KIR").strip().upper()
+        if call in loc_of and loc_of[call]:
+            st.caption("📍 " + i18n.tr("Locator") + f": **{loc_of[call]}**" + (" ✏️" if call in man else ""))
+            return call, loc_of[call]
+    loc = st.text_input("Locator", "", key=f"em_p_ploc_{call}", placeholder="es. JO70EB",
+                        help="locator della stazione corrispondente (4 o 6 caratteri)").strip().upper()
+    if call and loc and stn.LOC_RX.match(loc):
+        if st.button("➕ Aggiungi alle Stazioni EME", key=f"em_p_addst_{call}",
+                     help="salva nominativo e locator nel database come correzione a mano (✏️)"):
+            D.set_station_manual(call, {"locator": loc})
+            _st.session_state["em_p_pcall_next"] = call
+            st.rerun()
+    return call, loc
 
 
 # ------------------------------------------------------------------ guide
