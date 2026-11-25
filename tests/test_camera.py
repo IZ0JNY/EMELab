@@ -109,3 +109,58 @@ def test_ref_point_is_inverse_of_offset():
         ref = mt.ref_point(640, 480, 0.12, -0.07, 0.004, fx, fy)
         o = mt.offset({"cx": ref[0], "cy": ref[1]}, (319.5, 239.5), 0.004, fx, fy)
         assert o["az_deg"] == pytest.approx(0.12) and o["el_deg"] == pytest.approx(-0.07)
+
+
+def test_suggested_threshold_from_beam():
+    assert mt.suggested_tol(0.704, 1.0) == pytest.approx(0.14)      # 24GHz, 1.2 m
+    assert mt.suggested_tol(1.632, 1.0) == pytest.approx(0.33)      # 10GHz, 1.2 m
+    assert 2 * mt.pointing_loss_db(mt.suggested_tol(0.7, 1.0), 0.7) <= 1.0
+    assert mt.suggested_tol(0.0) == 0.0
+
+
+def test_sun_peak_fits_and_heatmap_files():
+    xs = np.linspace(-1, 1, 9)
+    A, E = np.meshgrid(xs, xs)
+    Z = 20 - 12 * (((A - 0.13) / 0.7) ** 2 + ((E + 0.06) / 0.7) ** 2)
+    pk = mt.fit_peak_2d(A.ravel(), E.ravel(), Z.ravel())
+    assert pk[0] == pytest.approx(0.13, abs=0.005) and pk[1] == pytest.approx(-0.06, abs=0.005)
+    assert mt.fit_peak_1d(xs, 20 - 12 * ((xs - 0.1) / 0.7) ** 2) == pytest.approx(0.1, abs=0.005)
+    lst = "Az;El;SN\n" + "\n".join(f"{a:.3f};{e:.3f};{z:.2f}" for a, e, z in zip(A.ravel(), E.ravel(), Z.ravel()))
+    mat = ";" + ";".join(f"{a:.3f}" for a in xs) + "\n" + "\n".join(
+        f"{e:.3f};" + ";".join(f"{z:.2f}" for z in row) for e, row in zip(xs, Z))
+    for text in (lst, mat):
+        h = mt.parse_heatmap(text)
+        assert len(h["db"]) == 81
+        p = mt.fit_peak_2d(h["az"], h["el"], h["db"])
+        assert p[0] == pytest.approx(0.13, abs=0.01) and p[1] == pytest.approx(-0.06, abs=0.01)
+
+
+def test_alignment_band_and_rf_centre():
+    assert mt.best_alignment_band({10.368: 1.63, 24.048: 0.70, 47.088: 0.36}) == 24.048
+    assert mt.best_alignment_band({47.088: 0.36, 76.032: 0.22}) == 47.088
+    # Sun 0.20° right of the image centre while the dish is 0.05° left of the noise peak → beam at 0.15°
+    assert mt.rf_from_sun((0.20, -0.10), (0.05, 0.02)) == pytest.approx((0.15, -0.12))
+
+
+@pytest.mark.parametrize("step", [0, 1, 2, 3])
+def test_sun_wizard_steps_in_english(tmp_path, monkeypatch, step):
+    pytest.importorskip("erfa")
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["camera"], "cam_enabled": True, "cam_source": "sim",
+                                                        "language": "en"}))
+    mt.stop()
+    from emelab import ui_sunalign
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(os.path.join(ROOT, "emelab_main.py"), default_timeout=120)
+    at.session_state["sa_step"] = ui_sunalign.STEPS[step]
+    at.session_state["sa_open"] = True
+    at.run()
+    try:
+        assert not at.exception, [e.value for e in at.exception]
+        from tests.test_language_consistency import ITALIAN_MARKERS
+        texts = [str(e.value) for k in ("caption", "markdown", "success", "warning", "error", "info")
+                 for e in getattr(at, k)] + [w.label for k in ("button", "radio") for w in getattr(at, k)]
+        bad = [(t[:100], m) for t in texts for m in ITALIAN_MARKERS if m in t]
+        assert not bad, bad
+    finally:
+        mt.stop()

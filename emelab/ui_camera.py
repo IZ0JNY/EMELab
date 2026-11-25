@@ -8,7 +8,7 @@ import time
 
 import streamlit as _st
 
-from emelab import i18n, moontrack as mt
+from emelab import i18n, stations, moontrack as mt
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -22,13 +22,37 @@ def _set(**kw):
         pass
 
 
-def _hpbw_default(D) -> float:
+BANDS_GHZ = [10.368, 24.048, 47.088, 76.032, 122.25, 134.928]
+
+
+def _wsjtx_mhz():
+    """Dial frequency of WSJT-X (MHz) when EMELab is listening to it and it is on an EME band, else None."""
     try:
-        from emelab import analysis
-        hp = [analysis.hpbw_of(s) for s in D.setups() if s.get("D_m")]
-        return round(min(hp), 3) if hp else 0.0
+        from emelab import stations, ui
+        svc = ui._wsjtx_service()
+        hz = (svc.status or {}).get("dial_hz") if svc.running else None
+        return hz / 1e6 if hz and stations.band_of(hz / 1e6) else None
     except Exception:
-        return 0.0
+        return None
+
+
+def beam(D, manual_ghz: float, hpbw_override: float = 0.0) -> dict:
+    """Operating frequency (WSJT-X, else the band chosen by hand), the setup of that band and its −3 dB beamwidth."""
+    from emelab import analysis
+    mhz = _wsjtx_mhz()
+    src = "wsjtx" if mhz else "manual"
+    f_ghz = mhz / 1000 if mhz else float(manual_ghz)
+    setup, hp = None, 0.0
+    try:
+        sets = [x for x in D.setups(f_ghz) if x.get("D_m")]
+        if sets:
+            setup = sets[0]
+            hp = analysis.hpbw_of(setup)
+    except Exception:
+        pass
+    if hpbw_override:
+        hp = hpbw_override
+    return {"f_ghz": f_ghz, "mhz": mhz, "source": src, "setup": setup, "hpbw": hp}
 
 
 def _widget(fn, label, key, default, save_key, *a, **kw):
@@ -111,12 +135,34 @@ def tab(D):
                          help="dal diametro della Luna (0,52°) serve la Luna intera nell'immagine")
     focal = _widget(c[1].number_input, "Focale dell'obiettivo (mm)", "cam_focal", mt.DEFAULT_FOCAL_MM, "cam_focal_mm",
                     1.0, 5000.0, step=10.0, help="ZWO 30F4: 120 mm")
-    hp0 = _hpbw_default(D)
-    hpbw = _widget(c[2].number_input, "Fascio a −3 dB della parabola (°)", "cam_hpbw", hp0 or 0.5, "cam_hpbw",
-                   0.01, 10.0, step=0.01, format="%.3f", help="dalla tua configurazione più stretta; serve per la perdita di puntamento")
-    tol = _widget(c[3].number_input, "Tolleranza (°)", "cam_tol", round((hp0 or 0.4) / 4, 3), "cam_tol_deg",
-                  0.005, 5.0, step=0.01, format="%.3f",
-                  help="consigliata: 1/4 del fascio a −3 dB, cioè circa 0,75 dB di perdita in ciascun verso")
+    st.markdown("#### " + i18n.tr("🚨 Soglia d'allarme"))
+    bands = sorted({round(float(x["band_ghz"]), 3) for x in D.setups()} | set(BANDS_GHZ))
+    c = st.columns(4)
+    tol_mode = _widget(c[0].radio, "Soglia", "cam_tolmode", "auto", "cam_tol_mode", ["auto", "fixed"],
+                       format_func={"auto": "Suggerita dalla frequenza di lavoro", "fixed": "Scelta da me"}.get,
+                       help="suggerita: dal fascio a −3 dB della parabola alla frequenza letta da WSJT-X, aggiornata da "
+                            "sola quando cambi banda")
+    max_loss = _widget(c[1].number_input, "Perdita massima sull'eco (dB)", "cam_maxloss", 1.0, "cam_max_echo_loss_db",
+                       0.1, 6.0, step=0.1, format="%.1f",
+                       help="perdita di puntamento accettata andata e ritorno: la soglia suggerita è "
+                            "HPBW·√(dB/24) (1 dB ≈ 1/5 del fascio)")
+    if "cam_tol_set" in S:                           # from «💡 Parti dalla soglia suggerita», before the widget is drawn
+        S["cam_tol"], S["cam_tolmode"] = S.pop("cam_tol_set"), "fixed"
+    tol_fixed = _widget(c[2].number_input, "Soglia scelta da me (°)", "cam_tol", 0.05, "cam_tol_deg",
+                        0.005, 5.0, step=0.005, format="%.3f",
+                        help="parti dalla suggerita e alza o abbassa di 0,005° alla volta (es. 0,01° · 0,05° · 0,1°)")
+    man_ghz = _widget(c[3].selectbox, "Banda quando WSJT-X non è collegato", "cam_band", 24.048, "cam_band_ghz", bands,
+                      format_func=lambda g: stations.band_label(g))
+    hp_over = _widget(st.number_input, "Fascio a −3 dB (°, 0 = calcolato dalla configurazione della banda)", "cam_hpbw0",
+                      0.0, "cam_hpbw_override", 0.0, 10.0, step=0.01, format="%.3f")
+    bm = beam(D, man_ghz, hp_over)
+    _beam_info(bm, max_loss, tol_mode, tol_fixed)
+    sug = mt.suggested_tol(bm["hpbw"], max_loss)
+    if sug and st.button("💡 Parti dalla soglia suggerita e poi regolala a mano", key="cam_tol_sug",
+                         help="copia la soglia suggerita nella «Soglia scelta da me»: poi la alzi o abbassi come vuoi"):
+        S["cam_tol_set"] = sug
+        _set(cam_tol_deg=sug, cam_tol_mode="fixed")
+        st.rerun()
     c = st.columns(4)
     hold = _widget(c[0].number_input, "Allarme dopo (s) fuori tolleranza", "cam_hold", 3.0, "cam_hold_s", 0.0, 60.0, step=1.0)
     grid = _widget(c[1].selectbox, "Passo della griglia (°)", "cam_grid", 0.1, "cam_grid_deg", [0.05, 0.1, 0.2, 0.25, 0.5],
@@ -138,7 +184,8 @@ def tab(D):
                     -3.0, 3.0, step=0.01, format="%.3f")
     rf_el = _widget(c[1].number_input, "Centro radio: El rispetto alla telecamera (°)", "cam_rfel", 0.0, "cam_rf_el_deg",
                     -3.0, 3.0, step=0.01, format="%.3f")
-    cfg = dict(tol=tol, hold=hold, grid=grid, hpbw=hpbw, flip_x=flip_x, flip_y=flip_y, beep=beep,
+    cfg = dict(tol_mode=tol_mode, tol_fixed=tol_fixed, max_loss=max_loss, man_ghz=man_ghz, hp_over=hp_over, D=D,
+               hold=hold, grid=grid, flip_x=flip_x, flip_y=flip_y, beep=beep,
                scale_mode=scale_mode, focal=focal, rf=(rf_az, rf_el))
     if c[2].button("🎯 Usa la posizione attuale della Luna come centro", key="cam_setref",
                    help="la telecamera non è mai perfettamente allineata al fascio radio: punta al massimo del rumore "
@@ -158,6 +205,23 @@ def tab(D):
         _set(cam_rf_az_deg=0.0, cam_rf_el_deg=0.0)
         st.rerun()
 
+    def sun_in_camera():
+        fr, _ = src.latest()
+        det = mt.detect(fr) if fr is not None else None
+        if not det:
+            return None
+        h, w = fr.shape[:2]
+        o = mt.offset(det, ((w - 1) / 2, (h - 1) / 2), _scale(src, None, {**cfg, "scale_mode": "optics"}), flip_x, flip_y)
+        return o["az_deg"], o["el_deg"]
+
+    def save_rf(az, el):
+        S["cam_rf_set"] = (az, el)
+        _set(cam_rf_az_deg=az, cam_rf_el_deg=el)
+        st.rerun()
+
+    from emelab import ui_sunalign
+    ui_sunalign.wizard(D, sun_in_camera, save_rf)
+
     frag = getattr(_st, "fragment", None)
     live = frag(run_every=refresh)(_live) if frag else _live
     live(cfg)
@@ -165,6 +229,31 @@ def tab(D):
                "più in alto: alza la parabola. Vale con la telecamera dritta; altrimenti usa specchiata/capovolta. "
                "Con la Luna non piena il centro trovato è quello della parte illuminata: per questo conviene "
                "fissare il centro con il pulsante 🎯 quando sei sul massimo del segnale.")
+
+
+def _tol(bm, max_loss, tol_mode, tol_fixed) -> float:
+    sug = mt.suggested_tol(bm["hpbw"], max_loss)
+    return sug if tol_mode == "auto" and sug else tol_fixed
+
+
+def _beam_info(bm, max_loss, tol_mode, tol_fixed):
+    """Where the frequency comes from, the beamwidth, the suggested threshold and the loss at common thresholds."""
+    where = (i18n.tr("📻 WSJT-X") + f": {bm['mhz']:.3f} MHz" if bm["source"] == "wsjtx"
+             else i18n.tr("Banda scelta a mano (WSJT-X non collegato)"))
+    if not bm["hpbw"]:
+        st.warning(i18n.tr("Nessuna configurazione con il diametro della parabola per") + f" {stations.band_label(bm['f_ghz'])}: "
+                   + i18n.tr("inseriscila in 🛰️ Configurazioni o scrivi il fascio a −3 dB qui sopra. Uso la soglia scelta da me."))
+        return
+    sug = mt.suggested_tol(bm["hpbw"], max_loss)
+    stp = bm.get("setup") or {}
+    st.info(f"{where} → {stations.band_label(bm['f_ghz'])}" + (f" · {stp.get('name')} (⌀ {stp.get('D_m'):g} m)" if stp else "")
+            + " · " + i18n.tr("fascio a −3 dB") + f" **{bm['hpbw']:.3f}°** · " + i18n.tr("soglia suggerita") + f" **{sug:.3f}°** "
+            + f"({i18n.tr('perdita eco')} ≤ {max_loss:.1f} dB) · " + i18n.tr("in uso") + f": **{_tol(bm, max_loss, tol_mode, tol_fixed):.3f}°**")
+    rows = [{"Soglia (°)": f"{t:g}", "Frazione del fascio": f"1/{bm['hpbw'] / t:.0f}" if t < bm["hpbw"] else f"{t / bm['hpbw']:.1f}×",
+             "Perdita andata (dB)": round(mt.pointing_loss_db(t, bm["hpbw"]), 2),
+             "Perdita eco (dB)": round(2 * mt.pointing_loss_db(t, bm["hpbw"]), 2)} for t in mt.TOL_CHOICES]
+    with st.expander(i18n.tr("Quanto perdo con ogni soglia a") + f" {stations.band_label(bm['f_ghz'])}"):
+        st.dataframe(rows, hide_index=True, width="stretch")
 
 
 def _scale(src, det, cfg) -> float:
@@ -189,6 +278,8 @@ def _live(cfg):
         else:
             st.info("In attesa del primo fotogramma dalla telecamera…")
         return
+    bm = beam(cfg["D"], cfg["man_ghz"], cfg["hp_over"])          # follows WSJT-X when you change band
+    cfg = {**cfg, "tol": _tol(bm, cfg["max_loss"], cfg["tol_mode"], cfg["tol_fixed"]), "hpbw": bm["hpbw"]}
     h, w = frame.shape[:2]
     det = mt.detect(frame)
     scale = _scale(src, det, cfg)
