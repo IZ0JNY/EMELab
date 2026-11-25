@@ -108,7 +108,7 @@ def test_settings_check_and_auto_fix(tmp_path):
     D.save_station(callsign="IZ0JNY", locator="JN61PM", lat=41.6, lon=13.3, height_m=0)
     s = Service(lambda: D, lambda: "JN61PM")
     sent = []
-    s.set_q65 = lambda code: sent.append(code) or True
+    s.set_q65 = lambda code, **kw: sent.append(code) or True
     s.on_message({"type": "status", "id": "WSJT-X", **ok, "submode": "E"}, None)
     assert sent == ["60D"] and s.problems and s.fixes
     s.on_message({"type": "status", "id": "WSJT-X", **ok, "submode": "E", "transmitting": True}, None)

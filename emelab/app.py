@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, ui
+from emelab import coach, i18n, ui, ui_gpsdo, ui_wsjtx_panel
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -43,6 +43,7 @@ def _biblio_dialog():
 D = ui._db()
 ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
 ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
+ui_wsjtx_panel.popup(ui._wsjtx_service())   # pop-up when a QSO parameter is off (closed twice: never again)
 if "update_info" not in S:                         # new version on GitHub: checked once per launch (as in FeedLab)
     from emelab import updates as _updates
     S["update_info"] = _updates.check(emelab.__version__, i18n.get_lang())
@@ -114,7 +115,7 @@ with st.sidebar:
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
-    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Puntamento", ui._pointing_tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
@@ -124,6 +125,9 @@ _saved = openems_local.load_settings().get("tabs")
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
         _saved = [k for k in _saved if k not in ("sspa", "twt")] + ["power"]
+    if _saved is not None and "gpsdo" not in _saved and not openems_local.load_settings().get("tabs_gpsdo_offered"):
+        _saved = list(_saved) + ["gpsdo"]                             # 0.1.6: new GPSDO tab shown once by default
+        openems_local.save_settings(tabs=_saved, tabs_gpsdo_offered=True)
     S["tabs_on"] = [k for k, _, _ in TABS[2:] if _saved is None or k in _saved]
 
 
