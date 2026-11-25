@@ -107,5 +107,5 @@ def test_click_in_who_can_i_work_opens_planner(monkeypatch):
     monkeypatch.setattr(ui, "_st", type("S", (), {"session_state": fake}))
     ui._open_in_planner_cb("sg_rank_sel_0", rk, {"id": 7}, 12.0)
     assert fake["em_p_pcall"] == "DF3GJ" and fake["em_p_setup"] == 7 and fake["em_p_minel"] == 12.0
-    assert fake["em_p_auto"] and fake["main_tab"] == ":material/calendar_month: Pianificatore" and "planner" in fake["tabs_on"]
+    assert fake["em_p_auto"] and fake["main_tab"] == "🗓️ Pianificatore" and "planner" in fake["tabs_on"]
     assert fake["sg_rank_sel_n"] == 1 and fake["pl_sub"] == "🗓️ Finestre"

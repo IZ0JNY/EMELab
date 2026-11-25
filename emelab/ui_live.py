@@ -21,6 +21,7 @@ from emelab import settings as openems_local
 st = i18n.wrap(_st)
 S = _st.session_state
 GPSDO_EVERY_S = 60
+CAM_MAX_H = 300
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 
 
@@ -137,16 +138,17 @@ def strip_items(status: dict | None, ini: dict | None, bkt: dict | None, ntp: di
 
 
 _CSS = """<style>
-.lv{display:flex;flex-wrap:wrap;gap:6px;font-family:ui-monospace,Consolas,monospace;font-size:14px}
-.lv span{padding:4px 8px;border-radius:6px;background:#1e2633;color:#e6edf3;border:1px solid #334}
-.lv b{margin-left:4px}.lv .ok{border-color:#2ea043;background:#12261a}.lv .warn{border-color:#d29922;background:#2a2210}
-.lv .bad{border-color:#f85149;background:#3a1416}.lv i{color:#9aa7b4;font-style:normal}
+.lv{display:flex;flex-wrap:wrap;gap:4px;font-size:12.5px}
+.lv span{padding:2px 8px;border-radius:6px;background:rgba(127,127,127,.07);border:1px solid rgba(127,127,127,.35)}
+.lv b{margin-left:4px;font-family:ui-monospace,Consolas,monospace}.lv i{opacity:.65;font-style:normal}
+.lv .ok{border-color:#2ea04399;background:rgba(46,160,67,.08)}.lv .warn{border-color:#d29922;background:rgba(210,153,34,.12)}
+.lv .bad{border-color:#f85149;background:rgba(248,81,73,.12)}
 </style>"""
 
 
-_KV_CSS = """<style>.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 14px;margin:4px 0 8px}
-.kv div{line-height:1.15}.kv i{display:block;font-style:normal;font-size:12px;opacity:.7}
-.kv b{font-size:20px;font-family:ui-monospace,Consolas,monospace;font-weight:600}</style>"""
+_KV_CSS = """<style>.kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 12px;margin:2px 0 4px}
+.kv div{line-height:1.12;min-width:0}.kv i{display:block;font-style:normal;font-size:11px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv b{font-size:16px;font-family:ui-monospace,Consolas,monospace;font-weight:600;white-space:nowrap}</style>"""
 
 
 def kv(pairs) -> None:
@@ -164,23 +166,42 @@ def strip_html(items) -> str:
 
 # ------------------------------------------------------------------ page
 def tab(D):
-    st.subheader("🔴 Live")
+    """Sized to fit a full-HD screen (1920×1080, sidebar open) without scrolling: three columns."""
     sets = openems_local.load_settings()
     cfg = ui_camera.cfg_from_settings(D, sets)
-    q = st.columns(2)
+    _html(_PAGE_CSS)
+    q = st.columns([1.15, 1, 1.25])      # camera + corrections · DriverDish, watchdog, strip · me, DX, WSJT-X checks
     with q[0].container(border=True):
         _camera_quadrant(D, sets, cfg)
     with q[1].container(border=True):
         _driverdish_quadrant(sets)
-    q = st.columns(2)
-    with q[0].container(border=True):
+    with q[1].container(border=True):
         _watchdog_quadrant()
     with q[1].container(border=True):
-        _moon_quadrant(D)
-    with st.container(border=True):
-        _frag(2)(_wsjtx_checks_live)()
-    with st.container(border=True):
         _bottom_strip()
+    with q[2].container(border=True):
+        _moon_quadrant(D)
+    with q[2].container(border=True):
+        _frag(2)(_wsjtx_checks_live)()
+
+
+_PAGE_CSS = """<style>
+.block-container{padding-top:3.9rem !important;padding-bottom:1rem !important}
+[data-testid='stVerticalBlockBorderWrapper']{padding:.55rem .75rem !important}
+.badge{padding:3px 10px;border-radius:6px;font-weight:600;font-size:14px;margin:2px 0;border:1px solid rgba(127,127,127,.35)}
+.badge.ok{background:rgba(46,160,67,.10);border-color:#2ea043;color:#1a7f37}
+.badge.warn{background:rgba(210,153,34,.12);border-color:#d29922;color:#9a6700}
+.badge.bad{background:rgba(248,81,73,.12);border-color:#f85149;color:#cf222e}.badge.none{background:rgba(127,127,127,.07)}
+</style>"""
+
+
+def _html(h: str):
+    st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
+
+
+def badge(text: str, state: str = "none"):
+    """One-line coloured status (instead of the tall st.success / st.error boxes)."""
+    _html(f"<div class='badge {state}'>{html.escape(i18n.tr(text))}</div>")
 
 
 def _camera_quadrant(D, sets, cfg):
@@ -202,15 +223,16 @@ def _camera_live(cfg):
     off, alarm = m["off"], m["alarm"]
     img = mt.overlay(m["frame"], m["det"], m["ref"], m["tol"] / m["scale"], cfg["grid"] / m["scale"], alarm.active,
                      max_w=640, grid_deg=cfg["grid"])
-    st.image(img, width="stretch")
+    ih, iw = img.shape[:2] if hasattr(img, "shape") else (img.size[1], img.size[0])
+    st.image(img, width=int(min(560, CAM_MAX_H * iw / ih)))        # at most CAM_MAX_H px high: the page fits the screen
     if alarm.active:
-        st.error("🚨 FUORI TRACKING" if alarm.reason == "out" else "🚨 LUNA PERSA: non è più nell'immagine")
+        badge("🚨 FUORI TRACKING" if alarm.reason == "out" else "🚨 LUNA PERSA: non è più nell'immagine", "bad")
     elif off and off["total_deg"] > m["tol"]:
-        st.warning("⚠️ Fuori tolleranza")
+        badge("⚠️ Fuori tolleranza", "warn")
     elif off:
-        st.success("✅ In tracking")
+        badge("✅ In tracking", "ok")
     else:
-        st.warning("Luna non trovata nell'immagine")
+        badge("Luna non trovata nell'immagine", "warn")
     kv(([("Scostamento", f"{off['total_deg']:.3f}°"), ("Az", f"{off['az_deg']:+.3f}°"), ("El", f"{off['el_deg']:+.3f}°")]
         if off else []) + [("Soglia", f"{m['tol']:.3f}°")])
     ui_camera.alarm_feedback(m, cfg)
@@ -281,8 +303,8 @@ def _driverdish_live():
         st.warning(i18n.tr("DriverDish non risponde") + (f": {err}" if err else ""))
         return
     tracking = d.get("tracking")
-    (st.success if tracking else st.error)(f"{d.get('target', '—')} · " + ("TRACKING ON" if tracking else "TRACKING OFF")
-                                           + (" · " + i18n.tr("in movimento") if d.get("moving") else ""))
+    badge(f"{d.get('target', '—')} · " + ("TRACKING ON" if tracking else "TRACKING OFF")
+          + (" · " + i18n.tr("in movimento") if d.get("moving") else ""), "ok" if tracking else "bad")
     f = lambda k, sg="": f"{d[k]:{sg}.3f}°" if isinstance(d.get(k), (int, float)) else "—"
     kv([("Antenna Az", f("dish_az")), ("Antenna El", f("dish_el")), ("Errore Az", f("err_az", "+")),
         ("Errore El", f("err_el", "+")), ("Offset Az", f("off_az", "+")), ("Offset El", f("off_el", "+"))])
@@ -333,8 +355,8 @@ def _watchdog_live():
         return
     rows = "".join(f"<div class='wd {i['state']}'><span>{_ICON[i['state']]}</span><b>{html.escape(i18n.tr(i['name']))}</b>"
                    f"<i>{html.escape(i18n.tr(i['msg']))}</i></div>" for i in items)
-    h = ("<style>.wd{display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-radius:6px;margin:3px 0;"
-         "font-size:15px}.wd b{min-width:110px}.wd i{font-style:normal;opacity:.85}.wd.bad{background:#3a141622;"
+    h = ("<style>.wd{display:flex;gap:10px;align-items:baseline;padding:2px 8px;border-radius:6px;margin:2px 0;"
+         "font-size:14px}.wd b{min-width:110px}.wd i{font-style:normal;opacity:.85}.wd.bad{background:#3a141622;"
          "border:1px solid #f85149}.wd.warn{border:1px solid #d29922}.wd.ok{border:1px solid #2ea04366}</style>" + rows)
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
     st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni minuto.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
@@ -361,7 +383,6 @@ def _watchdog_bg(D):
 
 
 def _moon_quadrant(D):
-    st.markdown("**" + i18n.tr("🌕 Luna: io e il corrispondente") + "**")
     _frag(2)(_moon_live)(D)
 
 
@@ -449,19 +470,19 @@ def _moon_live(D):
            v, me, now, band, freq=(f"{hz / 1e6:,.3f} MHz".replace(",", " ") if hz else None), towards=call or "DX")
     if other:
         vo = station_view(now, other, me, f_ghz)
-        _panel("🟧 " + i18n.tr("CORRISPONDENTE") + f" · {call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
+        _panel("🟧 DX" + f" · {call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
                towards=stn.get("callsign") or i18n.tr("me"))
         st.caption(i18n.tr("Percorso Terra–Luna–Terra") + f" {v['path_km']:,.0f} km · " + i18n.tr("ritardo")
                    + f" {v['delay_s']:.3f} s · " + i18n.tr("polarizzazioni") + f" {v['pols']}")
     else:
-        st.caption("Il riquadro del corrispondente compare quando WSJT-X ha un DX Call con il locator (o il locator è nel "
+        st.caption("Il riquadro del DX compare quando WSJT-X ha un DX Call con il locator (o il locator è nel "
                    "database delle stazioni).")
 
 
 def _panel(title, color, v, ll, now, band, freq=None, towards="DX"):
     from emelab import tz
     loc, zone, _ = tz.local_time(ll[0], ll[1], now)
-    head = (f"<div style='border-left:6px solid {color};padding:4px 10px;margin:6px 0 2px;font-size:18px;font-weight:700'>"
+    head = (f"<div style='border-left:6px solid {color};padding:2px 10px;margin:4px 0 2px;font-size:16px;font-weight:700'>"
             f"{html.escape(title)}</div>")
     st.html(head) if hasattr(_st, "html") else _st.markdown(head, unsafe_allow_html=True)
     pairs = [("Ora locale", f"{loc:%H:%M} ({zone.split('/')[-1]})")]

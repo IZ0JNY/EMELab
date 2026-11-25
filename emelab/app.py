@@ -173,7 +173,7 @@ def _tabs_settings():
         for i, k in enumerate(order):
             S[f"tabvis_{k}"] = k == "station" or k in S["tabs_on"]
             c = st.columns([8, 1, 1], vertical_alignment="center")
-            c[0].checkbox(nav.title(k, labels[k]), key=f"tabvis_{k}", on_change=_toggle_tab, args=(k,), disabled=k == "station",
+            c[0].checkbox(labels[k], key=f"tabvis_{k}", on_change=_toggle_tab, args=(k,), disabled=k == "station",
                           help="sempre visibile" if k == "station" else None)
             c[1].button("⬆️", key=f"tabup_{k}", on_click=_move_tab, args=(k, -1), disabled=i == 0, help="sposta prima")
             c[2].button("⬇️", key=f"tabdn_{k}", on_click=_move_tab, args=(k, 1), disabled=i == len(order) - 1,
@@ -195,9 +195,8 @@ if not S.pop("_update_dialog", False):
     _ui_tracking.popup()                         # alarm when DriverDish (EA3HMJ) stops working (read-only check)
 _by_key = {t[0]: t for t in TABS}
 shown = [TABS[0]] + [_by_key[k] for k in S["tabs_order"] if k == "station" or k in S["tabs_on"]]
-_st.html(nav.TAB_CSS)                       # grey tab icons
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
-    tabs = _st.tabs([nav.title(k, l) for k, l, _ in shown], key="main_tab", on_change="rerun")
+    tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
 except TypeError:                                   # Streamlit without state on tabs
     tabs = st.tabs([l for _, l, _ in shown])
 for tab, (k, _, fn) in zip(tabs, shown):

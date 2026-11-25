@@ -1857,9 +1857,7 @@ ENTRIES = [
     ('🐕 Watchdog', '🐕 Watchdog'),
     ('orologio', 'clock'),
     ('Ora locale', 'Local time'),
-    ('🌕 Luna: io e il corrispondente', '🌕 Moon: me and the station worked'),
     ('IO', 'ME'),
-    ('CORRISPONDENTE', 'STATION WORKED'),
     ('Dpol verso', 'Dpol towards'),
     ('Perdita di polarizzazione', 'Polarisation loss'),
     ('Doppler sul percorso', 'Path Doppler'),
@@ -1870,6 +1868,6 @@ ENTRIES = [
     ('UR', 'RH'),
     ('polarizzazioni', 'polarisations'),
     ('me', 'me'),
-    ('Il riquadro del corrispondente compare quando WSJT-X ha un DX Call con il locator (o il locator è nel database delle stazioni).',
-     'The panel of the station worked appears when WSJT-X has a DX Call with its locator (or the locator is in the stations database).'),
+    ('Il riquadro del DX compare quando WSJT-X ha un DX Call con il locator (o il locator è nel database delle stazioni).',
+     'The DX panel appears when WSJT-X has a DX Call with its locator (or the locator is in the stations database).'),
 ]

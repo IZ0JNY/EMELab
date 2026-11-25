@@ -973,8 +973,7 @@ def _open_in_planner_cb(key, rk, setup, min_el):
     S["em_p_auto"] = True
     if "planner" not in (S.get("tabs_on") or []):
         S["tabs_on"] = list(S.get("tabs_on") or []) + ["planner"]
-    from emelab import nav
-    S["main_tab"] = nav.title("planner", PLANNER_TAB_LABEL)
+    S["main_tab"] = i18n.tr(PLANNER_TAB_LABEL)
     S["pl_sub"] = i18n.tr("🗓️ Finestre")
 
 
