@@ -98,3 +98,12 @@ def test_qrz_people_for_the_log(tmp_path):
     assert p["IK3GHY"] == {"qth": "Padova", "fname": "Mario", "lname": "Rossi"}
     assert p["NOBODY1"] == {"qth": "", "fname": "", "lname": ""}
     assert D.station_of("IK3GHY")["locator"] is None          # the log lookup never changes a locator
+
+
+def test_editable_tables_show_blanks_not_none():
+    import pandas as pd
+    from emelab import ui
+    df, cfg = ui._blank_cols(pd.DataFrame(ui._TX_DEFAULT))
+    assert list(df["Psat (dBm)"]) == ["33", "43", ""] and set(cfg) == {"Psat (dBm)", "P1dB (dBm)", "V", "A"}
+    assert df["Guadagno (dB)"].dtype == float                       # full number columns stay numbers
+    assert [ui._num(x) for x in ("33", "", None, "0,8", float("nan"), "abc", 2.5)] == [33.0, None, None, 0.8, None, None, 2.5]

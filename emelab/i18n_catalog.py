@@ -721,7 +721,7 @@ ENTRIES = [
     ('📡 Log QSO', '📡 QSO log'),
     ('📈 Grafici', '📈 Charts'),
     ('📉 Statistiche QSO', '📉 QSO statistics'),
-    ('🔧 Progettazione', '🔧 Design'),
+    ('🧪 Laboratorio', '🧪 Laboratory'),
     ('🖨️ Stampa PDF', '🖨️ PDF printouts'),
     ('⏻ Chiudi EMELab', '⏻ Close EMELab'),
     ('Schede', 'Tabs'),

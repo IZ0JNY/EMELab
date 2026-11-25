@@ -118,7 +118,7 @@ TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
-     ("design", "🔧 Progettazione", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
+     ("design", "🧪 Laboratorio", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
     ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
 _saved = openems_local.load_settings().get("tabs")
 if "tabs_on" not in S:

@@ -327,6 +327,28 @@ def _editor_rows(rows):
     return pd.DataFrame([{i18n.tr(k): (i18n.tr(v) if isinstance(v, str) else v) for k, v in r.items()} for r in rows])
 
 
+def _blank_cols(df):
+    """Number columns with empty cells become text columns: the editor shows a blank there, never "None".
+    Returns the table and the column_config that keeps those columns editable; _num reads them back."""
+    import pandas as pd
+    cfg = {}
+    for c in df.columns:
+        v = df[c]
+        if v.isna().any() and not v.dropna().map(lambda x: isinstance(x, str)).any():
+            df[c] = v.map(lambda x: "" if x is None or pd.isna(x) else f"{x:g}").astype(object)
+            cfg[c] = _st.column_config.TextColumn(c, alignment="right")
+    return df, cfg
+
+
+def _num(v):
+    """A number typed in an editable table (float, text or empty) → float, or None when empty or not a number."""
+    try:
+        f = float(str(v).replace(",", ".")) if v is not None and str(v).strip() not in ("", "None", "nan") else None
+    except ValueError:
+        return None
+    return None if f is None or f != f else f
+
+
 def _editor_back(ed, cols):
     if i18n.get_lang() == "it":
         return ed.to_dict("records")
@@ -1499,13 +1521,14 @@ def _design_tab(D):
     c = st.columns(2)
     with c[0]:
         st.markdown("**Ricezione (dal feed al transverter)**")
-        rx = st.data_editor(_editor_rows(_st.session_state.get("rx_tab", _RX_DEFAULT)), num_rows="dynamic",
+        rx_df, rx_cfg = _blank_cols(_editor_rows(_st.session_state.get("rx_tab", _RX_DEFAULT)))
+        rx = st.data_editor(rx_df, num_rows="dynamic", column_config=rx_cfg,
                             key="rx_ed" + _lang_key(), hide_index=True, width="stretch")
         t_ant = st.number_input("Temperatura d'antenna (K)", 3.0, 500.0, 40.0, 1.0, key="ch_tant",
                                 help="dal progetto FeedLab o dalla misura; cielo freddo + spillover")
-        stages = [chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
-                  {"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "nf_db": float(r["NF (dB)"])}
-                  for r in _editor_back(rx, _RX_DEFAULT[0]) if r.get("Stadio") and r.get("Guadagno (dB)") is not None]
+        stages = [chain.passive(r["Stadio"], -_num(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
+                  {"name": r["Stadio"], "gain_db": _num(r["Guadagno (dB)"]), "nf_db": _num(r.get("NF (dB)")) or 0.0}
+                  for r in _editor_back(rx, _RX_DEFAULT[0]) if r.get("Stadio") and _num(r.get("Guadagno (dB)")) is not None]
         if stages:
             res = chain.rx_chain(stages, t_ant)
             m = st.columns(3)
@@ -1519,18 +1542,19 @@ def _design_tab(D):
             st.plotly_chart(fig, width="stretch")
     with c[1]:
         st.markdown("**Trasmissione (dal transverter al feed)**")
-        tx = st.data_editor(_editor_rows(_st.session_state.get("tx_tab", _TX_DEFAULT)), num_rows="dynamic",
+        tx_df, tx_cfg = _blank_cols(_editor_rows(_st.session_state.get("tx_tab", _TX_DEFAULT)))
+        tx = st.data_editor(tx_df, num_rows="dynamic", column_config=tx_cfg,
                             key="tx_ed" + _lang_key(), hide_index=True, width="stretch")
         pin = st.number_input("Potenza in ingresso (dBm)", -30.0, 40.0, 10.0, 0.5, key="ch_pin")
         st_tx = []
         for r in _editor_back(tx, _TX_DEFAULT[0]):
-            if not r.get("Stadio") or r.get("Guadagno (dB)") is None:
+            if not r.get("Stadio") or _num(r.get("Guadagno (dB)")) is None:
                 continue
             if r["Tipo"] == "passivo":
-                st_tx.append(chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])))
+                st_tx.append(chain.passive(r["Stadio"], -_num(r["Guadagno (dB)"])))
             else:
-                f = lambda k: None if r.get(k) is None or pd.isna(r.get(k)) else float(r[k])
-                st_tx.append({"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "psat_dbm": f("Psat (dBm)"),
+                f = lambda k: _num(r.get(k))
+                st_tx.append({"name": r["Stadio"], "gain_db": _num(r["Guadagno (dB)"]), "psat_dbm": f("Psat (dBm)"),
                               "p1db_dbm": f("P1dB (dBm)"), "vdc": f("V"), "idc_a": f("A")})
         if st_tx:
             res = chain.tx_chain(pin, st_tx)
@@ -1540,8 +1564,9 @@ def _design_tab(D):
             m[2].metric("Calore da dissipare", f"{res['heat_w']:.0f} W")
             st.dataframe(pd.DataFrame([{i18n.tr("Stadio"): s["name"], i18n.tr("Ingresso (dBm)"): round(s["p_in_dbm"], 2),
                                         i18n.tr("Uscita (dBm)"): round(s["p_out_dbm"], 2),
-                                        i18n.tr("Margine dal P1dB (dB)"): None if s["p1db_margin_db"] is None else round(s["p1db_margin_db"], 1)}
-                                       for s in res["stages"]]), hide_index=True, width="stretch")
+                                        i18n.tr("Margine dal P1dB (dB)"): "" if s["p1db_margin_db"] is None else f"{s['p1db_margin_db']:.1f}"}
+                                       for s in res["stages"]]), hide_index=True, width="stretch",
+                         column_config={i18n.tr("Margine dal P1dB (dB)"): _st.column_config.TextColumn(alignment="right")})
     st.divider()
     st.subheader("Libreria dei componenti")
     st.caption("Componenti con i valori dei datasheet dei produttori (inseriti da te o trovati nel catalogo Mouser) e il "
