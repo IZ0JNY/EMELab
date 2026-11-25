@@ -126,3 +126,41 @@ def test_planner_rows_are_moon_passes():
     assert all(r["end"] >= r["start"] for r in rows)
     assert all(r["hours"] < 16 for r in rows)            # one pass, never two passes glued by the calendar day
     assert len(rows) >= 3
+
+
+def test_weather_station_discovery(tmp_path):
+    """the data file is not next to the home page: found from the page links, in a frame or in a usual folder"""
+    import functools
+    import http.server
+    import threading
+    (tmp_path / "meteo").mkdir()
+    (tmp_path / "meteo" / "realtime.txt").write_text(
+        "24/11/26 22:20:55 11.7 87 9.6 0.0 0.0 58 0.0 0.0 1022.9 ENE 0 km/h C hPa mm")
+    (tmp_path / "index.html").write_text('<html><script src="meteo/realtime.txt?x=1"></script></html>')
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "index.html").write_text('<iframe src="/b/home.html"></iframe>')
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "home.html").write_text("<html>nothing here</html>")
+    (tmp_path / "b" / "clientraw.txt").write_text("12345 3.0 4 180 8.5 80 1015.2 0 0 0 0.4")
+    (tmp_path / "c").mkdir()
+    (tmp_path / "c" / "index.html").write_text("<html></html>")
+    (tmp_path / "c" / "template").mkdir()
+    (tmp_path / "c" / "template" / "meteotemplateLive.txt").write_text('{"T": 5.5, "H": 70, "P": 1010}')
+    h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    h.log_message = lambda *a: None
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), h)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/"
+    try:
+        w = weather.station_now(base, timeout=3)
+        assert w["p_hpa"] == 1022.9
+        assert "/meteo/realtime.txt" in w["station_file"]
+        w = weather.station_now(base + "a/", timeout=3)
+        assert w["t_c"] == 8.5 and w["station_file"].endswith("/b/clientraw.txt")
+        w = weather.station_now(base + "c", timeout=3)
+        assert w["t_c"] == 5.5 and w["station_file"].endswith("/c/template/meteotemplateLive.txt")
+        import pytest
+        with pytest.raises(RuntimeError, match="404"):
+            weather.station_now(base + "x/", timeout=3)
+    finally:
+        srv.shutdown()
