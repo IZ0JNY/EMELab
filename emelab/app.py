@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, ui, ui_gpsdo, ui_wsjtx_panel
+from emelab import coach, i18n, ui, ui_gpsdo, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -114,7 +114,7 @@ with st.sidebar:
     st.caption("Tutti i dati restano su questo PC. Orari in UTC.")
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
-    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
+    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("moon", "🌙 Luna", ui_moon.tab), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
     ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
@@ -128,6 +128,9 @@ if "tabs_on" not in S:
     if _saved is not None and "gpsdo" not in _saved and not openems_local.load_settings().get("tabs_gpsdo_offered"):
         _saved = list(_saved) + ["gpsdo"]                             # 0.1.6: new GPSDO tab shown once by default
         openems_local.save_settings(tabs=_saved, tabs_gpsdo_offered=True)
+    if _saved is not None and "moon" not in _saved and not openems_local.load_settings().get("tabs_moon_offered"):
+        _saved = list(_saved) + ["moon"]                              # new Moon tab shown once by default
+        openems_local.save_settings(tabs=_saved, tabs_moon_offered=True)
     S["tabs_on"] = [k for k, _, _ in TABS[2:] if _saved is None or k in _saved]
 
 
