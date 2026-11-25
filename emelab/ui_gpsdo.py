@@ -35,18 +35,30 @@ def _status_box(sets):
         c[2].caption(i18n.tr("Ultima conferma") + f": {sets['gpsdo_ok_utc'].replace('T', ' ').replace('Z', ' UTC')}")
     c = st.columns([2, 3])
     if c[0].button("🛰️ Leggi lo stato dal GPSDO Leo Bodnar (USB)", key="gp_read",
-                   help="mini GPS Reference Clock o GPS Disciplined Clock: GPS signal, PLL lock e numero di perdite di segnale. "
-                        "Chiudi prima il programma di configurazione del costruttore."):
-        _st.session_state["gp_state"] = gpsdo.read_leo_bodnar()
+                   help="mini GPS Reference Clock o GPS Disciplined Clock: GPS signal, PLL lock, perdite di segnale, "
+                        "satelliti usati e frequenza d'uscita. Per i satelliti EMELab abilita per pochi secondi il messaggio "
+                        "u-blox NAV-PVT, come il programma del costruttore, e poi lo disabilita: la configurazione salvata "
+                        "non cambia. Chiudi prima il programma di configurazione del costruttore."):
+        with st.spinner(i18n.tr("Lettura dal GPSDO…")):
+            _st.session_state["gp_state"] = gpsdo.read_leo_bodnar()
     r = _st.session_state.get("gp_state")
     if r:
         if r.get("error"):
             c[1].warning(i18n.tr("Lettura non riuscita") + f": {i18n.tr(r['error'])}")
         else:
             ok = r["gps_ok"] and r["pll_ok"]
+            pvt, cfg = r.get("pvt") or {}, r.get("config") or {}
+            sats = (i18n.tr("satelliti usati") + f" {pvt['sats_used']} · fix {i18n.tr(pvt['fix'])} · ") if pvt else ""
             (c[1].success if ok else c[1].error)(
                 f"{r['model']} · GPS signal {'OK' if r['gps_ok'] else 'NO'} · PLL lock {'OK' if r['pll_ok'] else 'NO'} · "
-                + i18n.tr("perdite di segnale") + f" {r['loss_count']} · {r['utc']} UTC")
+                + sats + i18n.tr("perdite di segnale") + f" {r['loss_count']} · {r['utc']} UTC")
+            if cfg.get("f_out_hz"):
+                c[1].caption(i18n.tr("Uscita") + f" {cfg['f_out_hz']:,.0f} Hz".replace(",", " ")
+                             + (f" · {cfg['drive_ma']} mA" if cfg.get("drive_ma") else "")
+                             + f" · GPS reference {cfg['f_ref_hz']} Hz · N31 {cfg['n31']} · N2_HS {cfg['n2_hs']} · "
+                               f"N2_LS {cfg['n2_ls']} · N1_HS {cfg['n1_hs']} · NC1_LS {cfg['nc1_ls']} · BW {cfg['bw']}")
+            if not pvt:
+                c[1].caption(i18n.tr("Numero di satelliti non ricevuto: riprova fra qualche secondo."))
             if ok:
                 gpsdo.confirm()
             with st.expander(i18n.tr("Dati grezzi dal GPSDO")):
