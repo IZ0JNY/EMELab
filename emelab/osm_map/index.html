@@ -1,8 +1,8 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later
      Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-     EMELab station map: OpenStreetMap tiles drawn with Leaflet (bundled here, BSD-2, see LICENSE-leaflet.txt),
-     Maidenhead locator grid, the station and the EME stations of the directory. A click sends {lat, lon} back
+     EMELab station map: OpenStreetMap / OpenTopoMap (terrain) / Esri World Imagery (satellite) tiles drawn with Leaflet (bundled here, BSD-2, see LICENSE-leaflet.txt),
+     Maidenhead locator grid (optional), the station and the EME stations of the directory. A click sends {lat, lon} back
      to Streamlit (bidirectional component protocol, no build step). -->
 <html>
 <head>
@@ -52,6 +52,7 @@
 
   function drawGrid() {
     grid.clearLayers();
+    if (!map.hasLayer(grid)) return;
     var b = map.getBounds(), lv = level(map.getZoom());
     var w = Math.max(b.getWest(), -180), e = Math.min(b.getEast(), 180);
     var s = Math.max(b.getSouth(), -90), nn = Math.min(b.getNorth(), 90);
@@ -80,11 +81,31 @@
     var el = document.getElementById("map");
     el.style.height = (args.height || 460) + "px";
     map = L.map(el, { worldCopyJump: true, zoomControl: true, attributionControl: true, minZoom: 2, maxZoom: 19 });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>' })
-      .addTo(map);
+    var lb = args.layer_labels || {};
+    var bases = {};
+    bases[lb.map || "Map"] = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>' });
+    bases[lb.terrain || "Terrain"] = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      { maxZoom: 17, subdomains: "abc", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>, ' +
+        'SRTM | &copy; <a href="https://opentopomap.org" target="_blank">OpenTopoMap</a> (CC-BY-SA)' });
+    bases[lb.satellite || "Satellite"] = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 19, attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community" });
+    var names = Object.keys(bases), chosen = names[0];
+    try { var k = window.localStorage.getItem("emelab_osm_base"); if (k && bases[k]) chosen = k; } catch (e) {}
+    bases[chosen].addTo(map);
     map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank">Leaflet</a>');
-    grid = L.layerGroup().addTo(map);
+    grid = L.layerGroup();                       // locator grid: optional, off by default
+    var over = {};
+    over[lb.grid || "Locator grid"] = grid;
+    try { if (window.localStorage.getItem("emelab_osm_grid") === "1") grid.addTo(map); } catch (e) {}
+    L.control.layers(bases, over, { collapsed: false, position: "topright" }).addTo(map);
+    map.on("baselayerchange", function (e) { try { window.localStorage.setItem("emelab_osm_base", e.name); } catch (x) {} });
+    map.on("overlayadd overlayremove", function (e) {
+      if (e.layer !== grid) return;
+      try { window.localStorage.setItem("emelab_osm_grid", e.type === "overlayadd" ? "1" : "0"); } catch (x) {}
+      drawGrid();
+    });
     dx = L.layerGroup().addTo(map);
     if (args.has_pos) { map.setView([args.lat, args.lon], args.zoom || 13); setMe(args.lat, args.lon); }
     else map.setView([42, 12], 3);

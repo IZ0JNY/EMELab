@@ -89,6 +89,15 @@ def _set_position(lat, lon, source):
         ss["em_pos_msg"] = ("warn", msg + " · " + i18n.tr("quota non trovata (serve internet): scrivila a mano"))
 
 
+def _height_cb(lat, lon):
+    try:
+        h = weather.elevation(lat, lon)
+        _st.session_state["em_h"] = float(round(h))
+        _st.session_state["em_h_msg"] = ("ok", i18n.tr("quota del terreno") + f" {h:.0f} m (Open-Meteo)")
+    except Exception as e:
+        _st.session_state["em_h_msg"] = ("warn", i18n.tr("quota non trovata (serve internet): scrivila a mano") + f" — {str(e)[:120]}")
+
+
 def _gmaps_cb():
     p = astro.parse_coords(_st.session_state.get("em_gmaps", ""))
     if p is None:
@@ -130,7 +139,7 @@ def _wx_test_cb():
 
 
 def _osm_map(D, lat, lon):
-    """OpenStreetMap map with the locator grid, the station and the EME stations of the directory; a click sets the position"""
+    """OpenStreetMap / terrain / satellite map (locator grid optional) with the station and the EME stations of the directory; a click sets the position"""
     from emelab import osm
     pts = []
     try:
@@ -144,9 +153,13 @@ def _osm_map(D, lat, lon):
         pass
     osm.station_map(lat, lon, bool(lat or lon), pts[-400:], height=480,
                     me_label=_st.session_state.get("em_call") or i18n.tr("la mia stazione"),
-                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"), key="em_osm", on_change=_osm_cb)
-    st.caption("Mappa © OpenStreetMap con la griglia del locator: clic sul punto della parabola e latitudine, longitudine, "
-               "locator e quota si aggiornano. Rotellina per lo zoom, trascina per spostare.")
+                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"),
+                    layer_labels={"map": i18n.tr("Mappa"), "terrain": i18n.tr("Terreno"), "satellite": i18n.tr("Satellite"),
+                                  "grid": i18n.tr("Griglia del locator")},
+                    key="em_osm", on_change=_osm_cb)
+    st.caption("Clic sul punto della parabola: latitudine, longitudine, locator e quota si aggiornano. In alto a destra "
+               "scegli Mappa (OpenStreetMap), Terreno (OpenTopoMap) o Satellite (Esri World Imagery) e, se vuoi, la griglia "
+               "del locator. Rotellina per lo zoom, trascina per spostare.")
 
 
 def _station(D):
@@ -193,9 +206,20 @@ def _station(D):
         _osm_map(D, lat, lon)
     c = st.columns(4)
     ss.setdefault("em_h", float(stn.get("height_m") or 0.0))
+    if not ss["em_h"] and (lat or lon) and not ss.get("em_h_auto"):
+        ss["em_h_auto"] = True                   # height still 0 with a known position: ask once per session
+        try:
+            ss["em_h"] = float(round(weather.elevation(lat, lon)))
+        except Exception:
+            pass
     h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, step=1.0, key="em_h",
                           help="si riempie da sola dopo un clic sulla mappa o le coordinate di Google Maps (quota del terreno "
                                "da Open-Meteo, modello Copernicus a 90 m): correggila se serve")
+    c[0].button("⛰️ Quota dal punto", key="em_h_get", on_click=_height_cb, args=(lat, lon), disabled=not (lat or lon),
+                help="chiede a Open-Meteo la quota del terreno nel punto di latitudine e longitudine qui sopra")
+    if ss.get("em_h_msg"):
+        kind, msg = ss["em_h_msg"]
+        (c[0].success if kind == "ok" else c[0].warning)(msg)
     sets = openems_local.load_settings()
     url = c[1].text_input("Stazione meteo personale (facoltativa)", sets.get("emelab_wx_url", ""), key="em_wxurl",
                           help="indirizzo del tuo sito Meteotemplate / Cumulus / Weather Display, oppure del file dati. "
@@ -220,8 +244,8 @@ def _station(D):
         st.success("Stazione salvata (solo su questo PC).")
     st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
                "tuo PC e non vengono mai inviati. Escono solo le richieste a internet: il meteo riceve coordinate e ora, la "
-               "mappa scarica le immagini da OpenStreetMap (che vede la zona mostrata), la quota riceve solo il punto "
-               "cliccato (Open-Meteo). Senza internet la mappa mostra solo la griglia: scrivi coordinate e quota a mano.")
+               "mappa scarica le immagini da OpenStreetMap, OpenTopoMap o Esri (che vedono la zona mostrata), la quota riceve solo il punto "
+               "della stazione (Open-Meteo). Senza internet la mappa resta vuota: scrivi coordinate e quota a mano.")
 
 
 def _setups(D):
