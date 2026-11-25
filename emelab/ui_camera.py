@@ -337,7 +337,8 @@ def _cfg_key(cfg) -> tuple:
 def alarm_feedback(m, cfg):
     """Toast and beep when the alarm starts."""
     if m and m.get("started"):
-        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola."), icon="🚨")
+        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola.") + " "
+                  + i18n.tr("(clicca per aprire la scheda)"), icon="🚨")
         if cfg["beep"]:
             try:
                 _st.audio(mt.beep_wav(), format="audio/wav", autoplay=True)
