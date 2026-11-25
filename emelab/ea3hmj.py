@@ -134,7 +134,7 @@ def parse_corrections(text: str) -> dict:
 # DriverDish 3.x → Setup → Telnet server (port 9999, «Run»). Commands from the DriverDish.App Ethernet Utils manual
 # (EA3HMJ, 10-03-2026). EMELab sends ONLY the read commands below: the others ("az+5", "traking on", "stop", …)
 # move the dish or change its state and are refused here, whatever the caller asks.
-READ_COMMANDS = ("status", "az", "el", "ao", "eo", "eq", "astro", "moving", "traking", "help")
+READ_COMMANDS = ("status", "az", "el", "ao", "eo", "eq", "astro", "moving", "tracking", "traking", "help")
 
 _NUM = r"(-?\d+(?:[.,]\d+)?)"
 _STATUS_ROWS = {                      # label in «status» → key prefix
