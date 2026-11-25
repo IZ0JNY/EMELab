@@ -990,7 +990,17 @@ def _logbook_tab(D):
         st.info("Inserisci e salva prima la stazione (posizione) nella scheda Stazione.")
         return
     my_loc = stn.get("locator") or astro.latlon_to_locator(stn["lat"], stn["lon"])
-    with st.expander("➕ Nuovo QSO", expanded=True):
+    svc = _wsjtx_autostart()
+    auto_on = svc.auto_log and (svc.running or svc.file_running)
+    if auto_on:
+        how = " + ".join(x for x in ("UDP" if svc.running else "", "wsjtx_log.adi" if svc.file_running else "") if x)
+        last = next((q for q in svc.logged if q.get("id")), None)
+        st.success(i18n.tr("I QSO confermati in WSJT-X entrano nel log da soli") + f" ({how})"
+                   + (" · " + i18n.tr("ultimo") + f": {last['call']} {last['utc']:%Y-%m-%d %H:%M}" if last else ""))
+    else:
+        st.info("Per registrare i QSO da soli, collega WSJT-X nella scheda 📻 WSJT-X (file di log o UDP). "
+                "Il modulo qui sotto resta per i QSO fatti con altri programmi o in CW/SSB.")
+    with st.expander("➕ Nuovo QSO", expanded=not auto_on):
         now = datetime.now(timezone.utc)
         c = st.columns(4)
         d0 = c[0].date_input("Data (UTC)", now.date(), key="q_date")
@@ -1054,15 +1064,15 @@ def _logbook_tab(D):
                 q = lb.from_adif_record(r)
                 if q is None:
                     continue
-                if only_eme:
-                    pm = (q.get("prop_mode") or "").upper()
-                    digi = " ".join(x for x in (q.get("mode"), q.get("submode")) if x).upper()
-                    # PROP_MODE EME, or (no PROP_MODE) an EME station / an EME digital mode; tropo, rain scatter… are left out
-                    looks_eme = pm == "EME" or (not pm and (q["call"] in eme_calls or any(m in digi for m in ("Q65", "JT65", "JT4", "QRA64"))))
-                    if q["band"] not in lb.BAND_F or not looks_eme:
-                        skipped += 1
-                        continue
+                q = lb.wsjtx_mode(q)
+                # PROP_MODE EME, or (no PROP_MODE) an EME station / an EME digital mode; tropo, rain scatter… are left out
+                if only_eme and lb.eme_verdict(q, eme_calls):
+                    skipped += 1
+                    continue
                 q.pop("prop_mode", None)
+                if D.qso_near(q["call"], q.get("band"), q["utc"]):       # already logged (from WSJT-X or another file)
+                    dup += 1
+                    continue
                 q["my_locator"] = q.get("my_locator") or my_loc
                 q["calc"] = lb.enrich(q, my_loc, stn.get("height_m") or 0)
                 if D.add_qso(**q):
@@ -2281,13 +2291,114 @@ def _wsjtx_service():
 def _wsjtx_autostart():
     sets = openems_local.load_settings()
     svc = _wsjtx_service()
+    svc.auto_log = bool(sets.get("wsjtx_autolog", True))
+    svc.eme_only = bool(sets.get("wsjtx_eme_only", True))
+    svc.strict_eme = bool(sets.get("wsjtx_strict_eme", False))
+    svc.auto_fix = bool(sets.get("wsjtx_autofix", True))
     if sets.get("wsjtx_on") and not svc.running:
         try:
             svc.start(sets.get("wsjtx_host", "127.0.0.1"), int(sets.get("wsjtx_port", 2237)), sets.get("wsjtx_mcast") or None)
-            svc.auto_log = bool(sets.get("wsjtx_autolog", True))
         except OSError as e:
             svc.errors.append(f"avvio: {e}")
+    if sets.get("wsjtx_file_on") and not svc.file_running and sets.get("wsjtx_file"):
+        pos = sets.get("wsjtx_file_pos") or {}
+        svc.on_tail_pos = _wsjtx_save_pos
+        svc.start_file(sets["wsjtx_file"], pos.get("offset") if pos.get("path") == sets["wsjtx_file"] else None)
     return svc
+
+
+def _wsjtx_live_problems(svc):
+    """What is wrong in WSJT-X now (only while it is talking to EMELab)."""
+    if not (svc.running and svc.last_seen and svc.problems):
+        return []
+    return svc.problems if (datetime.now(timezone.utc) - svc.last_seen).total_seconds() < 90 else []
+
+
+def _wsjtx_banner():
+    """Warning on every page when the WSJT-X settings do not fit the band."""
+    probs = _wsjtx_live_problems(_wsjtx_service())
+    if probs:
+        st.warning(i18n.tr("⚠️ Impostazioni di WSJT-X da controllare") + ": " +
+                   " · ".join(i18n.tr(p["msg"]) + (f" ({p['detail']})" if p.get("detail") else "") for p in probs)
+                   + " — " + i18n.tr("dettagli nella scheda 📻 WSJT-X"))
+
+
+def _wsjtx_check_box(svc, sets):
+    st.markdown("#### " + i18n.tr("✅ Controllo delle impostazioni di WSJT-X"))
+    st.caption("A ogni messaggio di stato EMELab controlla modo, sottomodo e periodo T/R (Q65-60D a 10 GHz, Q65-60E da "
+               "24 GHz in su), la banda, il nominativo e il locator. Modo, sottomodo e T/R li può correggere da solo "
+               "(serve «Accept UDP requests» in WSJT-X), mai durante la trasmissione; il resto lo segnala soltanto. "
+               "Doppler tracking, Prop Mode e audio non passano dal protocollo UDP: controllali tu nella finestra Astro "
+               "e in «Log QSO».")
+    fix = st.checkbox("Correggi da solo modo, sottomodo e T/R", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
+    if fix != svc.auto_fix:
+        svc.auto_fix = fix
+        openems_local.save_settings(wsjtx_autofix=fix)
+    probs = _wsjtx_live_problems(svc)
+    if svc.last_seen and not probs:
+        st.success("Impostazioni di WSJT-X a posto per questa banda.")
+    for k, p in enumerate(probs):
+        c = st.columns([5, 1])
+        c[0].warning(i18n.tr(p["msg"]) + (f": {p['detail']}" if p.get("detail") else ""))
+        if p.get("fix") and c[1].button(f"⚙️ Q65-{p['fix']}", key=f"wj_fix_{k}"):
+            st.success("Inviato a WSJT-X.") if svc.set_q65(p["fix"]) else st.error("WSJT-X non raggiungibile.")
+    if svc.fixes:
+        f = svc.fixes[0]
+        st.caption(i18n.tr("Ultima correzione inviata") + f": {f['utc']:%H:%M:%S} UTC, {f['from']} → {f['to']}")
+
+
+def _wsjtx_save_pos(path, offset):
+    openems_local.save_settings(wsjtx_file_pos={"path": path, "offset": int(offset)})
+
+
+def _wsjtx_file_box(svc, sets):
+    from emelab import wsjtx_logfile
+    st.markdown("#### " + i18n.tr("📄 File di log di WSJT-X (wsjtx_log.adi)"))
+    st.caption("Il modo più semplice: ogni volta che premi OK in «Log QSO», WSJT-X aggiunge il QSO a wsjtx_log.adi ed "
+               "EMELab lo legge entro pochi secondi. Non serve nessuna porta UDP, quindi non disturba JTAlert, GridTracker "
+               "o altri logger. Il file è nella cartella che WSJT-X apre con File → Open log directory.")
+    found = wsjtx_logfile.find_default()
+    c = st.columns([4, 1])
+    path = c[0].text_input("Percorso di wsjtx_log.adi", sets.get("wsjtx_file") or (str(found) if found else ""), key="wj_file")
+    from pathlib import Path
+    ok = bool(path.strip()) and Path(path.strip()).is_file()
+    if not svc.file_running:
+        past = st.checkbox("Importa anche i QSO già presenti nel file (i doppioni vengono saltati)", False, key="wj_file_past")
+        if c[1].button("▶️ Segui il file", type="primary", key="wj_file_on", disabled=not ok):
+            p = path.strip()
+            openems_local.save_settings(wsjtx_file_on=True, wsjtx_file=p, wsjtx_file_pos={})
+            svc.on_tail_pos = _wsjtx_save_pos
+            svc.start_file(p, 0 if past else None)
+            st.rerun()
+        if path.strip() and not ok:
+            st.warning("File non trovato: controlla il percorso (in WSJT-X: File → Open log directory).")
+    else:
+        if c[1].button("⏹️ Smetti", key="wj_file_off"):
+            svc.stop_file()
+            openems_local.save_settings(wsjtx_file_on=False)
+            st.rerun()
+        st.markdown(i18n.tr("Seguo") + f" `{svc.tail.path}`" + (" · " + i18n.tr("ultimo QSO letto") +
+                    f" {svc.file_seen:%H:%M:%S} UTC" if svc.file_seen else ""))
+
+
+def _wsjtx_logged_table(svc):
+    if not svc.logged:
+        return
+    from emelab import logbook as lb
+    st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
+
+    def state(q):
+        if q.get("skipped"):
+            why = q["skipped"]
+            why = i18n.tr("propagazione") + why[12:] if why.startswith("propagazione ") else i18n.tr(why)
+            return i18n.tr("lasciato fuori") + ": " + why
+        return i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")
+    st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q.get("band"),
+                   "Modo": lb.mode_label(q)[0],
+                   "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                   "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
+                   "Fonte": q.get("source"), "Stato": state(q)} for q in svc.logged],
+                 hide_index=True, width="stretch")
 
 
 def _wsjtx_tab(D):
@@ -2299,14 +2410,27 @@ def _wsjtx_tab(D):
                "GridTracker, metti in WSJT-X un indirizzo multicast (per esempio 224.0.0.1) e lo stesso qui.")
     sets = openems_local.load_settings()
     svc = _wsjtx_autostart()
-    c = st.columns(5)
+    c = st.columns(3)
+    auto = c[0].checkbox("Registra i QSO nel log", bool(sets.get("wsjtx_autolog", True)), key="wj_auto")
+    eme_only = c[1].checkbox("Solo i QSO EME e delle bande da 10 GHz in su", bool(sets.get("wsjtx_eme_only", True)), key="wj_eme")
+    strict = c[2].checkbox("Solo con Prop Mode = EME", bool(sets.get("wsjtx_strict_eme", False)), key="wj_strict",
+                           disabled=not eme_only,
+                           help=i18n.tr("Senza questa spunta, un QSO senza Prop Mode entra se è in Q65, JT65, JT4 o QRA64 "
+                                        "oppure con una stazione EME nota. Un Prop Mode diverso da EME (tropo, rain scatter…) "
+                                        "resta sempre fuori. In WSJT-X il Prop Mode si sceglie nella finestra «Log QSO» e "
+                                        "viene ricordato."))
+    if (auto, eme_only, strict) != (svc.auto_log, svc.eme_only, svc.strict_eme):
+        svc.auto_log, svc.eme_only, svc.strict_eme = auto, eme_only, strict
+        openems_local.save_settings(wsjtx_autolog=auto, wsjtx_eme_only=eme_only, wsjtx_strict_eme=strict)
+    _wsjtx_file_box(svc, sets)
+    _wsjtx_logged_table(svc)
+    st.markdown("#### " + i18n.tr("📡 UDP (decodifiche, colori, sottomodo Q65)"))
+    c = st.columns(4)
     host = c[0].text_input("Indirizzo", sets.get("wsjtx_host", "127.0.0.1"), key="wj_host")
     port = c[1].number_input("Porta UDP", 1024, 65535, int(sets.get("wsjtx_port", 2237)), key="wj_port")
     mcast = c[2].text_input("Gruppo multicast (facoltativo)", sets.get("wsjtx_mcast", ""), key="wj_mcast")
-    auto = c[3].checkbox("Registra i QSO nel log", bool(sets.get("wsjtx_autolog", True)), key="wj_auto")
-    svc.auto_log = auto
     if not svc.running:
-        if c[4].button("▶️ Collega", type="primary", key="wj_start"):
+        if c[3].button("▶️ Collega", type="primary", key="wj_start"):
             try:
                 svc.start(host.strip(), int(port), mcast.strip() or None)
                 openems_local.save_settings(wsjtx_on=True, wsjtx_host=host.strip(), wsjtx_port=int(port),
@@ -2314,12 +2438,16 @@ def _wsjtx_tab(D):
                 st.rerun()
             except OSError as e:
                 st.error(i18n.tr("Porta non disponibile (forse un altro programma la usa)") + f": {e}")
-    elif c[4].button("⏹️ Scollega", key="wj_stop"):
+    elif c[3].button("⏹️ Scollega", key="wj_stop"):
         svc.stop()
         openems_local.save_settings(wsjtx_on=False)
         st.rerun()
     if not svc.running:
         st.info("Non collegato.")
+        if svc.errors:
+            with st.expander("⚠️ Messaggi"):
+                for e in list(svc.errors)[-10:]:
+                    st.text(e)
         return
     s = svc.status
     if not svc.last_seen:
@@ -2331,6 +2459,7 @@ def _wsjtx_tab(D):
                     + f"**{s.get('mode', '')} {s.get('submode', '')}** · DX **{s.get('dx_call') or '—'}** {s.get('dx_grid') or ''} · "
                     + ("🔴 TX" if s.get("transmitting") else "🟢 RX"))
     st.button("🔄 Aggiorna", key="wj_refresh")
+    _wsjtx_check_box(svc, sets)
     stn = D.station()
     band = None
     if s.get("dial_hz"):
@@ -2367,13 +2496,6 @@ def _wsjtx_tab(D):
             for call in {r["call"] for r in rec if r["call"]}:
                 n += svc.highlight(call, "#c8e6c9" if call not in worked else "#e0e0e0")
             st.success(i18n.tr("Nominativi colorati") + f": {n}")
-    if svc.logged:
-        st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
-        st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q["band"],
-                       "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
-                       "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
-                       "Stato": i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")} for q in svc.logged],
-                     hide_index=True, width="stretch")
     if svc.errors:
         with st.expander("⚠️ Messaggi"):
             for e in list(svc.errors)[-10:]:

@@ -87,6 +87,35 @@ def from_adif_record(r: dict) -> dict | None:
             "qsl_sent": r.get("QSL_SENT"), "qsl_rcvd": r.get("QSL_RCVD"), "prop_mode": r.get("PROP_MODE"), "adif": r}
 
 
+EME_DIGI = ("Q65", "JT65", "JT4", "QRA64")
+
+
+def eme_verdict(q: dict, eme_calls=(), strict: bool = False) -> str | None:
+    """None if the QSO is to be kept as EME at 10 GHz and up, otherwise the reason it is left out.
+    PROP_MODE=EME is always kept; another PROP_MODE (tropo, rain scatter…) never. Without PROP_MODE it is kept only
+    when it is with a known EME station or in an EME digital mode (Q65, JT65, JT4, QRA64), unless strict."""
+    if q.get("band") not in BAND_F:
+        return "sotto i 10 GHz"
+    pm = (q.get("prop_mode") or "").upper()
+    if pm == "EME":
+        return None
+    if pm:
+        return "propagazione " + pm
+    if strict:
+        return "senza PROP_MODE=EME"
+    digi = " ".join(x for x in (q.get("mode"), q.get("submode")) if x).upper()
+    if q.get("call") in eme_calls or any(m in digi for m in EME_DIGI):
+        return None
+    return "non EME"
+
+
+def wsjtx_mode(q: dict) -> dict:
+    """WSJT-X writes Q65 in ADIF as MODE=MFSK, SUBMODE=Q65: bring it back to mode Q65 as in the rest of EMELab."""
+    if (q.get("mode") or "").upper() == "MFSK" and (q.get("submode") or "").upper() in EME_DIGI:
+        q["mode"], q["submode"] = q["submode"].upper(), None
+    return q
+
+
 # ------------------------------------------------------------------ conditions of a QSO
 def conditions(utc: datetime, my_loc: tuple[float, float], dx_loc: tuple[float, float] | None, f_ghz: float,
                wx: dict | None = None, my_h: float = 0.0) -> dict:

@@ -368,6 +368,15 @@ class DB:
         self.con.commit()
         return int(cur.lastrowid) if cur.rowcount else None
 
+    def qso_near(self, call: str, band: str | None, utc: datetime, minutes: float = 10) -> dict | None:
+        """A QSO already in the log with the same call and band within ± minutes (the same QSO from another source:
+        WSJT-X over UDP, its log file, an ADIF export of another logger with or without the seconds)."""
+        from datetime import timedelta
+        a, b = iso_utc(utc - timedelta(minutes=minutes)), iso_utc(utc + timedelta(minutes=minutes))
+        r = self.con.execute("SELECT id, utc FROM qsos WHERE call = ? AND IFNULL(band, '') = IFNULL(?, '') AND utc BETWEEN ? AND ? "
+                             "LIMIT 1", (call.upper(), band, a, b)).fetchone()
+        return dict(r) if r else None
+
     def update_qso(self, qid: int, **q):
         for k in ("calc", "adif"):
             if isinstance(q.get(k), dict):
