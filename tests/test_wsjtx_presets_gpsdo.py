@@ -105,3 +105,37 @@ def test_panel_html(tmp_path, monkeypatch):
           "freq_tolerance": 200, "config_name": "EME mm-wave", "dx_call": "UN6PD", "dx_grid": "MN69JM"}
     h = up.panel_html(st, wc.preset("24G"), {}, "24G")
     assert "24 048,121634" in h and "UN6PD" in h and "btn on'>60E" in h and "⚠️" in h and "❔" in h
+
+
+INI = r"""[General]
+RxFreq_old=700
+[MultiSettings]
+CurrentName=EME mm-wave
+Test\Astro\DopplerMethod=1
+Test\Configuration\SplitMode=@Variant(\0\0\0\x7f\0\0\0\x1eTransceiverFactory::SplitMode\0\0\0\0\x13split_mode_emulate\0)
+[Configuration]
+SplitMode=@Variant(\0\0\0\x7f\0\0\0\x1eTransceiverFactory::SplitMode\0\0\0\0\xfsplit_mode_rig\0)
+[Astro]
+DopplerTracking=true
+DopplerMethod=2
+[MainWindow]
+TxFirst=true
+[Common]
+AutoSeq=true
+MaxDrift=0
+"""
+
+
+def test_wsjtx_ini(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    from emelab import wsjtx_check, wsjtx_ini
+    f = tmp_path / "WSJT-X.ini"
+    f.write_text(INI)
+    r = wsjtx_ini.read(f)
+    assert (r["config"], r["doppler"], r["split"], r["tx_first"], r["auto_seq"], r["max_drift"]) == \
+        ("EME mm-wave", "CFOM", "Rig", True, True, 0)
+    assert wsjtx_ini.find(tmp_path / "wsjtx_log.adi") == f
+    assert wsjtx_ini.differences(r, wsjtx_check.preset("10G")) == []
+    f.write_text(INI.replace("DopplerTracking=true", "DopplerTracking=false").replace("TxFirst=true", "TxFirst=false"))
+    d = {x["code"] for x in wsjtx_ini.differences(wsjtx_ini.read(f), wsjtx_check.preset("10G"))}
+    assert d == {"ini_doppler", "ini_tx_first"}

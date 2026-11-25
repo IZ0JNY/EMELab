@@ -34,7 +34,7 @@ def _status_box(sets):
     if sets.get("gpsdo_ok_utc"):
         c[2].caption(i18n.tr("Ultima conferma") + f": {sets['gpsdo_ok_utc'].replace('T', ' ').replace('Z', ' UTC')}")
     c = st.columns([2, 3])
-    if c[0].button("🔌 Leggi lo stato dal GPSDO Leo Bodnar (USB)", key="gp_read",
+    if c[0].button("🛰️ Leggi lo stato dal GPSDO Leo Bodnar (USB)", key="gp_read",
                    help="mini GPS Reference Clock o GPS Disciplined Clock: GPS signal, PLL lock e numero di perdite di segnale. "
                         "Chiudi prima il programma di configurazione del costruttore."):
         _st.session_state["gp_state"] = gpsdo.read_leo_bodnar()

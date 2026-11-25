@@ -11,13 +11,14 @@ What the Status message shows, and what EMELab can do about it:
 - Tx audio frequency (Tx DF) and configuration name of the preset: only a mild note (Configure cannot set them);
 - dial frequency outside the bands from 10 GHz up, callsign and locator different from the EMELab station,
   TX watchdog: only a warning (the UDP protocol cannot change them).
-«Tx even/1st», Max Drift, Auto Seq, Doppler tracking, Prop Mode, audio and rig settings are not in the Status
-message: EMELab cannot see them and lists them as a checklist to tick by hand.
+«Tx even/1st», Max Drift, Auto Seq, Doppler tracking, Split Operation, Prop Mode, audio and rig settings are not in
+the Status message: the first five are read from WSJT-X.ini (wsjtx_ini) when it is found, otherwise confirmed by hand.
 
 Band presets (settings «wsjtx_presets», editable in the 📻 WSJT-X tab), from IZ0JNY's WSJT-X v3.3.0:
 - 24 GHz: configuration «EME mm-wave», Q65-60E, T/R 60 s, Tx even/1st, Tx 700 Hz, Rx 700 Hz, F Tol 200 Hz,
   Max Drift 0, Auto Seq on;
 - 10 GHz: Q65-60D, Tx 1000 Hz, Rx 1000 Hz, Doppler tracking CFOM (Constant Frequency On Moon); the rest as 24 GHz;
+- every band: Split Operation «Rig»;
 - the higher bands copy 24 GHz (assumed values, to be checked)."""
 from __future__ import annotations
 
@@ -39,13 +40,14 @@ def expected_mode(band: str) -> str:
 
 
 PRESET_DEFAULT = {"config": "EME mm-wave", "tx_df": 700, "rx_df": 700, "f_tol": 200, "max_drift": 0,
-                  "tx_first": True, "auto_seq": True, "doppler": "CFOM"}
+                  "tx_first": True, "auto_seq": True, "doppler": "CFOM", "split": "Rig"}
 PRESET_BAND = {"10G": {"tx_df": 1000, "rx_df": 1000, "doppler": "CFOM"}}
 PRESET_GIVEN = {"10G", "24G"}       # bands whose preset IZ0JNY gave; the others are assumed copies of 24 GHz
 DOPPLER = {"CFOM": "CFOM (Constant Frequency On Moon)", "Full": "Full Doppler to DX Grid", "OwnEcho": "Own Echo",
-           "None": "nessuno"}
-MANUAL = [("doppler", "Doppler tracking (finestra Astro)"), ("tx_first", "«Tx even/1st»"), ("max_drift", "Max Drift"),
-          ("auto_seq", "Auto Seq")]
+           "OnDxEcho": "On DX Echo", "CallDx": "Call DX", "None": "nessuno"}
+SPLIT = ("Rig", "Fake It", "None")
+MANUAL = [("doppler", "Doppler tracking (finestra Astro)"), ("split", "Split Operation"), ("tx_first", "«Tx even/1st»"),
+          ("max_drift", "Max Drift"), ("auto_seq", "Auto Seq")]
 
 
 def _num(v):

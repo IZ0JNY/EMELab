@@ -7,7 +7,9 @@ brings all of them back).
 
 What WSJT-X sends in its Status message: dial frequency, mode, submode, T/R period, Tx and Rx audio frequency,
 F Tol, configuration name, DX call/grid, Tx enabled, transmitting, decoding, TX watchdog. Not sent: Doppler tracking
-(CFOM), «Tx even/1st», Max Drift, Auto Seq: for these the panel asks for a confirmation, valid 12 hours."""
+(CFOM), Split Operation, «Tx even/1st», Max Drift, Auto Seq: these are read from WSJT-X.ini (wsjtx_ini); without
+the file the panel asks for a confirmation, valid 12 hours. EMELab only listens and reads files: WSJT-X is not slowed
+down (it sends Status anyway; Configure goes out only to correct a value, at most 3 times, never while transmitting)."""
 from __future__ import annotations
 
 import html
@@ -15,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import streamlit as _st
 
-from emelab import gpsdo, i18n, stations, wsjtx_check
+from emelab import gpsdo, i18n, stations, wsjtx_check, wsjtx_ini
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -53,6 +55,23 @@ def confirm(what: str, band: str | None):
     openems_local.save_settings(wsjtx_confirm=c)
 
 
+def ini_state(sets: dict) -> dict:
+    """WSJT-X.ini values, re-read only when the file changes."""
+    try:
+        path = wsjtx_ini.find(sets.get("wsjtx_file") or None)
+        if not path:
+            return {}
+        mt = path.stat().st_mtime
+        c = S.get("wj_ini_cache")
+        if c and c[0] == str(path) and c[1] == mt:
+            return c[2]
+        r = wsjtx_ini.read(path)
+        S["wj_ini_cache"] = (str(path), mt, r)
+        return r
+    except Exception:
+        return {}
+
+
 def alerts(svc, sets: dict) -> list[dict]:
     """What is off now: [{"key", "msg", "detail", "action"}] (action: preset / doppler / gpsdo / None)."""
     if not _live(svc):
@@ -64,7 +83,10 @@ def alerts(svc, sets: dict) -> list[dict]:
         out.append({"key": f"{p['code']}@{band}", "msg": p["msg"], "detail": p.get("detail", ""), "action": act})
     if band:
         pre = wsjtx_check.preset(band, sets)
-        if pre.get("doppler") and pre["doppler"] != "None" and not confirmed(sets, "doppler", band):
+        ini = ini_state(sets)
+        for d in wsjtx_ini.differences(ini, pre):
+            out.append({"key": f"{d['code']}@{band}", "msg": d["msg"], "detail": d["detail"], "action": None})
+        if ini.get("doppler") is None and pre.get("doppler") and pre["doppler"] != "None" and not confirmed(sets, "doppler", band):
             out.append({"key": f"doppler@{band}", "msg": "Doppler tracking da confermare",
                         "detail": wsjtx_check.DOPPLER.get(pre["doppler"], pre["doppler"]) + " " +
                         i18n.tr("nella finestra Astro di WSJT-X"), "action": "doppler"})
@@ -123,9 +145,9 @@ def _on_dismiss():
 
 
 try:
-    _dialog = _st.dialog("⚠️ WSJT-X: parametri da controllare", width="large", on_dismiss=_on_dismiss)(_dialog_body)
+    _dialog = _st.dialog("⚠️ WSJT-X", width="large", on_dismiss=_on_dismiss)(_dialog_body)
 except TypeError:                                   # older Streamlit: no on_dismiss
-    _dialog = _st.dialog("⚠️ WSJT-X: parametri da controllare", width="large")(_dialog_body)
+    _dialog = _st.dialog("⚠️ WSJT-X", width="large")(_dialog_body)
 
 
 def popup(svc):
@@ -166,7 +188,18 @@ def _cell(label, value, mark=""):
             f"<b>{html.escape(str(value))}</b> {mark}</span>")
 
 
-def panel_html(status: dict, pre: dict | None, sets: dict, band: str | None) -> str:
+def _ini_cell(label, key, want, ini, sets, band, fmt=lambda v: v):
+    """A setting not sent over UDP: from WSJT-X.ini when available (✅/⚠️), else the preset value to confirm (❔)."""
+    if want is None:
+        return _cell(label, "—")
+    have = (ini or {}).get(key)
+    if have is not None:
+        return _cell(label, fmt(have), OK if str(have) == str(want.get(key)) else BAD)
+    conf_key = "doppler" if key == "doppler" else "manual"
+    return _cell(label, fmt(want.get(key, "—")), OK if confirmed(sets, conf_key, band) else ASK)
+
+
+def panel_html(status: dict, pre: dict | None, sets: dict, band: str | None, ini: dict | None = None) -> str:
     """HTML of the WSJT-X-like panel (pure function: tested without Streamlit)."""
     s = status or {}
     nul = wsjtx_check.NULL
@@ -204,11 +237,11 @@ def panel_html(status: dict, pre: dict | None, sets: dict, band: str | None) -> 
         + _cell("T/R", f"{tr} s" if tr else "—", "" if not tr else mk(tr == want.get("tr")))
         + "</div>",
         "<div class='row'>"
-        + _cell("Doppler", wsjtx_check.DOPPLER.get(want.get("doppler"), "—").split(" (")[0],
-                "" if pre is None else (OK if confirmed(sets, "doppler", band) else ASK))
-        + _cell("Tx even/1st", "sì" if want.get("tx_first") else "no", "" if pre is None else (OK if confirmed(sets, "manual", band) else ASK))
-        + _cell("Max Drift", want.get("max_drift", "—"), "" if pre is None else (OK if confirmed(sets, "manual", band) else ASK))
-        + _cell("Auto Seq", "sì" if want.get("auto_seq") else "no", "" if pre is None else (OK if confirmed(sets, "manual", band) else ASK))
+        + _ini_cell("Doppler", "doppler", pre, ini, sets, band, lambda v: wsjtx_check.DOPPLER.get(v, v).split(" (")[0])
+        + _ini_cell("Split", "split", pre, ini, sets, band)
+        + _ini_cell("Tx even/1st", "tx_first", pre, ini, sets, band, lambda v: "sì" if v else "no")
+        + _ini_cell("Max Drift", "max_drift", pre, ini, sets, band)
+        + _ini_cell("Auto Seq", "auto_seq", pre, ini, sets, band, lambda v: "sì" if v else "no")
         + "</div>",
         "<div class='row bar'>"
         + (f"<span class='tx'>{html.escape(i18n.tr('Trasmissione'))}</span>" if s.get("transmitting")
@@ -231,10 +264,13 @@ def _live_fragment(svc):
         st.info("Il pannello si riempie appena WSJT-X manda il primo messaggio di stato via UDP.")
         return
     age = (datetime.now(timezone.utc) - svc.last_seen).total_seconds()
-    st.html(panel_html(svc.status, pre, sets, band)) if hasattr(_st, "html") else \
-        _st.markdown(panel_html(svc.status, pre, sets, band), unsafe_allow_html=True)
+    ini = ini_state(sets)
+    h = panel_html(svc.status, pre, sets, band, ini)
+    st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
     st.caption(i18n.tr("Valori letti da WSJT-X in tempo reale") + f" ({svc.client or 'WSJT-X'}, {age:.0f} s) · "
-               + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu"))
+               + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu")
+               + (" · " + i18n.tr("Doppler, Split, Tx even/1st, Max Drift e Auto Seq da WSJT-X.ini salvato alle")
+                  + f" {ini['saved']:%H:%M} UTC" if ini.get("saved") else ""))
     keys = sorted(a["key"] for a in to_show(svc, sets))
     if keys and keys != S.get("wj_alert_keys"):    # a new problem: rerun the whole page to open the pop-up
         S["wj_alert_keys"] = keys
@@ -263,11 +299,16 @@ def _check_table(svc, sets, band):
             ("Configurazione", pre.get("config") or "—", s.get("config_name") or "—", "config")]
     out = [{"Parametro": a, "Preset": b, "WSJT-X adesso": c,
             "Stato": BAD if code in probs else (OK if c != "—" else ASK)} for a, b, c, code in rows]
-    out.append({"Parametro": "Doppler tracking", "Preset": wsjtx_check.DOPPLER.get(pre.get("doppler"), "—"),
-                "WSJT-X adesso": i18n.tr("non inviato via UDP"), "Stato": OK if confirmed(sets, "doppler", band) else ASK})
-    out.append({"Parametro": "Tx even/1st · Max Drift · Auto Seq",
-                "Preset": f"{'sì' if pre.get('tx_first') else 'no'} · {pre.get('max_drift')} · {'sì' if pre.get('auto_seq') else 'no'}",
-                "WSJT-X adesso": i18n.tr("non inviato via UDP"), "Stato": OK if confirmed(sets, "manual", band) else ASK})
+    ini = ini_state(sets)
+    yn = {True: "sì", False: "no"}
+    for key, label in wsjtx_check.MANUAL:
+        want = pre.get(key)
+        have = ini.get(key)
+        show = (lambda v: wsjtx_check.DOPPLER.get(v, v)) if key == "doppler" else (lambda v: yn.get(v, v))
+        conf = "doppler" if key == "doppler" else "manual"
+        out.append({"Parametro": label.replace("«", "").replace("»", ""), "Preset": show(want),
+                    "WSJT-X adesso": f"{show(have)} (WSJT-X.ini)" if have is not None else i18n.tr("non inviato via UDP"),
+                    "Stato": (OK if str(have) == str(want) else BAD) if have is not None else (OK if confirmed(sets, conf, band) else ASK)})
     st.dataframe(out, hide_index=True, width="stretch")
     if pre.get("assumed"):
         st.markdown(f"<span style='color:#e8590c'>{html.escape(i18n.tr('Valori presunti: copiati dai 24GHz, controllali e salvali'))}</span>",
@@ -278,7 +319,7 @@ def _check_table(svc, sets, band):
     if c[1].button("✅ Doppler tracking attivo", key="wj_dop_ok"):
         confirm("doppler", band)
         _st.rerun()
-    if c[2].button("✅ Tx even/1st, Max Drift, Auto Seq a posto", key="wj_man_ok"):
+    if c[2].button("✅ Split, Tx even/1st, Max Drift, Auto Seq a posto", key="wj_man_ok"):
         confirm("manual", band)
         _st.rerun()
 
@@ -299,12 +340,14 @@ def _preset_editor(band):
                              if pre.get("doppler") in wsjtx_check.DOPPLER else 0, format_func=lambda k: wsjtx_check.DOPPLER[k],
                              key=f"wjp_dop_{band}")
         drift = c[2].number_input("Max Drift", 0, 100, int(pre.get("max_drift") or 0), 1, key=f"wjp_drift_{band}")
+        split = c[2].selectbox("Split Operation", list(wsjtx_check.SPLIT), index=list(wsjtx_check.SPLIT).index(pre.get("split", "Rig"))
+                               if pre.get("split") in wsjtx_check.SPLIT else 0, key=f"wjp_split_{band}")
         c3 = c[3].columns(2)
         txf = c3[0].checkbox("Tx even/1st", bool(pre.get("tx_first")), key=f"wjp_txf_{band}")
         aseq = c3[1].checkbox("Auto Seq", bool(pre.get("auto_seq")), key=f"wjp_aseq_{band}")
         if st.button("💾 Salva il preset della banda", key=f"wjp_save_{band}"):
             wsjtx_check.save_preset(band, mode=mode, tx_df=int(tx), rx_df=int(rx), f_tol=int(ftol), config=cfg.strip(),
-                                    doppler=dop, max_drift=int(drift), tx_first=txf, auto_seq=aseq)
+                                    doppler=dop, max_drift=int(drift), tx_first=txf, auto_seq=aseq, split=split)
             st.success("Preset salvato.")
             _st.rerun()
 
@@ -316,10 +359,11 @@ def render(svc, sets):
     band = _band(svc)
     st.markdown("#### " + i18n.tr("✅ Controllo dei parametri per il QSO"))
     st.caption("EMELab confronta i valori di WSJT-X con il preset della banda (10GHz: Q65-60D, Tx e Rx 1000 Hz, CFOM; "
-               "24GHz: Q65-60E, Tx e Rx 700 Hz). Modo, sottomodo, T/R e F Tol li corregge da solo (serve «Accept UDP "
-               "requests» in WSJT-X), mai durante la trasmissione; Rx lo imposta al cambio di banda; Tx, Doppler "
-               "tracking, Tx even/1st, Max Drift e Auto Seq li puoi solo controllare, perché il protocollo UDP non li "
-               "trasmette o non li cambia.")
+               "24GHz: Q65-60E, Tx e Rx 700 Hz; Split «Rig»). Modo, sottomodo, T/R e F Tol li corregge da solo (serve "
+               "«Accept UDP requests» in WSJT-X), mai durante la trasmissione; Rx lo imposta al cambio di banda. Tx lo "
+               "segnala soltanto; Doppler tracking, Split, Tx even/1st, Max Drift e Auto Seq non passano via UDP: li "
+               "legge da WSJT-X.ini (che WSJT-X salva quando cambi un'impostazione). EMELab ascolta e legge file: "
+               "non rallenta WSJT-X.")
     fix = st.checkbox("Correggi da solo modo, sottomodo, T/R e F Tol", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
     if fix != svc.auto_fix:
         svc.auto_fix = fix
