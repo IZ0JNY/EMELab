@@ -1714,7 +1714,7 @@ def _setup_pick(D, key):
 
 def _pointing_tab(D):
     from emelab import chain, sunscan
-    st.subheader("Puntamento")
+    st.subheader("Tracking")
     st.caption("Bilancio degli errori di puntamento: ogni causa indipendente si somma in quadratura (RSS). La perdita su un "
                "fascio gaussiano è −12·(θ/HPBW)² dB in una direzione; le eco proprie e il rumore solare la vedono due volte.")
     s = _setup_pick(D, "pt_setup")
@@ -2475,7 +2475,7 @@ def _wizard(D):
     elif goal == "setup":
         for sgg in coach.suggestions(D)[:8]:
             st.markdown("- " + i18n.tr(sgg["text"]))
-        st.info("Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
+        st.info("Nella scheda 🎯 Tracking trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
                 "Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.")
     elif goal == "analyse":
         st.info("Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, "

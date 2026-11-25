@@ -449,7 +449,7 @@ ENTRIES = [
     ('NF del sistema', 'System NF'),
     ('NOAA non raggiungibile', 'NOAA not reachable'),
     ('NON partito', 'NOT started'),
-    ('Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.', 'In the 🎯 Pointing tab you find the error budget and the strategies; in ➕ New measurement you log sun, Moon, ground and focus; in 📊 Analysis EMELab estimates G/T, efficiency, NF and the pointing model.'),
+    ('Nella scheda 🎯 Tracking trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.', 'In the 🎯 Tracking tab you find the error budget and the strategies; in ➕ New measurement you log sun, Moon, ground and focus; in 📊 Analysis EMELab estimates G/T, efficiency, NF and the pointing model.'),
     ('Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, umidità…; «Correlazioni» ti mostra cosa va insieme ai tuoi risultati. In 📉 Statistiche QSO trovi le distribuzioni e la mappa.', 'In the 📈 Charts tab you can relate the QSO reports to elevation, spread, distance, humidity…; «Correlations» shows you what goes with your results. In 📉 QSO statistics you find the distributions and the map.'),
     ('Nessun QSO nel log.', 'No QSOs in the log.'),
     ('Nessuna banda selezionata.', 'No band selected.'),
