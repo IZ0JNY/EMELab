@@ -23,6 +23,10 @@ SOURCES = [
      "gli ostacoli, la pianificazione dei giorni migliori, la prova della stazione su Sole, Luna e terreno e il controllo dei "
      "calcoli passo passo", "https://github.com/ic8tem/YAEC"),
     ("Joe Taylor K1JT", "WSJT-X lib/astro.f90: sfasamento spaziale della polarizzazione (Dpol)", "https://wsjt.sourceforge.io/"),
+    ("José EA3HMJ", "EA3HMJ Tracking Software Suite (DriverDish, DishController, Astroserver, SNserver): file DriftScan e "
+     "corrections.txt, server telnet e server delle effemeridi letti da EMELab", "https://github.com/EA3HMJ-Tracking-Software-Suite"),
+    ("Joachim Köppen DF3GJ", "deconvoluzione delle scansioni a deriva di Sole e Luna (Lunar Drift Scans)",
+     "https://portia.astrophysik.uni-kiel.de/~koeppen/JS/LunarDriftScans.html"),
     ("Carsten Groen OZ9AAR", "SimpleCalc, SkyScanner, WSJT Log Viewer e il calcolatore online del rumore solare: idee per il "
      "flusso RSTN del giorno con controllo dei brillamenti GOES e per l'analisi delle decodifiche", "https://moonbounce.dk/"),
     ("A.A.M. Saleh", "modello AM/AM e AM/PM dei tubi a onda progressiva, IEEE Trans. Commun. COM-29 (1981)", ""),

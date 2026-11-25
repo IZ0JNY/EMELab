@@ -14,7 +14,8 @@ from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
 S = st.session_state
-S.lang = "it"                      # 0.1: Italian only (English when every text is translated)
+if "lang" not in S:
+    S.lang = i18n.default_lang()
 i18n.set_lang(S.lang)
 st.set_page_config(page_title="EMELab — Laboratorio di misure e pianificazione EME", page_icon="🌕", layout="wide")
 
@@ -56,7 +57,8 @@ with st.sidebar:
     c[1].metric("QSO", len(D.qsos()))
     st.divider()
     st.caption(f"Versione {emelab.__version__} · © Ivan De Cesaris IZ0JNY")
-    st.caption("Versione di prova in italiano: l'inglese arriva in una delle prossime versioni.")
+    st.selectbox("Lingua / Language", list(i18n.LANGS), key="lang", format_func=lambda k: i18n.LANGS[k],
+                 on_change=_set_lang)       # chosen in the installer; here for the portable version
     if os.environ.get("EMELAB_DESKTOP") == "browser":
         if st.button("⏻ Chiudi EMELab", help="ferma il programma"):
             st.write("EMELab chiuso: puoi chiudere questa scheda del browser.")

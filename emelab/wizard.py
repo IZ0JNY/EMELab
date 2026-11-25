@@ -37,10 +37,13 @@ def visible(horizon, az, el) -> bool:
 
 # ------------------------------------------------------------------ today
 DAYS_SHORT_IT = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
+DAYS_SHORT_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def short_it(t: datetime, with_time: bool = True) -> str:
-    return f"{DAYS_SHORT_IT[t.weekday()]} {t:%d/%m}" + (f" {t:%H:%M}" if with_time else "")
+    from . import i18n
+    days = DAYS_SHORT_IT if i18n.get_lang() == "it" else DAYS_SHORT_EN
+    return f"{days[t.weekday()]} {t:%d/%m}" + (f" {t:%H:%M}" if with_time else "")
 
 
 def date_it(t: datetime) -> str:

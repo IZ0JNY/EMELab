@@ -47,9 +47,9 @@ def _build(lang: str):
     for k in keys:
         p = re.escape(k)
         if re.match(r"\w", k):
-            p = r"(?<!\w)" + p
+            p = r"(?<![\w-])" + p          # not inside words or hyphenated names (Open-Meteo, WSJT-X)
         if re.search(r"\w$", k):
-            p = p + r"(?!\w)"
+            p = p + r"(?![\w-])"
         parts.append(p)
     rx = re.compile("|".join(parts)) if parts else None
     return m, rx, exact
@@ -148,9 +148,14 @@ def translate_plotly(fig):
         for an in lay.annotations or []:
             if an.text:
                 an.text = tr(an.text)
+        if lay.legend and lay.legend.title and lay.legend.title.text:
+            lay.legend.title.text = tr(lay.legend.title.text)
         for d in fig.data:
             if getattr(d, "name", None):
                 d.name = tr(d.name)
+            cb = getattr(getattr(d, "marker", None), "colorbar", None)
+            if cb is not None and cb.title and cb.title.text:
+                cb.title.text = tr(cb.title.text)
     except Exception:
         pass
     return fig
@@ -160,7 +165,7 @@ def translate_plotly(fig):
 _ARG0 = {"title", "header", "subheader", "markdown", "caption", "text", "info", "warning", "success", "error",
          "button", "checkbox", "toggle", "number_input", "slider", "select_slider", "text_input", "text_area",
          "selectbox", "radio", "multiselect", "expander", "popover", "download_button", "file_uploader", "spinner",
-         "toast", "color_picker", "date_input", "pills", "segmented_control", "link_button"}
+         "toast", "color_picker", "date_input", "time_input", "pills", "segmented_control", "link_button"}
 _CHOICE = {"selectbox", "radio", "multiselect", "select_slider", "pills", "segmented_control"}
 _CONTAINERS = {"columns", "tabs", "expander", "popover", "container", "empty", "form"}
 _KW = ("help", "label", "text", "placeholder", "caption")

@@ -277,7 +277,9 @@ def main(argv=None) -> int:
         except Exception as e:                       # no WebView2 / pywebview: fall back to the browser
             print("finestra nativa non disponibile:", e, file=sys.stderr)
     if not wait_ready(port, proc):
-        message_box(APP["name"] + " non è riuscito ad avviarsi. Dettagli in " + str(config_dir()))
+        from . import i18n
+        i18n.set_lang(i18n.default_lang())
+        message_box(i18n.tr(APP["name"] + " non è riuscito ad avviarsi. Dettagli in ") + str(config_dir()))
         stop(proc)
         return 1
     webbrowser.open(url)

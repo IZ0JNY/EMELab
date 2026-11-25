@@ -148,6 +148,28 @@ def _setups(D):
     _history_editor(D)
 
 
+def _lang_key() -> str:
+    """Suffix for the keys of editable tables, whose headers change with the language."""
+    return "" if i18n.get_lang() == "it" else "_" + i18n.get_lang()
+
+
+def _editor_rows(rows):
+    """An editable table shown in the current language (headers and words); _editor_back reads it back in Italian."""
+    import pandas as pd
+    if i18n.get_lang() == "it":
+        return pd.DataFrame(rows)
+    return pd.DataFrame([{i18n.tr(k): (i18n.tr(v) if isinstance(v, str) else v) for k, v in r.items()} for r in rows])
+
+
+def _editor_back(ed, cols):
+    if i18n.get_lang() == "it":
+        return ed.to_dict("records")
+    names = {i18n.tr(c): c for c in cols}
+    kinds = {i18n.tr(k): k for k in ("passivo", "attivo")}
+    return [{names.get(k, k): (kinds.get(v, v) if names.get(k) == "Tipo" else v) for k, v in r.items()}
+            for r in ed.to_dict("records")]
+
+
 def _history_editor(D):
     import pandas as pd
     from emelab import dx
@@ -166,10 +188,16 @@ def _history_editor(D):
                       or [{"Dal (data)": "", "Parabola (m)": None, "Tipo": "offset", "Efficienza (%)": None,
                            "Potenza al feed (W)": None, "NF ricevitore (dB)": None, "Perdite prima dell'LNA (dB)": None,
                            "Polarizzazione": "V", "Note": ""}])
-    ed = st.data_editor(df, num_rows="dynamic", hide_index=True, width="stretch", key=f"hist_ed_{band}",
-                        column_config={"Dal (data)": st.column_config.TextColumn(help="AAAA-MM-GG (UTC)"),
-                                       "Tipo": st.column_config.SelectboxColumn(options=["offset", "fuoco primario"]),
-                                       "Polarizzazione": st.column_config.SelectboxColumn(options=["V", "H", "HV"])})
+    names = {c: i18n.tr(c) for c in df.columns}              # headers in the current language, read back in Italian
+    prime = i18n.tr("fuoco primario")
+    if i18n.get_lang() != "it":
+        df = df.rename(columns=names).replace({names["Tipo"]: {"fuoco primario": prime}})
+    ed = st.data_editor(df, num_rows="dynamic", hide_index=True, width="stretch", key=f"hist_ed_{band}" + _lang_key(),
+                        column_config={names["Dal (data)"]: st.column_config.TextColumn(help=i18n.tr("AAAA-MM-GG (UTC)")),
+                                       names["Tipo"]: st.column_config.SelectboxColumn(options=["offset", prime]),
+                                       names["Polarizzazione"]: st.column_config.SelectboxColumn(options=["V", "H", "HV"])})
+    if i18n.get_lang() != "it":
+        ed = ed.rename(columns={v: k for k, v in names.items()})
     if st.button("💾 Salva lo storico della banda", key="hist_save"):
         out, bad = [], []
         for r in ed.to_dict("records"):
@@ -347,7 +375,8 @@ def _log(D):
         if dl and c[0].button("🗑️ Elimina", key="em_del_m_btn"):
             D.delete(dl)
             st.rerun()
-        c[1].download_button("⬇️ Esporta CSV", D.export_csv(), file_name="emelab_misure.csv", mime="text/csv")
+        c[1].download_button("⬇️ Esporta CSV", D.export_csv(), mime="text/csv",
+                             file_name="emelab_misure.csv" if i18n.get_lang() == "it" else "emelab_measurements.csv")
     up = st.file_uploader("Importa CSV", type=["csv"], key="em_imp")
     if up is not None and st.button("📥 Importa", key="em_imp_btn"):
         n = D.import_csv(up.getvalue().decode("utf-8"))
@@ -828,6 +857,9 @@ def _prints_tab(D):
                                                                                      stn.get("locator") or ""))
     if _st.session_state.get("pr_pdf"):
         name, data = _st.session_state["pr_pdf"]
+        if i18n.get_lang() != "it":
+            name = {"diario_misure.pdf": "measurement_log.pdf", "log_qso.pdf": "qso_log.pdf",
+                    "etichette_qsl.pdf": "qsl_labels.pdf"}.get(name, name)
         st.download_button(f"⬇️ {name}", data, file_name=name, mime="application/pdf", type="primary")
 
 
@@ -868,13 +900,13 @@ def _design_tab(D):
     c = st.columns(2)
     with c[0]:
         st.markdown("**Ricezione (dal feed al transverter)**")
-        rx = st.data_editor(pd.DataFrame(_st.session_state.get("rx_tab", _RX_DEFAULT)), num_rows="dynamic", key="rx_ed",
-                            hide_index=True, width="stretch")
+        rx = st.data_editor(_editor_rows(_st.session_state.get("rx_tab", _RX_DEFAULT)), num_rows="dynamic",
+                            key="rx_ed" + _lang_key(), hide_index=True, width="stretch")
         t_ant = st.number_input("Temperatura d'antenna (K)", 3.0, 500.0, 40.0, 1.0, key="ch_tant",
                                 help="dal progetto FeedLab o dalla misura; cielo freddo + spillover")
         stages = [chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
                   {"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "nf_db": float(r["NF (dB)"])}
-                  for r in rx.to_dict("records") if r.get("Stadio") and r.get("Guadagno (dB)") is not None]
+                  for r in _editor_back(rx, _RX_DEFAULT[0]) if r.get("Stadio") and r.get("Guadagno (dB)") is not None]
         if stages:
             res = chain.rx_chain(stages, t_ant)
             m = st.columns(3)
@@ -888,11 +920,11 @@ def _design_tab(D):
             st.plotly_chart(fig, width="stretch")
     with c[1]:
         st.markdown("**Trasmissione (dal transverter al feed)**")
-        tx = st.data_editor(pd.DataFrame(_st.session_state.get("tx_tab", _TX_DEFAULT)), num_rows="dynamic", key="tx_ed",
-                            hide_index=True, width="stretch")
+        tx = st.data_editor(_editor_rows(_st.session_state.get("tx_tab", _TX_DEFAULT)), num_rows="dynamic",
+                            key="tx_ed" + _lang_key(), hide_index=True, width="stretch")
         pin = st.number_input("Potenza in ingresso (dBm)", -30.0, 40.0, 10.0, 0.5, key="ch_pin")
         st_tx = []
-        for r in tx.to_dict("records"):
+        for r in _editor_back(tx, _TX_DEFAULT[0]):
             if not r.get("Stadio") or r.get("Guadagno (dB)") is None:
                 continue
             if r["Tipo"] == "passivo":
@@ -1066,7 +1098,8 @@ def _charts_tab(D):
     fig.update_layout(height=460, margin=dict(l=10, r=10, t=30, b=10), legend_title_text="")
     st.plotly_chart(fig, width="stretch")
     df = pd.DataFrame([{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in r.items()} for r in pts])
-    st.download_button("⬇️ Dati del grafico (CSV)", df.to_csv(index=False).encode(), file_name="emelab_grafico.csv", key="pl_csv")
+    st.download_button("⬇️ Dati del grafico (CSV)", df.to_csv(index=False).encode(), key="pl_csv",
+                       file_name="emelab_grafico.csv" if i18n.get_lang() == "it" else "emelab_chart.csv")
 
 
 # ------------------------------------------------------------------ chain sections
@@ -1119,6 +1152,8 @@ def _pointing_tab(D):
     st.plotly_chart(fig, width="stretch")
     _sunscan_box(D, s, f, Dm, hp)
     _pointing_model_box(D, hp)
+    from emelab import ui_tracking
+    ui_tracking.tracking_box(D, hp)
     with st.expander("💡 Strategie per puntare meglio"):
         st.markdown("\n".join("- " + i18n.tr(x) for x in [
             "Misura il sole in molti punti di azimut ed elevazione: il modello di puntamento (zero AZ/EL, inclinazione dell'asse, flessione) si stima solo con dati ben distribuiti.",
@@ -1473,10 +1508,11 @@ def _catalog_box(D, kinds, key):
         st.info("Nessun dispositivo per questa banda: cercalo e aggiungilo dal datasheet qui sotto.")
         sel = None
     else:
-        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": r["maker"], "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
+        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
                              "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
-                             "Note": r.get("notes"),
-                             "Fonte": r.get("source") if r["origine"] == "catalogo EMELab" else f"{r['origine']}: {r.get('source') or ''}",
+                             "Note": i18n.tr(r.get("notes")),
+                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EMELab" else
+                             f"{i18n.tr(r['origine'])}: {r.get('source') or ''}",
                              "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
         tab.columns = [i18n.tr(x) for x in tab.columns]
         st.dataframe(tab, hide_index=True, width="stretch")
@@ -1589,7 +1625,7 @@ def _horizon_editor(key="wz_hz"):
 
 
 def _wizard(D):
-    from emelab import dx, weather, wizard
+    from emelab import coach, dx, weather, wizard
     S = _st.session_state
     stn = D.station()
     if not stn.get("lat"):
@@ -1932,7 +1968,7 @@ def _sunscan_box(D, setup, f, Dm, hp_expected):
         az = fit["offset_deg"] if kind.startswith("AZ") else None
         el = fit["offset_deg"] if kind.startswith("EL") else None
         D.add(utc=t, setup_id=setup["id"], band_ghz=float(setup["band_ghz"]), kind="sun", y_db=fit["y_db"],
-              az_off=az, el_off=el, notes=i18n.tr("scansione del Sole") + f" ({kind}), HPBW {fit['hpbw_deg']:.3f}°",
+              az_off=az, el_off=el, notes=i18n.tr("scansione del Sole") + f" ({i18n.tr(kind)}), HPBW {fit['hpbw_deg']:.3f}°",
               calc=_clean(calc))
         st.success("Salvato nel diario misure.")
 
