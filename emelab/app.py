@@ -44,6 +44,8 @@ D = ui._db()
 ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
 ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
 ui_wsjtx_panel.popup(ui._wsjtx_service())   # pop-up when a QSO parameter is off (closed twice: never again)
+from emelab import ui_tracking as _ui_tracking
+_ui_tracking.popup()                         # alarm when DriverDish (EA3HMJ) stops working (read-only check)
 if "update_info" not in S:                         # new version on GitHub: checked once per launch (as in FeedLab)
     from emelab import updates as _updates
     S["update_info"] = _updates.check(emelab.__version__, i18n.get_lang())
