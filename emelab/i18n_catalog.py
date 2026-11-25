@@ -1782,4 +1782,18 @@ ENTRIES = [
     ('Centro radio salvato', 'Radio centre saved'),
     ('rispetto al centro della telecamera', 'from the camera centre'),
     ("La croce azzurra ora è il centro del fascio radio. Ripeti l'allineamento se smonti la telecamera o cambi illuminatore; i valori restano modificabili a mano qui sopra.", 'The cyan cross is now the centre of the radio beam. Repeat the alignment if you remove the camera or change feed; the values stay editable by hand above.'),
+    # 🌙 Moon map
+    ('🗺️ Mappa della Luna', '🗺️ Moon map'),
+    ('In alto', 'Up'),
+    ('Zenit (come la vedi)', 'Zenith (as you see it)'),
+    ('Nord celeste', 'Celestial north'),
+    ('Zenit: la Luna orientata come la vedi dalla stazione in questo momento. Nord celeste: come nelle carte del cielo e nei telescopi senza diagonale (est a sinistra).', 'Zenith: the Moon turned as you see it from the station right now. Celestial north: as in sky charts and in telescopes without a diagonal (east on the left).'),
+    ('Nomi di mari e crateri', 'Names of maria and craters'),
+    ('Mari e crateri', 'Maria and craters'),
+    ('Centro visto da te (librazione)', 'Centre seen from you (libration)'),
+    ('Polo nord lunare', 'Lunar north pole'),
+    ('centro visto da te', 'centre seen from you'),
+    ('Sole allo zenit su', 'Sun overhead at'),
+    ('in giallo i punti illuminati, in azzurro quelli al buio', 'sunlit points in yellow, those in the dark in light blue'),
+    ("Mappa della superficie: texture di Celestia ricavata dalle immagini LRO e dal «CGI Moon Kit» della NASA (pubblico dominio). Il lato in ombra è schiarito un po' per riconoscere i mari.", "Surface map: Celestia texture derived from LRO images and NASA's «CGI Moon Kit» (public domain). The shadowed side is brightened a little so the maria can be recognised."),
 ]
