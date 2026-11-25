@@ -65,3 +65,29 @@ def test_service_logs_qso_and_decodes(tmp_path):
     q = D.qsos()[0]
     assert q["call"] == "OK1KIR" and q["band"] == "24G" and q["submode"] == "D" and q["calc"].get("moon_el") is not None
     assert not s.errors
+
+
+def test_ea3hmj_astroserver_client():
+    import socket, threading
+    from emelab import ea3hmj
+    srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1); port = srv.getsockname()[1]
+
+    def serve():
+        c, _ = srv.accept(); f = c.makefile("rwb", buffering=0)
+        c.sendall(b"Astroserver ready\r\nUser: "); f.readline()
+        c.sendall(b"ok\r\n"); cmd = f.readline().decode().strip()
+        assert cmd == "MOON"
+        c.sendall(b"MOON,2026-11-25T10:00:00,245.123,31.456,384400.1,0.123,2.56,10368.2001,10368.2,-1.5\r\n"); c.close()
+    threading.Thread(target=serve, daemon=True).start()
+    r = ea3hmj.query("MOON", "IZ0JNY", port=port)
+    assert abs(r["az"] - 245.123) < 1e-9 and abs(r["el"] - 31.456) < 1e-9 and r["freq_mhz"] == 10368.2
+    assert ea3hmj.parse_line("garbage") is None
+
+
+def test_driverdish_files():
+    from emelab import ea3hmj
+    d = ea3hmj.parse_driftscan(";Diameter;Frequency;Astro ID;Astro name\n;1.2;47.0;10;Sun\n;date time;elevation;azimuth;SN\n"
+                               "2025-11-15 12:33:39, 30.87, 195.400, 28.402\n2025-11-15 12:33:40, 30.88, 195.402, 28.512\n")
+    assert d["diameter_m"] == 1.2 and d["freq_ghz"] == 47.0 and d["target"] == "Sun" and len(d["t"]) == 2 and d["sn_db"][1] == 28.512
+    c = ea3hmj.parse_corrections(";10-10-2025\n;Azimuth Offset\n123.750 -0.250\n124.998 -0.250\n129.999 -0.200\n")
+    assert c["date"] == "10-10-2025" and c["points"][2] == (129.999, -0.2)
