@@ -54,6 +54,12 @@ def _fmt(v, n=1):
     return "" if v is None or (isinstance(v, float) and math.isnan(v)) else (f"{v:.{n}f}" if isinstance(v, float) else str(v))
 
 
+def _mode(q: dict) -> str:
+    from .logbook import mode_label
+    label, assumed = mode_label(q)
+    return label + (" *" if assumed else "")
+
+
 def log_pdf(qsos: list[dict], station: str = "") -> bytes:
     from matplotlib.backends.backend_pdf import PdfPages
     buf = io.BytesIO()
@@ -62,7 +68,7 @@ def log_pdf(qsos: list[dict], station: str = "") -> bytes:
     rows = []
     for q in qsos:
         c = q.get("calc") or {}
-        rows.append([q["utc"].strftime("%Y-%m-%d %H:%M"), q["call"], q.get("band") or "", q.get("mode") or "",
+        rows.append([q["utc"].strftime("%Y-%m-%d %H:%M"), q["call"], q.get("band") or "", _mode(q),
                      q.get("rst_sent") or "", q.get("rst_rcvd") or "", q.get("locator") or "", _fmt(c.get("ground_km"), 0),
                      _fmt(c.get("eme_path_km"), 0), _fmt(c.get("moon_el")), _fmt(c.get("dx_moon_el")), _fmt(c.get("mutual_spread_hz"), 0)])
     with PdfPages(buf) as pdf:

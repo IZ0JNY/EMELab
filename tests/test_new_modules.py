@@ -105,3 +105,15 @@ def test_station_history(tmp_path):
     assert D.setup_at("10G", datetime(2026, 11, 1, tzinfo=timezone.utc))["power_w"] == 6
     assert D.setup_at("10G", datetime(2024, 1, 1, tzinfo=timezone.utc)) is None
     assert D.setup_at("24G", datetime(2026, 1, 1, tzinfo=timezone.utc)) is None
+
+
+def test_q65_mode_label_from_adif():
+    from emelab import logbook as lb
+    assert lb.mode_label({"mode": "MFSK", "submode": "Q65", "band": "10G"}, ) == ("Q65-60D", True)
+    assert lb.mode_label({"mode": "MFSK", "submode": "Q65", "band": "24G"}) == ("Q65-60E", True)
+    assert lb.mode_label({"mode": "MFSK", "submode": "Q65", "band": "24G", "comment": "Q65-120A sked"}) == ("Q65-120A", False)
+    assert lb.mode_label({"mode": "Q65", "submode": "60D", "band": "24G"}) == ("Q65-60D", False)
+    assert lb.mode_label({"mode": "MFSK", "submode": "Q65", "band": "24G", "comment": "OH60A"})[1]   # a call, not a mode
+    assert lb.mode_label({"mode": "MFSK", "submode": "FST4", "band": "10G"}) == ("FST4", False)
+    assert lb.mode_label({"mode": "CW", "band": "10G"}) == ("CW", False)
+    assert "60D" in lb.Q65_SUBMODES and "300E" in lb.Q65_SUBMODES and len(lb.Q65_SUBMODES) == 25

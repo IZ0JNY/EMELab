@@ -1054,4 +1054,6 @@ ENTRIES = [
     ('tollera', 'tolerates'),
     (': la soglia è estrapolata e il margine penalizzato.', ': the threshold is extrapolated and the margin penalised.'),
     ('soglia Q65-', 'Q65 threshold '),
+    ("* sottomodo Q65 non scritto nel log (WSJT-X non lo mette nell'ADIF): è il modo standard della banda, 60D a 10 GHz e 60E da 24 GHz in su, o quello scelto nella scheda Segnale e stazioni.", '* Q65 submode not written in the log (WSJT-X does not put it in the ADIF): it is the band\'s standard mode, 60D on 10 GHz and 60E from 24 GHz up, or the one chosen in the Signal and stations tab.'),
+    ('Periodo T/R (15–300 s) e spaziatura dei toni (A–E)', 'T/R period (15–300 s) and tone spacing (A–E)'),
 ]

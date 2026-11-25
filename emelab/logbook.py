@@ -173,3 +173,43 @@ def statistics(qsos: list[dict]) -> dict:
         out["by_hour"][t.hour] += 1
         out["by_month"][t.month - 1] += 1
     return out
+
+
+# ------------------------------------------------------------------ how the mode of a QSO is shown
+Q65_PERIODS = (15, 30, 60, 120, 300)
+Q65_SUBMODES = tuple(f"{p}{x}" for p in Q65_PERIODS for x in "ABCDE")
+_Q65_CODE = re.compile(r"(?<![\w.])(15|30|60|120|300)\s*([A-E])(?![A-Za-z0-9])")
+
+
+def q65_submode(q: dict) -> tuple[str | None, bool]:
+    """Q65 submode of a QSO as «60D»: from the submode field, the notes or the raw ADIF record; otherwise the band's
+    submode (EMELab's choice for the band, by default 60D at 10 GHz and 60E from 24 GHz up), flagged as assumed.
+    (None, False) when the QSO is not Q65."""
+    mode, sub = (q.get("mode") or "").upper().strip(), (q.get("submode") or "").upper().strip()
+    if "Q65" not in (mode, sub) and not mode.startswith("Q65") and not sub.startswith("Q65"):
+        return None, False
+    texts = [sub.replace("Q65", ""), mode.replace("Q65", ""), str(q.get("comment") or "").upper()]
+    texts += [str(v).upper() for k, v in (q.get("adif") or {}).items()
+              if k.upper() in ("COMMENT", "NOTES", "SUBMODE") or k.upper().startswith("APP_")]
+    for t in texts:
+        m = _Q65_CODE.search(t)
+        if m:
+            return m.group(1) + m.group(2), False
+    s = sub.replace("Q65", "").replace("-", "").strip()
+    from . import dx
+    std = dx.band_mode(q.get("band") or "")
+    if len(s) == 1 and s in "ABCDE":            # WSJT-X UDP gives the tone-spacing letter, not the T/R period
+        return f"{std[:-1]}{s}", True
+    return std, True
+
+
+def mode_label(q: dict) -> tuple[str, bool]:
+    """Mode as shown in EMELab: «Q65-60D» for Q65 (never «MFSK Q65»), otherwise mode and submode as logged.
+    The flag is True when the Q65 submode is assumed."""
+    sub, assumed = q65_submode(q)
+    if sub:
+        return f"Q65-{sub}", assumed
+    mode, s = q.get("mode") or "", q.get("submode") or ""
+    if mode.upper() == "MFSK" and s:
+        return s, False
+    return " ".join(x for x in (mode, s) if x), False
