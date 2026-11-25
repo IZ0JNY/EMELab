@@ -152,13 +152,27 @@ def test_new_measurement_tab_fills_itself_from_driverdish(tmp_path, monkeypatch)
         assert ss["em_n_kind"] == "moon" and ss["em_wx_t_c"] == 3.5 and ss["em_wx_cloud_pct"] == 100.0
         assert at.number_input(key="em_n_azr").value == 141.095          # shown in the form, still editable
         at.number_input(key="em_n_azr").set_value(141.2)
+        # Y in two clicks: cold sky, then the Moon
+        at.number_input(key="em_y_level").set_value(-62.40)
+        at.button(key="em_y_cold_btn").click().run()
+        at.number_input(key="em_y_level").set_value(-61.65)
+        at.button(key="em_y_hot_btn").click().run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert at.session_state["em_n_y"] == 0.75 and at.number_input(key="em_n_y").value == 0.75
         at.button(key="em_n_save").click().run()
         assert not at.exception, [e.value for e in at.exception]
         from emelab import db as edb
         m = edb.DB().measurements()[-1]
         assert m["az_read"] == 141.2 and m["extra"]["driverdish"]["dish_az"] == 141.095
         assert m["extra"]["weather"]["wx_source"] == "Open-Meteo" and m["t_c"] == 3.5
+        assert m["y_db"] == 0.75 and m["extra"]["y_capture"]["cold"]["db"] == -62.4
+        assert m["extra"]["y_capture"]["hot"]["kind"] == "moon"
     finally:
         i18n.set_lang("it")
         srv.close()
     assert received and set(received) <= set(ea3hmj.READ_COMMANDS) | {"exit"}
+
+
+def test_y_delta():
+    assert autofill.y_delta(-62.4, -50.15) == 12.25
+    assert autofill.y_delta(None, 3.0) is None

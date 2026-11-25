@@ -242,3 +242,19 @@ def age_s(capture_utc: str | None, dt: datetime) -> float | None:
     t = datetime.fromisoformat(capture_utc.replace("Z", "+00:00"))
     return abs((dt - t).total_seconds())
 
+
+
+# ------------------------------------------------------------------ Y factor by two clicks
+HOT_KINDS = {"sun": "Sole", "moon": "Luna", "ground": "Terra"}       # what the «hot» click can be
+HOT_SHORT = {"sun": "SN", "moon": "MN", "ground": "GND"}
+
+
+def y_delta(cold_db: float | None, hot_db: float | None) -> float | None:
+    """Y in dB from two levels in dB (RMS of the receiver on cold sky and on the source)."""
+    if cold_db is None or hot_db is None:
+        return None
+    return round(float(hot_db) - float(cold_db), 3)
+
+
+def capture(level_db: float, utc: datetime, az=None, el=None, source: str = "manuale") -> dict:
+    return {"db": float(level_db), "utc": _iso(utc), "az": az, "el": el, "source": source}

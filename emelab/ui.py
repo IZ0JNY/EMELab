@@ -523,6 +523,68 @@ def _autofill_box(D, dt, setup):
     return dict(x, age_s=round(a, 1) if a is not None else None)
 
 
+def _extra_with_y(auto_x):
+    x = dict(auto_x or {})
+    cold, hot = _st.session_state.get("em_y_cold"), _st.session_state.get("em_y_hot")
+    if cold or hot:
+        from emelab import autofill
+        x["y_capture"] = {"cold": cold, "hot": hot,
+                          "y_db": autofill.y_delta((cold or {}).get("db"), (hot or {}).get("db"))}
+    return x
+
+
+def _y_click_cb(which, kind):
+    """❄️ / ☀️🌙⛰️ click: keep the level in the box as cold sky or as the source, and compute Y = hot − cold."""
+    from emelab import autofill
+    ss = _st.session_state
+    lvl = ss.get("em_y_level")
+    if lvl is None:
+        ss["em_y_msg"] = "Scrivi prima il livello letto (dB)."
+        return
+    cap = autofill.capture(lvl, datetime.now(timezone.utc), ss.get("em_n_azr"), ss.get("em_n_elr"),
+                           ss.get("em_y_level_src") or "manuale")
+    if which == "cold":
+        ss["em_y_cold"] = cap
+    else:
+        ss["em_y_hot"] = dict(cap, kind=kind)
+    ss.pop("em_y_msg", None)
+    y = autofill.y_delta((ss.get("em_y_cold") or {}).get("db"), (ss.get("em_y_hot") or {}).get("db"))
+    if y is not None and -5.0 <= y <= 40.0:
+        ss["em_n_y"] = y
+
+
+def _y_capture_box(kind):
+    """Y by two clicks: the receiver level on cold sky, then on the Sun / Moon / ground; the delta goes in «Y misurato»."""
+    from emelab import autofill
+    if kind not in autofill.HOT_KINDS:
+        return None
+    ss = _st.session_state
+    st.markdown("**" + i18n.tr("📶 Y in due clic: cielo freddo → sorgente") + "**")
+    c = st.columns([1.3, 1.3, 1.6, 1.4])
+    c[0].number_input("Livello letto (dB)", -200.0, 200.0, None, 0.01, key="em_y_level",
+                      help="RMS del ricevitore (SpectraVue, SigDigger, radiometro…) nel momento del clic")
+    c[1].button("❄️ Questo è cielo freddo", key="em_y_cold_btn", on_click=_y_click_cb, args=("cold", kind))
+    hot = {"sun": "☀️ Questo è Sole (SN)", "moon": "🌙 Questo è Luna (MN)", "ground": "⛰️ Questo è Terra (GND)"}[kind]
+    c[2].button(hot, key="em_y_hot_btn", on_click=_y_click_cb, args=("hot", kind))
+    if c[3].button("↺ Azzera", key="em_y_reset"):
+        for k in ("em_y_cold", "em_y_hot", "em_y_msg"):
+            ss.pop(k, None)
+        st.rerun()
+    if ss.get("em_y_msg"):
+        st.warning(ss["em_y_msg"])
+    cold, hot_c = ss.get("em_y_cold"), ss.get("em_y_hot")
+    cols = st.columns(3)
+    cols[0].metric("Cielo freddo", _fmt((cold or {}).get("db"), "{:.2f} dB"),
+                   help=(cold or {}).get("utc", "").replace("T", " ").replace("Z", " UTC") or None)
+    cols[1].metric(autofill.HOT_SHORT[kind], _fmt((hot_c or {}).get("db"), "{:.2f} dB"),
+                   help=(hot_c or {}).get("utc", "").replace("T", " ").replace("Z", " UTC") or None)
+    y = autofill.y_delta((cold or {}).get("db"), (hot_c or {}).get("db"))
+    cols[2].metric("Delta Y", _fmt(y, "{:+.2f} dB"))
+    if hot_c and hot_c.get("kind") != kind:
+        st.caption("Il secondo clic era su un'altra sorgente: ripetilo.")
+    return {"cold": cold, "hot": hot_c, "y_db": y} if (cold or hot_c) else None
+
+
 def stations_band(setup) -> str | None:
     from emelab import stations
     return stations.band_of(float(setup["band_ghz"]) * 1000.0)
@@ -561,6 +623,7 @@ def _new(D, tab_open: bool | None = None):
     dt = datetime.combine(d0, t0).replace(tzinfo=timezone.utc)
     st.caption(f"⏱️ {edb.iso_utc(dt)} UTC")
     auto_x = _autofill_box(D, dt, setup)
+    _y_capture_box(kind)
     c = st.columns(4)
     y = c[0].number_input("Y misurato (dB)", -5.0, 40.0, None, 0.05, key="em_n_y",
                           help="sole/luna/terra: rapporto tra rumore sulla sorgente e cielo freddo")
@@ -598,7 +661,7 @@ def _new(D, tab_open: bool | None = None):
               az_read=azr, el_read=elr, az_off=azo, el_off=elo, partner=partner or None, notes=notes or None,
               t_c=t_c, rh=rh, p_hpa=p, wind_ms=wind, rain_mmh=rain, cloud_pct=cloud,
               wx_utc=_st.session_state.get("em_wx_utc"), wx_source=_st.session_state.get("em_wx_src") or "manuale",
-              calc=_clean(calc), extra=_clean(auto_x) if auto_x else None)
+              calc=_clean(calc), extra=_clean(_extra_with_y(auto_x)) or None)
         st.success("Misura registrata.")
 
 
