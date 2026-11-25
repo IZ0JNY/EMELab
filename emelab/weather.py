@@ -237,3 +237,14 @@ def station_now(url: str, timeout: float = 8.0) -> dict:
     head = (f"nessun file dati trovato ({nf} indirizzi provati danno 404). Apri il sito nel browser e incolla qui "
             "l'indirizzo diretto del file dati (es. .../clientraw.txt, .../realtime.txt, .../meteotemplateLive.txt)")
     raise RuntimeError(head + " — " + "; ".join(tried[:6]))
+
+
+def elevation(lat: float, lon: float, timeout: float = 6.0) -> float:
+    """Ground height (m above sea level) at one point from the free Open-Meteo elevation API (Copernicus DEM
+    GLO-90, about 90 m resolution). Only latitude and longitude are sent; raises if the service is not reachable."""
+    q = urllib.parse.urlencode({"latitude": f"{lat:.6f}", "longitude": f"{lon:.6f}"})
+    js = json.loads(_get("https://api.open-meteo.com/v1/elevation?" + q, timeout))
+    h = (js.get("elevation") or [None])[0]
+    if h is None or (isinstance(h, float) and math.isnan(h)):
+        raise ValueError("no elevation in the answer")
+    return float(h)
