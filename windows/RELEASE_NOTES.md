@@ -1,3 +1,15 @@
+## EMELab 0.1.8 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.8.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.8-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📷 Nuova scheda Telecamera Astronomica** (facoltativa, resta spenta finché non la abiliti): mostra la Luna dal vivo da una telecamera ZWO ASI, con griglia da 0,1°, centro della Luna e centro radio. Se vai fuori tracking scatta un allarme.
+- **🕒 Scheda WSJT-X:** controlla che BktTimeSync sia in esecuzione e misura lo scarto dell'orologio del PC dal server NTP, con avviso oltre ±0,5 s (solo lettura).
+
+### 🇬🇧 What's new
+- **📷 New Astronomical camera tab** (optional, it stays off until you enable it): shows the live Moon from a ZWO ASI camera, with a 0.1° grid, the Moon centre and the radio centre. An alarm goes off when you go out of tracking.
+- **🕒 WSJT-X tab:** checks that BktTimeSync is running and measures the PC clock offset from the NTP server, warning beyond ±0.5 s (read-only).
+
 ## EMELab 0.1.7 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.7.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.7-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
