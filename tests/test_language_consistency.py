@@ -87,4 +87,4 @@ def test_italian_still_works(tmp_path, monkeypatch, restore_lang):
     at = _run(tmp_path, monkeypatch, "it")
     texts = [t for _, t in _visible_texts(at)]
     assert any("Stazione" in t for t in texts)
-    assert any("Pianificazione, misure e assistenza EME" in t for t in texts)
+    assert any("Laboratorio di misure e pianificazione EME" in t for t in texts)

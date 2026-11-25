@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""The tabs of EME Assistant (emelab/app.py): station, setups (dish and feed from a FeedLab project file), new measurement with Sun/Moon positions and weather (UTC), log, expected vs measured,
+"""The tabs of EMELab (emelab/app.py): station, setups (dish and feed from a FeedLab project file), new measurement with Sun/Moon positions and weather (UTC), log, expected vs measured,
 pointing model, Moon planner and measurement guide. All data stay in a local SQLite file (settings folder);
 the personal weather-station address is saved only in the local settings."""
 from __future__ import annotations
@@ -182,7 +182,7 @@ def _station(D):
         D.save_station(callsign=call.strip().upper(), locator=loc.strip(), lat=lat, lon=lon, height_m=h)
         openems_local.save_settings(emelab_wx_url=url.strip(), emelab_flux=flux)
         st.success("Stazione salvata (solo su questo PC).")
-    st.caption("Tutti i dati di EME Assistant (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
+    st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
                "tuo PC e non vengono mai inviati: il meteo da internet riceve solo coordinate e ora.")
 
 
@@ -279,7 +279,7 @@ def _history_editor(D):
     from emelab import dx
     st.divider()
     st.subheader("📜 Storico della stazione")
-    st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EME Assistant usa il periodo giusto per "
+    st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EMELab usa il periodo giusto per "
                "ogni QSO quando confronta i rapporti con la teoria e impara la correzione della tua stazione periodo per "
                "periodo. Ogni riga vale dalla sua data fino alla riga successiva.")
     band = st.selectbox("Banda", list(dx.BAND_GHZ), key="hist_band", format_func=lambda b: b.replace("G", " GHz"))
@@ -983,7 +983,7 @@ def _prints_tab(D):
 
 def _database_tab(D):
     st.subheader("Database")
-    st.caption(i18n.tr("Tutti i dati di EME Assistant sono in un unico file SQLite su questo PC") + f": `{D.path}`. " +
+    st.caption(i18n.tr("Tutti i dati di EMELab sono in un unico file SQLite su questo PC") + f": `{D.path}`. " +
                i18n.tr("Puoi aprirlo anche con un programma come «DB Browser for SQLite»."))
     import pandas as pd
     tabs = {"measurements": "Misure", "qsos": "QSO", "stations": "Stazioni EME", "setups": "Configurazioni", "station": "Stazione"}
@@ -1064,7 +1064,7 @@ def _design_tab(D):
     st.divider()
     st.subheader("Libreria dei componenti")
     st.caption("Componenti con i valori dei datasheet dei produttori (inseriti da te o trovati nel catalogo Mouser) e il "
-               "link al datasheet. EME Assistant non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
+               "link al datasheet. EMELab non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
     rows = parts.all_parts(D)
     if rows:
         st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
@@ -1108,7 +1108,7 @@ def _charts_tab(D):
     st.subheader("Grafici e interpolazioni")
     st.caption("Qualsiasi parametro dei QSO o delle misure contro qualsiasi altro, con interpolazione: retta, polinomio, "
                "LOESS (tendenza locale) o mediane per classi. Le condizioni di ogni QSO (Luna, spread, Doppler, atmosfera, "
-               "meteo) sono quelle calcolate da EME Assistant.")
+               "meteo) sono quelle calcolate da EMELab.")
     src = st.radio("Dati", ["QSO", "Misure"], horizontal=True, key="pl_src")
     rows = plots.rows_from_qsos(D.qsos()) if src == "QSO" else plots.rows_from_measurements(D.measurements())
     if not rows:
@@ -1475,7 +1475,7 @@ def _model_at(D, band, t, me_now):
 
 def _learned_offset(D, band, me, my_loc, models):
     """Median of (reported − predicted) on the QSOs of this band, each QSO with the station of its period (station
-    history): what EME Assistant has learned about your station, overall and period by period."""
+    history): what EMELab has learned about your station, overall and period by period."""
     from emelab import dx
     key = ("em_offset", band, len(D.qsos(band=band)), len(D.history(band)))
     if _st.session_state.get("em_off_key") == key:
@@ -1512,7 +1512,7 @@ def _signal_tab(D):
     st.caption("Equazione radar bistatica con la distanza reale della Luna da entrambe le stazioni, la parte di Luna "
                "illuminata da entrambi i fasci, l'atmosfera ai due capi e il rumore di chi riceve puntato sulla Luna. "
                "Soglie Q65 di G3WDG contro il mutual spread. Dati delle altre stazioni dalla EME Directory; dove mancano, "
-               "valori tipici della banda (indicati come ipotesi). EME Assistant corregge il modello con i rapporti dei tuoi QSO.")
+               "valori tipici della banda (indicati come ipotesi). EMELab corregge il modello con i rapporti dei tuoi QSO.")
     stn = D.station()
     s = _setup_pick(D, "sg_setup")
     if not s or not stn.get("lat"):
@@ -1616,7 +1616,7 @@ def _signal_tab(D):
 
 # ------------------------------------------------------------------ device catalogue and heat sink
 def _catalog_box(D, kinds, key):
-    """Devices for the band from EME Assistant's catalogue and the user's library, datasheet search and reading."""
+    """Devices for the band from EMELab's catalogue and the user's library, datasheet search and reading."""
     import pandas as pd
     from emelab import catalog, parts
     st.subheader("📚 Catalogo dispositivi")
@@ -1625,7 +1625,7 @@ def _catalog_box(D, kinds, key):
                           format_func=lambda f: f"{f:g} GHz")
     kind_lbl = {k: catalog.TYPES[k] for k in kinds}
     kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
-    rows = [dict(d, origine="catalogo EME Assistant") for d in catalog.for_band(band, kind)]
+    rows = [dict(d, origine="catalogo EMELab") for d in catalog.for_band(band, kind)]
     pk = {"PA": "pa", "LNA": "lna", "SW": "passive", "TWT": "pa", "TRV": "mixer"}[kind]
     for p in parts.all_parts(D, band, pk):
         rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "f_lo": p["f_lo_ghz"], "f_hi": p["f_hi_ghz"],
@@ -1638,13 +1638,13 @@ def _catalog_box(D, kinds, key):
         tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
                              "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
                              "Note": i18n.tr(r.get("notes")),
-                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EME Assistant" else
+                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EMELab" else
                              f"{i18n.tr(r['origine'])}: {r.get('source') or ''}",
                              "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
         tab.columns = [i18n.tr(x) for x in tab.columns]
         st.dataframe(tab, hide_index=True, width="stretch")
         st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. Le celle vuote vanno lette "
-                   "dal datasheet: EME Assistant non inventa i numeri.")
+                   "dal datasheet: EMELab non inventa i numeri.")
         sel = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"{key}_cs",
                              format_func=lambda i: f"{rows[i]['part']} — {rows[i]['maker']}")
         sel = rows[sel]
@@ -1756,7 +1756,7 @@ def _wizard(D):
     S = _st.session_state
     stn = D.station()
     if not stn.get("lat"):
-        st.info("Benvenuto in EME Assistant! Per cominciare inserisci nominativo e locator nella scheda Stazione.")
+        st.info("Benvenuto in EMELab! Per cominciare inserisci nominativo e locator nella scheda Stazione.")
         return
     hz = _horizon_editor()
     now = wizard.sky_now_text(stn["lat"], stn["lon"], stn.get("height_m") or 0.0, hz)
@@ -1809,7 +1809,7 @@ def _wizard(D):
         for sgg in coach.suggestions(D)[:8]:
             st.markdown("- " + i18n.tr(sgg["text"]))
         st.info("Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
-                "Luna, terra e fuoco; in 📊 Analisi EME Assistant stima G/T, efficienza, NF e il modello di puntamento.")
+                "Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.")
     elif goal == "analyse":
         st.info("Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, "
                 "umidità…; «Correlazioni» ti mostra cosa va insieme ai tuoi risultati. In 📉 Statistiche QSO trovi le "
@@ -1909,7 +1909,7 @@ def _wz_plan(D, stn, hz, fc):
     st.code(wizard.sked_text(lang, stn.get("callsign") or "", stn.get("locator") or "", pick, info.get("name"), band, t0, t1,
                              r["best"]["mode"], (stn.get("callsign") or "") < pick, r["best"]["snr_a_hears_b"], r["best"]["snr_b_hears_a"]),
             language=None)
-    st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EME Assistant non conserva le email: "
+    st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EMELab non conserva le email: "
                "l'indirizzo lo trovi su QRZ.com o sul sito della stazione.")
 
 
@@ -1942,7 +1942,7 @@ def _wsjtx_tab(D):
     from emelab import dx
     st.subheader("Collegamento con WSJT-X")
     st.caption("In WSJT-X: Settings → Reporting → «UDP Server» = 127.0.0.1, porta 2237, e spunta «Accept UDP requests». "
-               "EME Assistant riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
+               "EMELab riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
                "di quel momento) e può colorare i nominativi e impostare il sottomodo Q65. Se usi anche JTAlert o "
                "GridTracker, metti in WSJT-X un indirizzo multicast (per esempio 224.0.0.1) e lo stesso qui.")
     sets = openems_local.load_settings()
@@ -2035,7 +2035,7 @@ def _sunscan_box(D, setup, f, Dm, hp_expected):
     st.divider()
     st.subheader("☀️ Scansione del Sole")
     st.caption("Incolla o carica le letture di una scansione: a croce (in AZ e in EL attraverso il Sole) oppure a deriva "
-               "(antenna ferma, il Sole passa). EME Assistant adatta il modello disco solare ⊗ fascio gaussiano (IZ0JNY) e ti dà "
+               "(antenna ferma, il Sole passa). EMELab adatta il modello disco solare ⊗ fascio gaussiano (IZ0JNY) e ti dà "
                "la larghezza del fascio vera, l'errore di puntamento in quel punto e il fattore Y. L'errore si salva nel "
                "diario e alimenta il modello di puntamento.")
     c = st.columns(4)

@@ -1,4 +1,4 @@
-# Metodo scientifico di EME Assistant
+# Metodo scientifico di EMELab
 
 ## 1. Un modello della stazione, stimato da tutte le misure
 Parametri: efficienza d'apertura η, errore RMS della superficie ε, spillover e frazione verso terra, perdite feed→LNA,

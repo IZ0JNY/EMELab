@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""Guided start of EME Assistant: today's sky and weather, the user's free horizon, Moon windows with their quality and
+"""Guided start of EMELab: today's sky and weather, the user's free horizon, Moon windows with their quality and
 the forecast, who to work in a window, and the text of a sked proposal."""
 from __future__ import annotations
 

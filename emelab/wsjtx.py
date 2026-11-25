@@ -10,7 +10,7 @@ and Location.
 
 Protocol: WSJT-X Network/NetworkMessage.hpp by Joe Taylor K1JT, Bill Somerville G4WJS and the WSJT Development
 Group (field order cross-checked with the wsjtx-go library by Chris Keller KØSWE). To share the stream with
-other programs (JTAlert, GridTracker…) set WSJT-X to a multicast address such as 224.0.0.1 and let EME Assistant join it.
+other programs (JTAlert, GridTracker…) set WSJT-X to a multicast address such as 224.0.0.1 and let EMELab join it.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ class _R:
 
 
 def parse(data: bytes) -> dict | None:
-    """One datagram → {"type": …, fields…}; None if it is not WSJT-X or a type EME Assistant does not use."""
+    """One datagram → {"type": …, fields…}; None if it is not WSJT-X or a type EMELab does not use."""
     r = _R(data)
     try:
         if r.u32() != MAGIC:

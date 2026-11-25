@@ -1,26 +1,26 @@
-﻿; EME Assistant installer (internal name EMELab: same AppId, folder and data, so it upgrades 0.1.x) (Inno Setup 6). Built by windows\build.ps1 from build\EMELab.
+﻿; EMELab installer (Inno Setup 6). Built by windows\build.ps1 from build\EMELab.
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
 
 [Setup]
 AppId={{93F88144-2420-4C57-8078-2265FAC0A472}
-AppName=EME Assistant
+AppName=EMELab
 AppVersion={#MyAppVersion}
-AppVerName=EME Assistant {#MyAppVersion}
+AppVerName=EMELab {#MyAppVersion}
 AppPublisher=IZ0JNY
 AppPublisherURL=https://github.com/IZ0JNY/EMELab
 AppSupportURL=https://github.com/IZ0JNY/EMELab/issues
 DefaultDirName={localappdata}\Programs\EMELab
-DefaultGroupName=EME Assistant
+DefaultGroupName=EMELab
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\dist
-OutputBaseFilename=EME-Assistant-Setup-{#MyAppVersion}
+OutputBaseFilename=EMELab-Setup-{#MyAppVersion}
 SetupIconFile=emelab.ico
 UninstallDisplayIcon={app}\emelab.ico
-UninstallDisplayName=EME Assistant {#MyAppVersion}
+UninstallDisplayName=EMELab {#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
@@ -30,8 +30,8 @@ WizardStyle=modern
 CloseApplications=yes
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany=IZ0JNY
-VersionInfoDescription=EME Assistant setup - EME planning, measurements and coaching
-VersionInfoProductName=EME Assistant
+VersionInfoDescription=EMELab setup - EME measurements and planning
+VersionInfoProductName=EMELab
 VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCopyright=(c) Ivan De Cesaris IZ0JNY - GPLv3
 LicenseFile=..\LICENSE
@@ -63,22 +63,17 @@ Type: filesandordirs; Name: "{app}\python"
 ; Start-menu entry "in the browser" of a previous install in the other language (recreated below)
 Type: files; Name: "{autoprograms}\EMELab (nel browser).lnk"
 Type: files; Name: "{autoprograms}\EMELab (in the browser).lnk"
-Type: files; Name: "{autoprograms}\EME Assistant (nel browser).lnk"
-Type: files; Name: "{autoprograms}\EME Assistant (in the browser).lnk"
-; shortcuts of 0.1.0/0.1.1, when the program was called EMELab
-Type: files; Name: "{autoprograms}\EMELab.lnk"
-Type: files; Name: "{autodesktop}\EMELab.lnk"
 
 [Files]
 Source: "..\build\EMELab\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\EME Assistant"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"; Comment: "{cm:AppComment}"
-Name: "{autoprograms}\EME Assistant ({cm:InBrowser})"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop --browser"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"
-Name: "{autodesktop}\EME Assistant"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"; Tasks: desktopicon
+Name: "{autoprograms}\EMELab"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"; Comment: "{cm:AppComment}"
+Name: "{autoprograms}\EMELab ({cm:InBrowser})"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop --browser"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"
+Name: "{autodesktop}\EMELab"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; IconFilename: "{app}\emelab.ico"; AppUserModelID: "IZ0JNY.EMELab"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; Description: "{cm:LaunchProgram,EME Assistant}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\python\pythonw.exe"; Parameters: "-m emelab.desktop"; WorkingDir: "{app}\app"; Description: "{cm:LaunchProgram,EMELab}"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python"

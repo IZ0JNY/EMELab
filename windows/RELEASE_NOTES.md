@@ -1,9 +1,8 @@
-## EME Assistant 0.1.2 BETA TEST per Windows / for Windows
+## EMELab 0.1.2 BETA TEST per Windows / for Windows
 
-**Installazione / Installation:** `EME-Assistant-Setup-0.1.2.exe` (senza diritti di amministratore / no admin rights) oppure / or `EME-Assistant-0.1.2-portable.zip` → `EME Assistant.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+**Installazione / Installation:** `EMELab-Setup-0.1.2.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.2-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
 
 ### 🇮🇹 Novità
-- **EMELab ora si chiama EME Assistant.** L'installazione aggiorna quella di prima: stazione, QSO, misure e impostazioni restano dove sono.
 - **🆕 Avviso di nuova versione** come in FeedLab: all'avvio il programma chiede a GitHub se c'è una versione più nuova e mostra le novità. C'è anche il pulsante «🔄 Controlla aggiornamenti» nella barra laterale.
 - **🏠 Stazione:**
   - il locator aggiorna subito latitudine e longitudine (prima restavano a 0);
@@ -14,7 +13,6 @@
 - **Import ADIF:** entrano solo i QSO EME da 10 GHz in su; gli altri vengono contati e lasciati fuori.
 
 ### 🇬🇧 What's new
-- **EMELab is now called EME Assistant.** The installer upgrades the previous one: station, QSOs, measurements and settings stay where they are.
 - **🆕 New-version notice** as in FeedLab: at start the program asks GitHub whether a newer version exists and shows what's new. There is also a «🔄 Check for updates» button in the sidebar.
 - **🏠 Station:**
   - the locator now updates latitude and longitude at once (they used to stay at 0);

@@ -1,7 +1,7 @@
-"""EME Assistant as a desktop program (Windows): starts the app server locally and shows it in its own window.
+"""EMELab as a desktop program (Windows): starts the app server locally and shows it in its own window.
 
 The window is a native WebView2 window (pywebview). If that is not available, the default browser opens
-the app instead and the server stays up until "Chiudi EME Assistant" is pressed in the sidebar.
+the app instead and the server stays up until "Chiudi EMELab" is pressed in the sidebar.
 
     python -m emelab.desktop                 # normal start
     python -m emelab.desktop --browser       # use the default browser
@@ -33,7 +33,7 @@ def config_dir() -> Path:
 
 
 def python_exe() -> str:
-    """Console interpreter next to the running one (EME Assistant.exe / pythonw.exe -> python.exe)."""
+    """Console interpreter next to the running one (EMELab.exe / pythonw.exe -> python.exe)."""
     exe = Path(sys.executable)
     alt = exe.with_name("python.exe")
     if exe.name.lower() != "python.exe" and alt.exists():
@@ -44,8 +44,8 @@ def python_exe() -> str:
 # the program: entry script, window title, AppUserModelID (same as the installer's shortcuts: the taskbar
 # shows their icon), icon file and name used in messages
 APPS = {
-    "emelab": dict(main="emelab_main.py", title="EME Assistant — pianificazione, misure e assistenza EME",
-                   app_id="IZ0JNY.EMELab", ico="emelab.ico", name="EME Assistant", emoji="🌕"),
+    "emelab": dict(main="emelab_main.py", title="EMELab — Laboratorio di misure e pianificazione EME",
+                   app_id="IZ0JNY.EMELab", ico="emelab.ico", name="EMELab", emoji="🌕"),
 }
 APP = APPS["emelab"]
 APP_ID = APP["app_id"]
@@ -59,7 +59,7 @@ def icon_path() -> Path | None:
 
 
 def win_identity() -> None:
-    """Windows: group the window under EME Assistant's shortcut (icon, pinning) rather than under Python."""
+    """Windows: group the window under EMELab's shortcut (icon, pinning) rather than under Python."""
     if not IS_WIN:
         return
     try:
@@ -70,7 +70,7 @@ def win_identity() -> None:
 
 
 def win_set_icon(title: str) -> None:
-    """Windows: EME Assistant's icon on the window (title bar, Alt+Tab); the interpreter is python.org's own."""
+    """Windows: EMELab's icon on the window (title bar, Alt+Tab); the interpreter is python.org's own."""
     ico = icon_path()
     if not IS_WIN or ico is None:
         return
@@ -284,7 +284,7 @@ def main(argv=None) -> int:
         return 1
     webbrowser.open(url)
     try:
-        return proc.wait()                           # ends with "Chiudi EME Assistant" in the sidebar
+        return proc.wait()                           # ends with "Chiudi EMELab" in the sidebar
     except KeyboardInterrupt:
         stop(proc)
         return 0

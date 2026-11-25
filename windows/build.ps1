@@ -1,8 +1,8 @@
 <#
-  Builds EME Assistant (internal name EMELab) for Windows:
+  Builds EMELab for Windows:
     build\EMELab\            portable folder (embedded Python + packages + app)
-    dist\EME-Assistant-<ver>-portable.zip
-    dist\EME-Assistant-Setup-<ver>.exe   (if Inno Setup is installed)
+    dist\EMELab-<ver>-portable.zip
+    dist\EMELab-Setup-<ver>.exe   (if Inno Setup is installed)
 
   Requirements: Windows 10/11 x64, a regular Python 3.x x64 on PATH (same minor version as -PyVersion),
   internet access. Usage (PowerShell):  .\windows\build.ps1 [-Version 0.3.0] [-PyVersion 3.13.9]
@@ -22,7 +22,7 @@ if (-not $Version) {
 }
 if (-not $PyVersion) { $PyVersion = (python -c "import platform; print(platform.python_version())").Trim() }
 $tag = ($PyVersion.Split(".")[0..1] -join "")
-Write-Host "EME Assistant $Version  -  Python $PyVersion (embedded)"
+Write-Host "EMELab $Version  -  Python $PyVersion (embedded)"
 
 if (Test-Path $build) { Remove-Item -Recurse -Force $build }
 New-Item -ItemType Directory -Force $build, $dist | Out-Null
@@ -55,11 +55,11 @@ Get-ChildItem -Recurse -Directory -Filter "__pycache__" "$build\app" | Remove-It
 # 4. launchers. The Python interpreters are used exactly as published by python.org, with the Python
 # Software Foundation's digital signature intact (a modified copy is what antivirus heuristics flag). The
 # EMELab icon comes from the shortcuts (and from the window, set at run time).
-Set-Content -Encoding ascii "$build\EME Assistant.bat" "@start `"`" `"%~dp0python\pythonw.exe`" -m emelab.desktop %*`r`n"
-Set-Content -Encoding ascii "$build\EME Assistant (browser).bat" "@start `"`" `"%~dp0python\pythonw.exe`" -m emelab.desktop --browser`r`n"
+Set-Content -Encoding ascii "$build\EMELab.bat" "@start `"`" `"%~dp0python\pythonw.exe`" -m emelab.desktop %*`r`n"
+Set-Content -Encoding ascii "$build\EMELab (browser).bat" "@start `"`" `"%~dp0python\pythonw.exe`" -m emelab.desktop --browser`r`n"
 Set-Content -Encoding utf8 "$build\LEGGIMI.txt" @"
-EME Assistant $Version - pianificazione, misure e assistenza EME (10-134 GHz)
-Avvio: doppio clic su "EME Assistant.bat" (finestra propria) oppure "EME Assistant (browser).bat".
+EMELab $Version - Laboratorio di misure e pianificazione EME (10-134 GHz)
+Avvio: doppio clic su EMELab.bat (finestra propria) oppure "EMELab (browser).bat".
 I tuoi dati (stazione, misure, QSO, impostazioni) restano in %APPDATA%\EMELab su questo PC.
 Progetto: https://github.com/IZ0JNY/EMELab
 "@
@@ -70,7 +70,7 @@ Progetto: https://github.com/IZ0JNY/EMELab
 if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
 
 # 6. portable zip
-$portable = Join-Path $dist "EME-Assistant-$Version-portable.zip"
+$portable = Join-Path $dist "EMELab-$Version-portable.zip"
 if (Test-Path $portable) { Remove-Item $portable }
 Compress-Archive -Path $build -DestinationPath $portable -CompressionLevel Optimal
 
@@ -87,7 +87,7 @@ if ($iscc) {
   Write-Warning "Inno Setup non trovato: creato solo lo zip portatile."
 }
 # 8. SHA-256 checksums of what is published (users can check the download: Get-FileHash <file>)
-$sums = Get-ChildItem $dist -File | Where-Object { $_.Name -like "EME-Assistant-*" } | ForEach-Object {
+$sums = Get-ChildItem $dist -File | Where-Object { $_.Name -like "EMELab-*" } | ForEach-Object {
   "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
 Set-Content -Encoding ascii (Join-Path $dist "SHA256SUMS.txt") $sums
 Get-ChildItem $dist | Format-Table Name, Length

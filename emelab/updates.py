@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""New-version notice: at start EME Assistant asks GitHub for the latest release and, if it is newer, shows what's new.
+"""New-version notice: at start EMELab asks GitHub for the latest release and, if it is newer, shows what's new.
 
 Only the public GitHub API is contacted (no personal data is sent). Any network problem is silent.
 Set EMELAB_NO_UPDATE_CHECK=1 to switch the check off.
@@ -77,7 +77,7 @@ def _powershell_json(url: str, timeout: float) -> dict | None:
     if sys.platform != "win32":
         return None
     cmd = ("[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
-           f"(Invoke-WebRequest -UseBasicParsing -Headers @{{'User-Agent'='EMEAssistant-update-check'}} '{url}').Content")
+           f"(Invoke-WebRequest -UseBasicParsing -Headers @{{'User-Agent'='EMELab-update-check'}} '{url}').Content")
     r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True,
                        timeout=timeout + 10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if r.returncode != 0:
@@ -93,7 +93,7 @@ def latest_release(timeout: float = 6.0) -> dict | None:
         LAST_ERROR = "EMELAB_NO_UPDATE_CHECK"
         return None
     req = urllib.request.Request(API_URL, headers={"Accept": "application/vnd.github+json",
-                                                   "User-Agent": "EMEAssistant-update-check"})
+                                                   "User-Agent": "EMELab-update-check"})
     errors = []
     data = None
     for name, ctx in _contexts():

@@ -4,7 +4,7 @@
 Point) published by NOAA SWPC, and the GOES X-ray flux to tell whether the Sun is quiet enough for a sun-noise
 calibration (a flare changes the microwave flux within minutes).
 
-Idea from the online sun-noise calculator of Carsten Groen OZ9AAR (moonbounce.dk); code written for EME Assistant.
+Idea from the online sun-noise calculator of Carsten Groen OZ9AAR (moonbounce.dk); code written for EMELab.
 Interpolation between two RSTN frequencies is a power law in log–log (the "traditional" method)."""
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
 """Charts and fits of any parameter of the logged QSOs and measurements.
 
-Every QSO and measurement is flattened into one row of numbers (its own fields plus every condition EME Assistant
+Every QSO and measurement is flattened into one row of numbers (its own fields plus every condition EMELab
 computed: Moon position at both ends, distances, Doppler, spread, atmosphere, weather…). Any two columns can be
 plotted against each other and fitted with:
 

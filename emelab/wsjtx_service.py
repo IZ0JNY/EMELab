@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""EME Assistant ↔ WSJT-X, live: keeps the decodes, logs the QSOs you accept in WSJT-X with every condition of that moment,
-and can colour callsigns and set the Q65 submode in WSJT-X. Runs in the background of the EME Assistant server."""
+"""EMELab ↔ WSJT-X, live: keeps the decodes, logs the QSOs you accept in WSJT-X with every condition of that moment,
+and can colour callsigns and set the Q65 submode in WSJT-X. Runs in the background of the EMELab server."""
 from __future__ import annotations
 
 import re
@@ -113,7 +113,7 @@ class Service:
              "submode": sub, "rst_sent": m.get("report_sent"), "rst_rcvd": m.get("report_rcvd"),
              "locator": (m.get("dx_grid") or "").upper() or None, "my_locator": (m.get("my_grid") or "").upper() or None,
              "name": m.get("name") or None, "tx_pwr": m.get("tx_power") or None,
-             "comment": " ".join(x for x in (m.get("comments"), "logged by WSJT-X → EME Assistant") if x)}
+             "comment": " ".join(x for x in (m.get("comments"), "logged by WSJT-X → EMELab") if x)}
         wx = None
         if self.wx_fn:
             try:

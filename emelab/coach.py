@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""EME Assistant invites you to measure and to try: the measurements that teach the station model the most right now,
+"""EMELab invites you to measure and to try: the measurements that teach the station model the most right now,
 missing or old calibrations, opportunities (Sun high today, perigee, dry days, active stations), and what to try
 after a QSO. Each suggestion has a priority (higher first) and a short reason."""
 from __future__ import annotations
@@ -84,8 +84,8 @@ def suggestions(D: edb.DB, now: datetime | None = None) -> list[dict]:
         pass
     qs = D.qsos()
     if not qs:
-        add(35, "Importa il tuo log ADIF: dai QSO già fatti EME Assistant ricava le condizioni che funzionano per te.")
+        add(35, "Importa il tuo log ADIF: dai QSO già fatti EMELab ricava le condizioni che funzionano per te.")
     st_heard = [s for s in D.stations() if (s.get("data") or {}).get("heard")]
     if not st_heard:
-        add(30, "Importa ALL.TXT di WSJT-X: EME Assistant saprà quali stazioni hai davvero ascoltato e quando.")
+        add(30, "Importa ALL.TXT di WSJT-X: EMELab saprà quali stazioni hai davvero ascoltato e quando.")
     return sorted(out, key=lambda x: -x["priority"])

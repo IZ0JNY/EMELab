@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""EME Assistant printouts (PDF, A4, same layout as FeedLab's reports): measurement diary, QSO log, QSO statistics with
+"""EMELab printouts (PDF, A4, same layout as FeedLab's reports): measurement diary, QSO log, QSO statistics with
 maps, and QSL labels (3 × 8 on A4)."""
 from __future__ import annotations
 
@@ -27,10 +27,10 @@ def _plt():
 
 def _header(fig, title, station=""):
     from . import __version__
-    fig.text(0.06, 0.965, "EME Assistant — " + _tr(title), fontsize=13, weight="bold")
+    fig.text(0.06, 0.965, "EMELab — " + _tr(title), fontsize=13, weight="bold")
     if station:
         fig.text(0.06, 0.945, station, fontsize=8, color="0.3")
-    fig.text(0.06, 0.02, f"EME Assistant {__version__} · {datetime.utcnow():%Y-%m-%d %H:%M} UTC · © Ivan De Cesaris IZ0JNY",
+    fig.text(0.06, 0.02, f"EMELab {__version__} · {datetime.utcnow():%Y-%m-%d %H:%M} UTC · © Ivan De Cesaris IZ0JNY",
              fontsize=6.5, color="0.45")
 
 

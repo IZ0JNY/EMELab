@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""Component library (LNA, SSPA, driver, mixer/transverter, waveguide, relay…) kept in EME Assistant's database with the
+"""Component library (LNA, SSPA, driver, mixer/transverter, waveguide, relay…) kept in EMELab's database with the
 values read from the manufacturers' datasheets, and an optional search in the Mouser catalogue through its official
 API with the user's own key (saved only on this PC). Values are never invented: each part carries its datasheet link."""
 from __future__ import annotations
