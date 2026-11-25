@@ -144,7 +144,10 @@ with st.sidebar:
                        format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
                        help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
 shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
-tabs = st.tabs([l for _, l, _ in shown])
+try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
+    tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
+except TypeError:                                   # Streamlit without state on tabs
+    tabs = st.tabs([l for _, l, _ in shown])
 for tab, (k, _, fn) in zip(tabs, shown):
     with tab:
         if k == "station":
