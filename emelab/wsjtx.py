@@ -150,9 +150,11 @@ def highlight(client_id: str, call: str, bg: str | None, fg: str | None = "#0000
 
 
 def configure(client_id: str, mode: str = "Q65", submode: str = "", tr_period: int = 0, freq_tol: int = 0,
-              dx_call: str = "", dx_grid: str = "", generate: bool = False) -> bytes:
-    """Set mode/submode/T-R period/tolerance/DX in WSJT-X (empty or 0 = leave unchanged)."""
-    w = _W(15).s(client_id).s(mode).u32(freq_tol or NULL).s(submode).b_(False).u32(tr_period or NULL).u32(NULL)
+              dx_call: str = "", dx_grid: str = "", generate: bool = False, rx_df: int | None = None) -> bytes:
+    """Set mode/submode/T-R period/tolerance/Rx DF/DX in WSJT-X (empty, 0 or None = leave unchanged).
+    The Tx audio frequency, «Tx even/1st», Max Drift and Auto Seq are not in the protocol."""
+    w = _W(15).s(client_id).s(mode).u32(freq_tol or NULL).s(submode).b_(False).u32(tr_period or NULL)
+    w.u32(NULL if rx_df is None else rx_df)
     return bytes(w.s(dx_call).s(dx_grid).b_(generate).b)
 
 
