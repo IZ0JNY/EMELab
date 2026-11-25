@@ -42,9 +42,12 @@ def test_partner_by_callsign(tmp_path, monkeypatch):
     assert any("DF3GJ · JO31AB" in c.value for c in at.caption)
     labels = [m.label for m in at.metric]
     assert any("Ora locale da DF3GJ" in x for x in labels) and "Probabilità di QSO adesso" in labels
-    tab = next(d.value for d in at.dataframe if "Probabilità QSO" in getattr(d.value, "columns", []))
+    tab = next(d.value for d in at.dataframe if "Migliore" in getattr(d.value, "columns", []))
     assert {"Ora locale DX", "Luna da te AZ/EL (°)", "Luna dal DX AZ/EL (°)", "Migliore"} <= set(tab.columns)
     assert (tab["Migliore"] == "✅").any()
+    # the «Segnale» sub-tab: the day every 30 minutes with the Moon from both stations and the local times
+    day = [d.value for d in at.dataframe if "UTC" in getattr(d.value, "columns", []) and "Ora locale DX" in d.value.columns]
+    assert day and {"Luna da te AZ/EL (°)", "Luna dal DX AZ/EL (°)", "Probabilità QSO"} <= set(day[0].columns)
 
 
 def test_unknown_callsign_locator_by_hand_and_added(tmp_path, monkeypatch):
@@ -105,4 +108,4 @@ def test_click_in_who_can_i_work_opens_planner(monkeypatch):
     ui._open_in_planner_cb("sg_rank_sel_0", rk, {"id": 7}, 12.0)
     assert fake["em_p_pcall"] == "DF3GJ" and fake["em_p_setup"] == 7 and fake["em_p_minel"] == 12.0
     assert fake["em_p_auto"] and fake["main_tab"] == "🗓️ Pianificatore" and "planner" in fake["tabs_on"]
-    assert fake["sg_rank_sel_n"] == 1
+    assert fake["sg_rank_sel_n"] == 1 and fake["pl_sub"] == "🗓️ Finestre"
