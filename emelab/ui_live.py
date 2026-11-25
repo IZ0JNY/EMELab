@@ -361,6 +361,7 @@ def _watchdog_bg(D):
 
 
 def _moon_quadrant(D):
+    st.markdown("**" + i18n.tr("🌕 Luna: io e il corrispondente") + "**")
     _frag(2)(_moon_live)(D)
 
 
@@ -378,45 +379,109 @@ def dx_of(svc, D) -> tuple[str, str]:
     return call, grid
 
 
+_WX: dict = {}
+WX_EVERY_S = 900
+
+
+def weather_at(lat: float, lon: float) -> dict | None:
+    """Open-Meteo now at a place, fetched in the background and kept 15 minutes (never blocks the page)."""
+    key = (round(lat, 2), round(lon, 2))
+    e = _WX.get(key)
+    if (e is None or time.time() - e["t"] > WX_EVERY_S) and not (e or {}).get("busy"):
+        _WX[key] = {**(e or {"wx": None}), "busy": True, "t": (e or {}).get("t", 0.0)}
+
+        def run():
+            try:
+                from emelab import weather
+                wx = weather.open_meteo(lat, lon, datetime.now(timezone.utc))
+            except Exception:
+                wx = (_WX.get(key) or {}).get("wx")
+            _WX[key] = {"wx": wx, "t": time.time(), "busy": False}
+        threading.Thread(target=run, daemon=True, name="emelab-live-wx").start()
+    return (_WX.get(key) or {}).get("wx")
+
+
+def station_view(now: datetime, me: tuple, other: tuple | None, f_ghz: float, h_me: float = 0.0,
+                 h_other: float = 0.0, pol_me: str | None = None, pol_other: str | None = None) -> dict:
+    """What one station sees now: Moon Az/El, distance, own echo Doppler and spread, polarisation angle and Dpol
+    towards the other station, mutual spread/Doppler/libration and the Earth–Moon–Earth path (pure: no Streamlit)."""
+    from emelab import astro, dx
+    sk = astro.sky(now, me[0], me[1], h_me)
+    own = astro.mutual(now, me, me, h_me, h_me)
+    v = {"az": sk.moon.az, "el": sk.moon.el, "dist_km": sk.moon.dist_km, "sun_moon": sk.sun_moon_deg,
+         "dop_echo_hz": sk.doppler_hz_per_ghz * f_ghz * 1e0, "spread_echo_hz": sk.spread_hz_per_ghz * f_ghz,
+         "lib_echo": own["libration_deg_per_min"], "pol": dx.pol_angle(me[0], sk.moon.az, sk.moon.el)}
+    if other:
+        so = astro.sky(now, other[0], other[1], h_other)
+        mu = astro.mutual(now, me, other, h_me, h_other)
+        p_o = dx.pol_angle(other[0], so.moon.az, so.moon.el)
+        dpol = dx.spatial_pol_offset(v["pol"], p_o)
+        pm, po = pol_me or dx.default_pol(*me), pol_other or dx.default_pol(*other)
+        mis = dx.pol_mismatch_deg(dpol, pm, po)
+        path = sk.moon.dist_km + so.moon.dist_km
+        v.update(dpol=dpol, pol_loss_db=dx.pol_loss_db(mis), pols=f"{pm}/{po}", spread_mutual_hz=mu["spread_hz_per_ghz"] * f_ghz,
+                 dop_path_hz=mu["doppler_hz_per_ghz"] * f_ghz, lib_mutual=mu["libration_deg_per_min"],
+                 path_km=path, delay_s=path / 299792.458, other_el=so.moon.el)
+    return v
+
+
 def _moon_live(D):
-    from emelab import astro, moon
-    st.markdown("**" + i18n.tr("🌕 Luna, stazione collegata e orologio") + "**")
+    from emelab import astro, tz
     now = datetime.now(timezone.utc)
     stn = D.station() or {}
     svc = _svc()
     hz = ((svc.status or {}).get("dial_hz") if _wsjtx_live(svc) else None)
     f_ghz = hz / 1e9 if hz else float(openems_local.load_settings().get("cam_band_ghz", 24.048))
     call, grid = dx_of(svc, D)
-    kv([("UTC", f"{now:%H:%M:%S}"), ("Frequenza WSJT-X", f"{hz / 1e6:,.3f} MHz".replace(",", " ") if hz else "—"),
-        ("DX", (call or "—") + (f" {grid[:6]}" if grid else ""))])
     if not stn.get("lat"):
         st.info("Inserisci il locator nella scheda 🏠 Stazione per vedere la Luna.")
         return
-    h = stn.get("height_m") or 0.0
-    sk = astro.sky(now, stn["lat"], stn["lon"], h)
-    lib_l, lib_b = moon.libration(now)
-    kv([("Luna Az", f"{sk.moon.az:.2f}°"), ("Luna El", f"{sk.moon.el:.2f}°"),
-        (i18n.tr("Doppler eco") + f" {stations.band_label(f_ghz)}", f"{sk.doppler_hz_per_ghz * f_ghz / 1000:+.2f} kHz"),
-        ("Librazione lon / lat", f"{lib_l:+.2f}° / {lib_b:+.2f}°")])
-    dx_ll = None
+    me = (stn["lat"], stn["lon"])
+    other = None
     if len(grid) >= 4:
         try:
-            dx_ll = astro.locator_to_latlon(grid)
+            other = astro.locator_to_latlon(grid)
         except Exception:
-            dx_ll = None
-    if dx_ll:
-        mu = astro.mutual(now, (stn["lat"], stn["lon"]), dx_ll, h, 0.0)
-        dsk = astro.sky(now, dx_ll[0], dx_ll[1], 0.0)
-        kv([("Spread reciproco", f"{mu['spread_hz_per_ghz'] * f_ghz:.0f} Hz"),
-            (i18n.tr("Doppler verso") + f" {call or 'DX'}", f"{mu['doppler_hz_per_ghz'] * f_ghz / 1000:+.2f} kHz"),
-            (i18n.tr("Luna da") + f" {call or 'DX'}", f"El {dsk.moon.el:.1f}° Az {dsk.moon.az:.1f}°")])
-        st.caption(i18n.tr("Librazione reciproca") + f" {mu['libration_deg_per_min']:.3f}°/min · "
-                   + i18n.tr("spread proprio") + f" {sk.spread_hz_per_ghz * f_ghz:.0f} Hz · " + i18n.tr("Distanza")
-                   + f" {sk.moon.dist_km:,.0f} km · RA {moon.ra_hms(sk.moon.ra)} Dec {moon.dec_dms(sk.moon.dec)}")
+            other = None
+    v = station_view(now, me, other, f_ghz, stn.get("height_m") or 0.0)
+    band = stations.band_label(f_ghz)
+    _panel("🟦 " + i18n.tr("IO") + f" · {stn.get('callsign') or ''} · {stn.get('locator') or ''}", "#1f6feb",
+           v, me, now, band, freq=(f"{hz / 1e6:,.3f} MHz".replace(",", " ") if hz else None), towards=call or "DX")
+    if other:
+        vo = station_view(now, other, me, f_ghz)
+        _panel("🟧 " + i18n.tr("CORRISPONDENTE") + f" · {call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
+               towards=stn.get("callsign") or i18n.tr("me"))
+        st.caption(i18n.tr("Percorso Terra–Luna–Terra") + f" {v['path_km']:,.0f} km · " + i18n.tr("ritardo")
+                   + f" {v['delay_s']:.3f} s · " + i18n.tr("polarizzazioni") + f" {v['pols']}")
     else:
-        st.caption(i18n.tr("spread proprio") + f" {sk.spread_hz_per_ghz * f_ghz:.0f} Hz · " + i18n.tr("Distanza")
-                   + f" {sk.moon.dist_km:,.0f} km · RA {moon.ra_hms(sk.moon.ra)} Dec {moon.dec_dms(sk.moon.dec)} · "
-                   + i18n.tr("lo spread reciproco compare quando WSJT-X ha un DX Call con il locator"))
+        st.caption("Il riquadro del corrispondente compare quando WSJT-X ha un DX Call con il locator (o il locator è nel "
+                   "database delle stazioni).")
+
+
+def _panel(title, color, v, ll, now, band, freq=None, towards="DX"):
+    from emelab import tz
+    loc, zone, _ = tz.local_time(ll[0], ll[1], now)
+    head = (f"<div style='border-left:6px solid {color};padding:4px 10px;margin:6px 0 2px;font-size:18px;font-weight:700'>"
+            f"{html.escape(title)}</div>")
+    st.html(head) if hasattr(_st, "html") else _st.markdown(head, unsafe_allow_html=True)
+    pairs = [("Ora locale", f"{loc:%H:%M} ({zone.split('/')[-1]})")]
+    if freq:
+        pairs.append(("Frequenza WSJT-X", freq))
+    pairs += [("Luna Az", f"{v['az']:.1f}°"), ("Luna El", f"{v['el']:.1f}°"), ("Distanza Luna", f"{v['dist_km']:,.0f} km")]
+    if "dpol" in v:
+        pairs += [(i18n.tr("Dpol verso") + f" {towards}", f"{v['dpol']:+.0f}°"), ("Perdita di polarizzazione", f"{v['pol_loss_db']:.1f} dB"),
+                  ("Spread reciproco", f"{v['spread_mutual_hz']:.0f} Hz"), ("Doppler sul percorso", f"{v['dop_path_hz'] / 1000:+.2f} kHz"),
+                  ("Librazione reciproca", f"{v['lib_mutual']:.3f}°/min")]
+    pairs += [(i18n.tr("Doppler eco") + f" {band}", f"{v['dop_echo_hz'] / 1000:+.2f} kHz"), ("Spread eco", f"{v['spread_echo_hz']:.0f} Hz"),
+              ("Librazione eco", f"{v['lib_echo']:.3f}°/min"), ("Sole–Luna", f"{v['sun_moon']:.0f}°")]
+    wx = weather_at(*ll)
+    if wx:
+        pairs += [("Meteo", f"{wx.get('t_c') or 0:.0f} °C · " + i18n.tr("UR") + f" {wx.get('rh') or 0:.0f} %"),
+                  ("Vento", f"{wx.get('wind_ms') or 0:.0f} m/s" + (f" ({wx['gust_ms']:.0f})" if wx.get("gust_ms") else "")),
+                  ("Nuvole / pioggia", f"{wx.get('cloud_pct') or 0:.0f} % · {wx.get('rain_mmh') or 0:.1f} mm/h")]
+    else:
+        pairs.append(("Meteo", "—"))
+    kv(pairs)
 
 
 def _wsjtx_checks_live():
