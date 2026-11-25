@@ -52,10 +52,15 @@ def _utc(v):
         return None
 
 
+def _mode(q: dict) -> str:
+    from .logbook import mode_label
+    return mode_label(q)[0]
+
+
 def rows_from_qsos(qsos: list[dict]) -> list[dict]:
     out = []
     for q in qsos:
-        r = {"call": q.get("call"), "band": q.get("band"), "mode": q.get("submode") or q.get("mode"), "locator": q.get("locator")}
+        r = {"call": q.get("call"), "band": q.get("band"), "mode": _mode(q), "locator": q.get("locator")}
         t = _utc(q.get("utc"))
         if t:
             r.update(utc=t, date=t.timestamp() / 86400.0, hour=t.hour + t.minute / 60, month=t.month, doy=t.timetuple().tm_yday)

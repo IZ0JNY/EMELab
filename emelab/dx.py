@@ -67,22 +67,56 @@ def from_directory(entry: dict, band: str) -> dict | None:
     return station(band, D, entry.get("power_w"), kind)
 
 
-def q65_threshold_db(mode: str, spread_hz: float) -> float:
-    """Q65 decoding threshold (dB in 2500 Hz) vs mutual libration spread — G3WDG fits (OE2IGL calculator)."""
-    x = min(max(spread_hz, 0.0), 1300.0)
+# Q65 submode used in practice on each band (operating habit, not "the lowest threshold"): 120E would often have a
+# lower threshold only because it integrates twice as long, but nobody uses it for scheduled QSOs on these bands.
+Q65_MODES = ("60D", "60E", "120E")                         # the submodes with a G3WDG threshold fit
+Q65_STANDARD = {"10G": "60D", "24G": "60E", "47G": "60E", "76G": "60E", "122G": "60E", "134G": "60E"}
+# spread range (Hz) covered by each G3WDG fit: beyond it the mode is out of its tolerance and the threshold is
+# extrapolated (it keeps rising), with a warning
+Q65_SPREAD_MAX = {"60D": 550.0, "60E": 1300.0, "120E": 550.0}
+
+
+def _q65_fit(mode: str, x: float) -> float:
     if mode == "60D":
-        x = min(x, 550.0)
         return 5.6139e-8 * x ** 3 - 6.4781e-5 * x ** 2 + 3.7718e-2 * x - 28.285
     if mode == "60E":
         return -3.6013e-12 * x ** 4 + 1.5565e-8 * x ** 3 - 2.4829e-5 * x ** 2 + 0.022733 * x - 27.483
     if mode == "120E":
-        x = min(x, 550.0)
         return 3e-8 * x ** 3 - 0.00005 * x ** 2 + 0.0387 * x - 30.751
     raise ValueError(mode)
 
 
+def q65_threshold_db(mode: str, spread_hz: float) -> float:
+    """Q65 decoding threshold (dB in 2500 Hz) vs mutual libration spread — G3WDG fits (OE2IGL calculator). Beyond the
+    spread range of the fit the threshold is extrapolated linearly with the slope at the end of the range, so a mode
+    pushed beyond its tolerance is penalised instead of looking flat."""
+    x = max(spread_hz, 0.0)
+    if mode not in Q65_SPREAD_MAX:
+        raise ValueError(mode)
+    xm = Q65_SPREAD_MAX[mode]
+    if x <= xm:
+        return _q65_fit(mode, x)
+    slope = max((_q65_fit(mode, xm) - _q65_fit(mode, xm - 1.0)), 0.0)
+    return _q65_fit(mode, xm) + slope * (x - xm)
+
+
+def spread_ok(mode: str, spread_hz: float) -> bool:
+    """True when the spread is inside the range the submode tolerates (the range of its threshold fit)."""
+    return spread_hz <= Q65_SPREAD_MAX.get(mode, float("inf"))
+
+
+def band_mode(band: str, settings: dict | None = None) -> str:
+    """Q65 submode used on the band: the user's choice (settings «q65_modes») or the band's standard."""
+    if settings is None:
+        from . import settings as _s
+        settings = _s.load_settings()
+    m = (settings.get("q65_modes") or {}).get(band)
+    return m if m in Q65_MODES else Q65_STANDARD.get(band, "60E")
+
+
 def best_mode(spread_hz: float) -> tuple[str, float]:
-    return min(((m, q65_threshold_db(m, spread_hz)) for m in ("60D", "60E", "120E")), key=lambda x: x[1])
+    """The submode with the lowest threshold (for comparison only: EMELab uses the band's mode, see band_mode)."""
+    return min(((m, q65_threshold_db(m, spread_hz)) for m in Q65_MODES), key=lambda x: x[1])
 
 
 def moon_temp_in_beam(f_ghz: float, D_m: float, eta: float, hpbw: float, moon_diam_deg: float, tb: float = 220.0) -> float:
@@ -142,8 +176,10 @@ def pol_loss_db(dpol_deg: float) -> float:
 
 
 def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str, wx_a: dict | None = None,
-            wx_b: dict | None = None, h_a: float = 0.0, h_b: float = 0.0, linear: bool = True) -> dict | None:
-    """Both directions at time t: a hears b and b hears a, with margins over the best Q65 mode."""
+            wx_b: dict | None = None, h_a: float = 0.0, h_b: float = 0.0, linear: bool = True,
+            mode: str | None = None) -> dict | None:
+    """Both directions at time t: a hears b and b hears a, with margins over the threshold of the band's Q65
+    submode (or of the given one)."""
     f = BAND_GHZ[band]
     sa = astro.sky(t, a_loc[0], a_loc[1], h_a)
     sb = astro.sky(t, b_loc[0], b_loc[1], h_b)
@@ -161,7 +197,8 @@ def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str
     ab, tskb = atm(sb, wx_b)
     mut = astro.mutual(t, a_loc, b_loc, h_a, h_b)
     spread = mut["spread_hz_per_ghz"] * f
-    mode, thr = best_mode(spread)
+    mode = mode or band_mode(band)
+    thr = q65_threshold_db(mode, spread)
     diam = (sa.moon.diam_deg + sb.moon.diam_deg) / 2
     hear_b = snr_2500(b, a, f, sb.moon.dist_km, sa.moon.dist_km, diam, ab, aa, tska)     # at a
     hear_a = snr_2500(a, b, f, sa.moon.dist_km, sb.moon.dist_km, diam, aa, ab, tskb)     # at b
@@ -174,6 +211,7 @@ def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str
     hear_a["snr_db"] -= lpol
     return {"utc": t, "el_a": sa.moon.el, "el_b": sb.moon.el, "spread_hz": spread,
             "doppler_hz": mut["doppler_hz_per_ghz"] * f, "mode": mode, "threshold_db": thr,
+            "spread_ok": spread_ok(mode, spread),
             "dpol_deg": dpol, "pol_loss_db": lpol, "pol_a": pa, "pol_b": pb, "pol_mismatch_deg": mis,
             "snr_a_hears_b": hear_b["snr_db"], "snr_b_hears_a": hear_a["snr_db"],
             "margin_db": min(hear_b["snr_db"], hear_a["snr_db"]) - thr, "detail": (hear_b, hear_a)}
@@ -199,9 +237,11 @@ def moon_elevations(times: list[datetime], locs: np.ndarray) -> np.ndarray:
 
 
 def rank(me: dict, my_loc: tuple, others: list[dict], band: str, start: datetime, hours: float = 48.0,
-         step_min: float = 30.0, min_el: float = 10.0, offset_db: float = 0.0, my_ok=None) -> list[dict]:
+         step_min: float = 30.0, min_el: float = 10.0, offset_db: float = 0.0, my_ok=None,
+         mode: str | None = None) -> list[dict]:
     """For every station (dicts with call, loc (lat, lon), model), the best common window in the period and
-    the estimated QSO probability there, best first."""
+    the estimated QSO probability there (on the band's Q65 submode, or the given one), best first."""
+    mode = mode or band_mode(band)
     times = [astro.utc(start) + timedelta(minutes=step_min * i) for i in range(int(hours * 60 / step_min) + 1)]
     others = [o for o in others if o.get("loc") and o.get("model")]
     if not others:
@@ -217,7 +257,7 @@ def rank(me: dict, my_loc: tuple, others: list[dict], band: str, start: datetime
             out.append({**o, "best": None, "hours_common": 0.0, "probability": 0.0})
             continue
         i = int(np.argmax(np.where(ok, common, -99)))
-        r = link_at(times[i], me, my_loc, o["model"], o["loc"], band)
+        r = link_at(times[i], me, my_loc, o["model"], o["loc"], band, mode=mode)
         out.append({**o, "best": r, "hours_common": float(ok.sum() * step_min / 60),
                     "probability": probability(r["margin_db"], offset_db) if r else 0.0})
     return sorted(out, key=lambda x: (-x["probability"], -(x["best"] or {}).get("margin_db", -99)))

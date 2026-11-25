@@ -59,17 +59,39 @@ def _latlon_cb():
     _st.session_state["em_loc"] = astro.latlon_to_locator(_st.session_state["em_lat"], _st.session_state["em_lon"], 6)
 
 
+def _set_position(lat, lon, source):
+    """position chosen on the map or pasted from Google Maps → latitude, longitude, locator and ground height"""
+    ss = _st.session_state
+    ss["em_lat"], ss["em_lon"] = round(lat, 6), round(lon, 6)
+    ss["em_loc"] = astro.latlon_to_locator(lat, lon, 6)
+    msg = i18n.tr(source) + f": {lat:.6f}, {lon:.6f} → {astro.latlon_to_locator(lat, lon, 10)}"
+    try:
+        h = weather.elevation(lat, lon)
+        ss["em_h"] = float(round(h))
+        ss["em_pos_msg"] = ("ok", msg + " · " + i18n.tr("quota del terreno") + f" {h:.0f} m (Open-Meteo)")
+    except Exception:
+        ss["em_pos_msg"] = ("warn", msg + " · " + i18n.tr("quota non trovata (serve internet): scrivila a mano"))
+
+
 def _gmaps_cb():
     p = astro.parse_coords(_st.session_state.get("em_gmaps", ""))
     if p is None:
         _st.session_state["em_pos_msg"] = ("err", i18n.tr("Coordinate non riconosciute: in Google Maps fai clic destro sul "
                                                           "punto e poi clic sui numeri in alto per copiarli."))
         return
-    _st.session_state["em_lat"], _st.session_state["em_lon"] = round(p[0], 6), round(p[1], 6)
-    _st.session_state["em_loc"] = astro.latlon_to_locator(p[0], p[1], 6)
     _st.session_state["em_gmaps"] = ""
-    _st.session_state["em_pos_msg"] = ("ok", i18n.tr("Posizione presa da Google Maps") +
-                                       f": {p[0]:.6f}, {p[1]:.6f} → {astro.latlon_to_locator(p[0], p[1], 10)}")
+    _set_position(p[0], p[1], "Posizione presa da Google Maps")
+
+
+def _osm_cb():
+    v = _st.session_state.get("em_osm")
+    if not isinstance(v, dict) or v.get("t") == _st.session_state.get("em_osm_t"):
+        return
+    _st.session_state["em_osm_t"] = v.get("t")
+    try:
+        _set_position(float(v["lat"]), float(v["lon"]), "Posizione presa dalla mappa")
+    except (KeyError, TypeError, ValueError):
+        pass
 
 
 def _wx_test_cb():
@@ -84,36 +106,31 @@ def _wx_test_cb():
                  f"{d['rh']:.0f} %" if d.get("rh") is not None else None,
                  f"{d['p_hpa']:.1f} hPa" if d.get("p_hpa") is not None else None]
         _st.session_state["em_wx_msg"] = ("ok", i18n.tr("Stazione meteo letta") + ": " + " · ".join(x for x in parts if x) +
-                                          f" ({d.get('wx_utc', '')})")
+                                          f" ({d.get('wx_utc', '')})" +
+                                          (f" — file: {d['station_file']}"
+                                           if d.get("station_file") and d["station_file"] != url else ""))
     except Exception as e:
         _st.session_state["em_wx_msg"] = ("err", i18n.tr("Stazione meteo non letta") + f": {str(e)[:300]}")
 
 
-def _world_map(D, lat, lon):
-    """small world map (offline coastlines) with the station and the EME stations of the directory; wheel to zoom"""
+def _osm_map(D, lat, lon):
+    """OpenStreetMap map with the locator grid, the station and the EME stations of the directory; a click sets the position"""
+    from emelab import osm
     pts = []
     try:
         for x in D.stations():
             if x.get("locator") and x.get("eme"):
                 try:
-                    pts.append((*astro.locator_to_latlon(x["locator"]), "", "#7f8c8d"))
+                    pts.append((*astro.locator_to_latlon(x["locator"]), x.get("call") or ""))
                 except Exception:
                     pass
     except Exception:
         pass
-    if lat or lon:
-        pts.append((lat, lon, _st.session_state.get("em_call") or i18n.tr("la mia stazione"), "#e74c3c"))
-    fig = world_fig([], pts[-400:], height=300)
-    for tr in fig.data[1:-1] if (lat or lon) else fig.data[1:]:
-        tr.marker.size = 4
-    if lat or lon:
-        fig.data[-1].marker.update(size=12, symbol="star")
-        fig.update_layout(xaxis_range=[lon - 40, lon + 40], yaxis_range=[max(-90, lat - 25), min(90, lat + 25)])
-    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), dragmode="pan", showlegend=False,
-                      xaxis=dict(dtick=20), yaxis=dict(dtick=10))
-    st.plotly_chart(fig, width="stretch", config={"scrollZoom": True, "displaylogo": False})
-    st.caption("Rotellina per lo zoom, trascina per spostare. Griglia ogni 20° × 10° (i campi del locator). La mappa è disegnata "
-               "sul tuo PC: non manda la posizione a nessuno.")
+    osm.station_map(lat, lon, bool(lat or lon), pts[-400:], height=480,
+                    me_label=_st.session_state.get("em_call") or i18n.tr("la mia stazione"),
+                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"), key="em_osm", on_change=_osm_cb)
+    st.caption("Mappa © OpenStreetMap con la griglia del locator: clic sul punto della parabola e latitudine, longitudine, "
+               "locator e quota si aggiornano. Rotellina per lo zoom, trascina per spostare.")
 
 
 def _station(D):
@@ -129,13 +146,13 @@ def _station(D):
                 pass
         ss["em_lat"], ss["em_lon"] = float(lat0 or 0.0), float(lon0 or 0.0)
     ss.setdefault("em_loc", stn.get("locator") or "")
-    left, right = st.columns([3, 2])
+    left, right = st.columns([1, 1])
     with left:
         c = st.columns(2)
         call = c[0].text_input("Nominativo", stn.get("callsign") or "", key="em_call")
         loc = c[1].text_input("Locator", key="em_loc", on_change=_loc_cb,
                               help="es. JN61fs: latitudine e longitudine vanno al centro del quadrato. Per la posizione esatta "
-                                   "usa Google Maps qui sotto")
+                                   "fai clic sulla mappa o usa Google Maps")
         c = st.columns(2)
         lat = c[0].number_input("Latitudine (°, nord +)", -90.0, 90.0, step=0.0001, format="%.6f", key="em_lat",
                                 on_change=_latlon_cb)
@@ -155,11 +172,14 @@ def _station(D):
                        "il link della pagina.")
             if ss.get("em_pos_msg"):
                 kind, msg = ss["em_pos_msg"]
-                (st.success if kind == "ok" else st.error)(msg)
+                (st.success if kind == "ok" else st.warning if kind == "warn" else st.error)(msg)
     with right:
-        _world_map(D, lat, lon)
+        _osm_map(D, lat, lon)
     c = st.columns(4)
-    h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, float(stn.get("height_m") or 0.0), 1.0, key="em_h")
+    ss.setdefault("em_h", float(stn.get("height_m") or 0.0))
+    h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, step=1.0, key="em_h",
+                          help="si riempie da sola dopo un clic sulla mappa o le coordinate di Google Maps (quota del terreno "
+                               "da Open-Meteo, modello Copernicus a 90 m): correggila se serve")
     sets = openems_local.load_settings()
     url = c[1].text_input("Stazione meteo personale (facoltativa)", sets.get("emelab_wx_url", ""), key="em_wxurl",
                           help="indirizzo del tuo sito Meteotemplate / Cumulus / Weather Display, oppure del file dati. "
@@ -183,7 +203,9 @@ def _station(D):
         openems_local.save_settings(emelab_wx_url=url.strip(), emelab_flux=flux)
         st.success("Stazione salvata (solo su questo PC).")
     st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
-               "tuo PC e non vengono mai inviati: il meteo da internet riceve solo coordinate e ora.")
+               "tuo PC e non vengono mai inviati. Escono solo le richieste a internet: il meteo riceve coordinate e ora, la "
+               "mappa scarica le immagini da OpenStreetMap (che vede la zona mostrata), la quota riceve solo il punto "
+               "cliccato (Open-Meteo). Senza internet la mappa mostra solo la griglia: scrivi coordinate e quota a mano.")
 
 
 def _setups(D):
@@ -467,7 +489,7 @@ def _log(D):
                         "Y (dB)": r["y_db"], "Y atteso": _r(ev.get("y_expected")), "ΔY": _r(ev.get("y_delta")),
                         "G/T misurato": _r(ev.get("gt_measured")), "ΔG/T": _r(ev.get("gt_delta")), "SNR": r["snr_db"],
                         "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
-                        "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"]})
+                        "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"] or ""})
         import pandas as pd
         tr = i18n.tr                                   # pandas tables are not translated by the streamlit proxy
         df = pd.DataFrame([{tr(k): (tr(v) if k in ("Tipo", "Meteo") and isinstance(v, str) else v) for k, v in row.items()}
@@ -710,6 +732,7 @@ def _stations_tab(D):
         for r in rows:
             D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
         D.commit()
+        D.log_station_import("call3", up3.name, len(rows))
         st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
         dec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
@@ -722,6 +745,7 @@ def _stations_tab(D):
                      "modes": sorted(set(old.get("modes", [])) | s["modes"])}
             D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
         D.commit()
+        D.log_station_import("heard", upa.name, len(summ))
         st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
     if upp and st.button("📥 Importa i PDF", key="st_pa0ply_go"):
         _pa0ply_import(D, [(f.name, f.getvalue()) for f in upp])
@@ -732,16 +756,169 @@ def _stations_tab(D):
         for r in rows:
             d = r.get("data", {})
             h = d.get("heard", {})
-            dirb = d.get("directory", {})
-            tab.append({"Nominativo": r["call"], "Locator": r.get("locator"), "Nome": r.get("name"), "QTH": r.get("qth"),
-                        "Bande (directory)": ", ".join(sorted(dirb)), "Stazione": "; ".join(f"{b}: {v.get('antenna', '')} {v.get('power_w') or ''} W"
-                                                                                  for b, v in sorted(dirb.items())),
-                        "Sentito": h.get("n"), "Ultima volta": (h.get("last") or "")[:16], "SNR migliore": h.get("snr_best"),
-                        "Bande sentite": ", ".join(h.get("bands", []))})
+            dirb = D.directory_of(d)
+            tab.append({"Nominativo": r["call"], "Locator": r.get("locator") or "", "Nome": r.get("name") or "",
+                        "QTH": r.get("qth") or "", "Bande (directory)": ", ".join(sorted(dirb)),
+                        "Stazione": _station_text(dirb), "✏️": "✏️" if d.get("manual") else "",
+                        "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
+                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": ", ".join(h.get("bands", []))})
         df = pd.DataFrame(tab)
-        df.columns = [i18n.tr(c) for c in df.columns]
-        st.dataframe(df, hide_index=True, width="stretch")
+        cols = list(df.columns)
+        df.columns = [i18n.tr(c) for c in cols]
+        st.caption("Puoi correggere a mano Locator, Nome e QTH direttamente nella tabella, poi premi «Salva le correzioni». "
+                   "Le correzioni a mano (✏️) restano anche quando importi di nuovo i file.")
+        editable = {i18n.tr(c) for c in ("Locator", "Nome", "QTH")}
+        ed = st.data_editor(df, hide_index=True, width="stretch", key="st_table" + _lang_key(),
+                            disabled=[c for c in df.columns if c not in editable])
+        if st.button("💾 Salva le correzioni", key="st_table_save"):
+            st.session_state["st_flash"] = _save_station_edits(D, df, ed, cols)
+            st.session_state.pop("st_table" + _lang_key(), None)      # the edits are in the database now
+            st.rerun()
+        for kind, msg in st.session_state.pop("st_flash", None) or []:
+            getattr(st, kind)(msg)
+        _station_edit_box(D, rows)
         _qrz_box(D, [r["call"] for r in rows])
+    if rows or D.station_imports():
+        _stations_manage(D, [r["call"] for r in rows])
+
+
+def _station_text(dirb: dict) -> str:
+    out = []
+    for b, v in sorted(dirb.items()):
+        pw = v.get("power_w")
+        out.append(f"{b}: " + " ".join(x for x in ((v.get("antenna") or "").strip(), f"{pw:g} W" if pw else "") if x))
+    return "; ".join(out)
+
+
+def _save_station_edits(D, df, ed, cols):
+    """Write back the Locator/Nome/QTH cells changed in the table as corrections by hand."""
+    from emelab import stations as stn
+    names = dict(zip(df.columns, cols))
+    n, bad = 0, []
+    for (_, a), (_, b) in zip(df.iterrows(), ed.iterrows()):
+        ch = {}
+        for c in df.columns:
+            k = {"Locator": "locator", "Nome": "name", "QTH": "qth"}.get(names[c])
+            if k and str(a[c] or "").strip() != str(b[c] if b[c] is not None else "").strip():
+                ch[k] = str(b[c] if b[c] is not None else "").strip()
+        if not ch:
+            continue
+        if ch.get("locator"):
+            ch["locator"] = ch["locator"].upper()
+            if not stn.LOC_RX.match(ch["locator"]):
+                bad.append(f"{a.iloc[0]}: {ch['locator']}")
+                continue
+        D.set_station_manual(str(a.iloc[0]), ch)
+        n += 1
+    out = [("success", i18n.tr("Stazioni corrette a mano") + f": {n}")]
+    if bad:
+        out.append(("error", i18n.tr("Locator non valido") + ": " + ", ".join(bad)))
+    return out
+
+
+def _station_edit_box(D, rows):
+    from emelab import dx, stations as stn
+    with st.expander("✏️ Correggi a mano una stazione (anche antenna e potenza per banda)"):
+        calls = [r["call"] for r in rows]
+        call = st.selectbox("Nominativo", [""] + calls, key="st_ed_call", format_func=lambda c: c or "—")
+        new = st.text_input("…oppure un nominativo nuovo", "", key="st_ed_new").strip().upper()
+        call = new or call
+        if not call:
+            return
+        r = D.station_of(call) or {"call": call, "data": {}}
+        man = r["data"].get("manual") or {}
+        dirb = D.directory_of(r["data"])
+        c = st.columns(3)
+        loc = c[0].text_input("Locator", r.get("locator") or "", key=f"st_ed_loc_{call}")
+        name = c[1].text_input("Nome", r.get("name") or "", key=f"st_ed_name_{call}")
+        qth = c[2].text_input("QTH", r.get("qth") or "", key=f"st_ed_qth_{call}")
+        bands = {}
+        for b in dx.BAND_GHZ:
+            v = dirb.get(b) or {}
+            c = st.columns([1, 3, 2])
+            c[0].markdown(f"**{b}**" + (" ✏️" if b in (man.get("bands") or {}) else ""))
+            ant = c[1].text_input("Antenna", v.get("antenna") or "", key=f"st_ed_ant_{call}_{b}",
+                                  placeholder="es. 3m dish", label_visibility="collapsed" if b != list(dx.BAND_GHZ)[0] else "visible")
+            pw = c[2].number_input("Potenza (W)", 0.0, 100000.0, float(v.get("power_w") or 0), 1.0, key=f"st_ed_pw_{call}_{b}",
+                                   label_visibility="collapsed" if b != list(dx.BAND_GHZ)[0] else "visible")
+            if ant.strip() != (v.get("antenna") or "").strip() or pw != float(v.get("power_w") or 0):
+                bands[b] = {"antenna": ant, "power_w": pw or None} if (ant.strip() or pw) else None
+        c = st.columns(2)
+        if c[0].button("💾 Salva la stazione", key=f"st_ed_save_{call}"):
+            if loc and not stn.LOC_RX.match(loc.strip()):
+                st.error(i18n.tr("Locator non valido") + f": {loc}")
+            else:
+                f = {k: v for k, v in (("locator", loc.strip().upper()), ("name", name), ("qth", qth))
+                     if (v or "") != (r.get(k) or "")}
+                D.set_station_manual(call, {k: v or "" for k, v in f.items()}, bands)
+                st.success(i18n.tr("Salvato") + f": {call}")
+                st.rerun()
+        if man and c[1].button("↩️ Togli le correzioni a mano", key=f"st_ed_undo_{call}"):
+            D.set_station_manual(call, {k: "" for k in D.MANUAL_FIELDS}, {b: None for b in man.get("bands") or {}})
+            st.success(i18n.tr("Tornati i dati importati") + f": {call}")
+            st.rerun()
+
+
+def _blank(v):
+    """Empty cell instead of "None" in the tables."""
+    return "" if v is None else str(v)
+
+
+def _source_label(key: str) -> str:
+    if key.startswith("directory:"):
+        return i18n.tr("EME Directory (PA0PLY)") + " · " + key.split(":", 1)[1]
+    return {"call3": i18n.tr("CALL3.TXT di WSJT-X"), "heard": i18n.tr("Ascolti (ALL.TXT e WSJT-X in diretta)"),
+            "qrz": "QRZ.com", "manual": i18n.tr("Correzioni a mano")}.get(key, key)
+
+
+def _stations_manage(D, calls):
+    with st.expander("🗑️ Cancella i dati importati"):
+        imp = D.station_imports()
+        if imp:
+            import pandas as pd
+            st.markdown("**" + i18n.tr("File importati") + "**")
+            df = pd.DataFrame([{"Data (UTC)": r["utc"][:16].replace("T", " "), "Fonte": _source_label(r["source"]),
+                                "File": r.get("label") or "", "Stazioni": _blank(r.get("n"))} for r in imp])
+            df.columns = [i18n.tr(c) for c in df.columns]
+            st.dataframe(df, hide_index=True, width="stretch")
+        counts = D.station_source_counts()
+        if counts:
+            st.markdown("**" + i18n.tr("Cancella per fonte") + "**")
+            st.caption("Toglie dal database tutto quello che è arrivato da quella fonte. Le stazioni che non hanno "
+                       "dati da altre fonti vengono eliminate.")
+            for key, n in counts.items():
+                c = st.columns([3, 1])
+                c[0].markdown(f"{_source_label(key)} — {n} " + i18n.tr("stazioni"))
+                if c[1].button("🗑️ Cancella", key=f"st_del_src_{key}"):
+                    st.session_state["st_del_pending"] = key
+            key = st.session_state.get("st_del_pending")
+            if key in counts:
+                st.warning(i18n.tr("Cancellare i dati di") + f" {_source_label(key)} ({counts[key]} " +
+                           i18n.tr("stazioni") + ")?")
+                c = st.columns(2)
+                if c[0].button("✅ Sì, cancella", key="st_del_src_yes"):
+                    ch, de = D.remove_station_source(key)
+                    st.session_state.pop("st_del_pending", None)
+                    st.success(i18n.tr("Stazioni aggiornate") + f": {ch} · " + i18n.tr("stazioni eliminate") + f": {de}")
+                    st.rerun()
+                if c[1].button("Annulla", key="st_del_src_no"):
+                    st.session_state.pop("st_del_pending", None)
+                    st.rerun()
+        if calls:
+            st.markdown("**" + i18n.tr("Cancella singole stazioni") + "**")
+            pick = st.multiselect("Stazioni da cancellare", calls, key="st_del_calls")
+            if pick and st.button("🗑️ Cancella le stazioni scelte", key="st_del_calls_go"):
+                n = D.delete_stations(pick)
+                st.session_state.pop("st_del_calls", None)
+                st.success(i18n.tr("stazioni eliminate") + f": {n}")
+                st.rerun()
+            st.markdown("**" + i18n.tr("Svuota tutto il database delle stazioni") + "**")
+            sure = st.checkbox("Confermo: cancella tutte le stazioni e l'elenco dei file importati", key="st_clear_ok")
+            if st.button("🗑️ Svuota il database delle stazioni", key="st_clear_go", disabled=not sure):
+                n = D.clear_stations()
+                st.session_state.pop("st_clear_ok", None)
+                st.success(i18n.tr("stazioni eliminate") + f": {n}")
+                st.rerun()
 
 
 def _pa0ply_update(D):
@@ -759,6 +936,7 @@ def _pa0ply_import(D, files):
     from emelab import stations as stn
     n = 0
     for name, data in files:
+        nb = 0
         nl = name.lower()
         band = "10G" if nl.startswith(("10368", "10g")) else "24G" if nl.startswith(("24048", "24g")) else \
             "47G" if nl.startswith("47") else "76G" if nl.startswith("76") else None
@@ -766,9 +944,12 @@ def _pa0ply_import(D, files):
             continue
         for r in stn.parse_pa0ply(stn.pdf_text(data), band):
             old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
-            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"]}
+            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
             D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
             n += 1
+            nb += 1
+        D.commit()
+        D.log_station_import(f"directory:{band}", name, nb)
     D.commit()
     st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
 
@@ -795,6 +976,7 @@ def _qrz_box(D, calls):
                                      country=r.get("country"), locator=r.get("locator"),
                                      data={"qrz": {k: r.get(k) for k in ("qsl_via", "lotw", "eqsl", "lat", "lon")}})
                 D.commit()
+                D.log_station_import("qrz", ", ".join(pick)[:200], len(pick))
                 st.success(i18n.tr("Aggiornati da QRZ.com") + f": {len(pick)}")
             except Exception as e:
                 st.error(f"QRZ.com: {e}")
@@ -808,7 +990,17 @@ def _logbook_tab(D):
         st.info("Inserisci e salva prima la stazione (posizione) nella scheda Stazione.")
         return
     my_loc = stn.get("locator") or astro.latlon_to_locator(stn["lat"], stn["lon"])
-    with st.expander("➕ Nuovo QSO", expanded=True):
+    svc = _wsjtx_autostart()
+    auto_on = svc.auto_log and (svc.running or svc.file_running)
+    if auto_on:
+        how = " + ".join(x for x in ("UDP" if svc.running else "", "wsjtx_log.adi" if svc.file_running else "") if x)
+        last = next((q for q in svc.logged if q.get("id")), None)
+        st.success(i18n.tr("I QSO confermati in WSJT-X entrano nel log da soli") + f" ({how})"
+                   + (" · " + i18n.tr("ultimo") + f": {last['call']} {last['utc']:%Y-%m-%d %H:%M}" if last else ""))
+    else:
+        st.info("Per registrare i QSO da soli, collega WSJT-X nella scheda 📻 WSJT-X (file di log o UDP). "
+                "Il modulo qui sotto resta per i QSO fatti con altri programmi o in CW/SSB.")
+    with st.expander("➕ Nuovo QSO", expanded=not auto_on):
         now = datetime.now(timezone.utc)
         c = st.columns(4)
         d0 = c[0].date_input("Data (UTC)", now.date(), key="q_date")
@@ -820,7 +1012,13 @@ def _logbook_tab(D):
         band = c[0].selectbox("Banda", list(lb.BAND_F), key="q_band")
         freq = c[1].number_input("Frequenza (MHz)", 1000.0, 300000.0, lb.BAND_F[band] * 1000, 0.001, format="%.3f", key=f"q_f_{band}")
         mode = c[2].selectbox("Modo", ["Q65", "JT65", "JT4", "CW", "SSB", "FST4", "Altro"], key="q_mode")
-        sub = c[3].text_input("Sottomodo", "60D" if mode == "Q65" else "", key=f"q_sub_{mode}")
+        if mode == "Q65":
+            from emelab import dx
+            std = dx.band_mode(band)
+            sub = c[3].selectbox("Sottomodo", list(lb.Q65_SUBMODES), index=lb.Q65_SUBMODES.index(std), key=f"q_sub_q65_{band}",
+                                 format_func=lambda k: f"Q65-{k}", help="Periodo T/R (15–300 s) e spaziatura dei toni (A–E)")
+        else:
+            sub = c[3].text_input("Sottomodo", "", key=f"q_sub_{mode}")
         pwr = c[4].text_input("Potenza TX (W)", "", key="q_pwr")
         c = st.columns(4)
         rs = c[0].text_input("Rapporto inviato", "", key="q_rs")
@@ -857,6 +1055,7 @@ def _logbook_tab(D):
         ups = st.file_uploader("File ADIF (.adi, .adif)", type=["adi", "adif", "txt"], accept_multiple_files=True, key="q_adif")
         only_eme = st.checkbox("Solo i QSO EME e delle bande da 10 GHz in su", True, key="q_adif_eme")
         if ups and st.button("📥 Importa", key="q_adif_go"):
+            id0 = D.max_qso_id()
             n = dup = skipped = 0
             bar = st.progress(0.0)
             recs = [r for f in ups for r in lb.parse_adif(f.getvalue().decode("utf-8", "replace"))]
@@ -865,15 +1064,15 @@ def _logbook_tab(D):
                 q = lb.from_adif_record(r)
                 if q is None:
                     continue
-                if only_eme:
-                    pm = (q.get("prop_mode") or "").upper()
-                    digi = " ".join(x for x in (q.get("mode"), q.get("submode")) if x).upper()
-                    # PROP_MODE EME, or (no PROP_MODE) an EME station / an EME digital mode; tropo, rain scatter… are left out
-                    looks_eme = pm == "EME" or (not pm and (q["call"] in eme_calls or any(m in digi for m in ("Q65", "JT65", "JT4", "QRA64"))))
-                    if q["band"] not in lb.BAND_F or not looks_eme:
-                        skipped += 1
-                        continue
+                q = lb.wsjtx_mode(q)
+                # PROP_MODE EME, or (no PROP_MODE) an EME station / an EME digital mode; tropo, rain scatter… are left out
+                if only_eme and lb.eme_verdict(q, eme_calls):
+                    skipped += 1
+                    continue
                 q.pop("prop_mode", None)
+                if D.qso_near(q["call"], q.get("band"), q["utc"]):       # already logged (from WSJT-X or another file)
+                    dup += 1
+                    continue
                 q["my_locator"] = q.get("my_locator") or my_loc
                 q["calc"] = lb.enrich(q, my_loc, stn.get("height_m") or 0)
                 if D.add_qso(**q):
@@ -883,19 +1082,31 @@ def _logbook_tab(D):
                 bar.progress((k + 1) / max(len(recs), 1))
             st.success(i18n.tr("QSO importati") + f": {n}" + (f" · " + i18n.tr("già presenti") + f": {dup}" if dup else "")
                        + (f" · " + i18n.tr("non EME o sotto i 10 GHz, lasciati fuori") + f": {skipped}" if skipped else ""))
+            D.log_qso_import(", ".join(f.name for f in ups), id0)
+    lb.fill_locators(D, my_loc, stn.get("height_m") or 0)
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
         return
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
-                        "Banda": q.get("band"), "Modo": " ".join(x for x in (q.get("mode"), q.get("submode")) if x),
-                        "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
-                        "Distanza (km)": _r(q["calc"].get("ground_km"), 0), "Percorso EME (km)": _r(q["calc"].get("eme_path_km"), 0),
-                        "EL Luna": _r(q["calc"].get("moon_el"), 1), "EL DX": _r(q["calc"].get("dx_moon_el"), 1),
-                        "Spread (Hz)": _r(q["calc"].get("mutual_spread_hz"), 0), "Note": q.get("comment")} for q in qs])
+                        "Banda": q.get("band"), "Modo": lb.mode_label(q)[0],
+                        "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                        "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
+                        "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
+                        "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
+                        "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
+                       for q in qs])
     df.columns = [i18n.tr(c) for c in df.columns]
-    st.dataframe(df, hide_index=True, width="stretch")
+    assumed = [lb.mode_label(q)[1] for q in qs]
+    mcol = i18n.tr("Modo")
+    sty = df.style.format(precision=1, na_rep="").apply(
+        lambda col: [f"color: {ASSUMED_COLOR}" if a else "" for a in assumed], subset=[mcol])
+    st.dataframe(sty, hide_index=True, width="stretch")
+    if any(assumed):
+        st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
+            "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
+            "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
     cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {q.get('band') or ''}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
@@ -908,6 +1119,57 @@ def _logbook_tab(D):
     if dl and c[1].button("🗑️ Elimina", key="q_del_go"):
         D.delete_qso(dl)
         st.rerun()
+    _qsos_manage(D, len(qs))
+
+
+def _qsos_manage(D, n_qsos):
+    with st.expander("🗑️ Cancella i QSO importati o svuota il log"):
+        imp = [r for r in D.qso_imports() if r["n"]]
+        if imp:
+            st.markdown("**" + i18n.tr("File ADIF importati") + "**")
+            for r in imp:
+                c = st.columns([3, 1])
+                c[0].markdown(f"{r['utc'][:16].replace('T', ' ')} UTC · {r.get('label') or ''} — {r['n']} QSO")
+                if c[1].button("🗑️ Cancella", key=f"q_imp_del_{r['id']}"):
+                    st.session_state["q_imp_pending"] = r["id"]
+            pend = next((r for r in imp if r["id"] == st.session_state.get("q_imp_pending")), None)
+            if pend:
+                st.warning(i18n.tr("Cancellare i QSO importati da") + f" {pend.get('label') or ''} ({pend['n']} QSO)?")
+                c = st.columns(2)
+                if c[0].button("✅ Sì, cancella", key="q_imp_yes"):
+                    D.delete_qso_import(pend["id"])
+                    st.session_state.pop("q_imp_pending", None)
+                    st.rerun()
+                if c[1].button("Annulla", key="q_imp_no"):
+                    st.session_state.pop("q_imp_pending", None)
+                    st.rerun()
+        st.markdown("**" + i18n.tr("Svuota tutto il log") + "**")
+        st.caption("Cancella tutti i QSO del log, così puoi importare di nuovo i file ADIF da capo. "
+                   "Le Stazioni EME e le misure restano.")
+        sure = st.checkbox(i18n.tr("Confermo: cancella tutti i QSO") + f" ({n_qsos})", key="q_clear_ok")
+        if st.button("🗑️ Svuota il log QSO", key="q_clear_go", disabled=not sure):
+            D.clear_qsos()
+            st.session_state.pop("q_clear_ok", None)
+            st.rerun()
+
+
+def _qso_band_filter(qs, lb):
+    """One switch per band found in the log (10 GHz, 24 GHz, 47 GHz…): the statistics follow the bands left on."""
+    order = list(lb.BAND_F)
+    count = {}
+    for q in qs:
+        count[q.get("band") or "?"] = count.get(q.get("band") or "?", 0) + 1
+    bands = sorted(count, key=lambda b: (order.index(b) if b in order else len(order), b))
+    if len(bands) < 2:
+        return qs
+    st.caption("Bande da includere")
+    c = st.columns(6)
+    on = set()
+    for i, b in enumerate(bands):
+        name = f"{b[:-1]} GHz" if b.endswith("G") and b[:-1].isdigit() else b
+        if c[i % len(c)].toggle(f"{name} ({count[b]})", value=True, key=f"qs_band_{b}"):
+            on.add(b)
+    return [q for q in qs if (q.get("band") or "?") in on]
 
 
 def _qso_stats_tab(D):
@@ -915,6 +1177,10 @@ def _qso_stats_tab(D):
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
+        return
+    qs = _qso_band_filter(qs, lb)
+    if not qs:
+        st.info("Nessuna banda selezionata.")
         return
     s = lb.statistics(qs)
     c = st.columns(4)
@@ -1067,7 +1333,8 @@ def _design_tab(D):
                "link al datasheet. EMELab non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
     rows = parts.all_parts(D)
     if rows:
-        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
+        lib = pd.DataFrame(rows).drop(columns=["id", "verified"], errors="ignore")
+        st.dataframe(lib.astype(object).where(lib.notna(), ""), hide_index=True, width="stretch")
     with st.expander("➕ Aggiungi un componente dal datasheet"):
         c = st.columns(4)
         p_part = c[0].text_input("Sigla", key="pt_part")
@@ -1337,12 +1604,9 @@ def _power_devices() -> dict:
 
 
 def _power_rows(D, band, kind):
-    from emelab import catalog, parts
-    rows = [dict(d) for d in catalog.for_band(band, kind)]
-    for p in parts.all_parts(D, band, "pa"):
-        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "psat_dbm": p.get("psat_dbm"),
-                     "gain_db": p.get("gain_db"), "notes": p.get("notes"), "source": p.get("datasheet"), "mine": True})
-    return rows
+    """catalogue devices with the user's corrections, then the user's own devices (same list as the catalogue box)"""
+    from emelab import parts
+    return parts.devices(D, band, kind)
 
 
 def _power_apply(dev, kind):
@@ -1403,7 +1667,7 @@ def _power_tab(D):
             ss[f"pw_dev_{kind}"] = 0
         i = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"pw_dev_{kind}",
                            format_func=lambda i: f"{rows[i]['part']} — {i18n.tr(rows[i]['maker'])}" +
-                                                 (" ⚠️" if rows[i].get("check") else ""),
+                                                 (" ⚠️" if rows[i].get("check") else " ✅" if rows[i].get("verified") else ""),
                            on_change=_power_save_cb, args=(D, band))
         dev = rows[i]
         if ("sp_psat" if kind == "PA" else "tw_ps") not in ss:     # numbers not on screen yet: from the device
@@ -1412,13 +1676,15 @@ def _power_tab(D):
                 f"{i18n.tr('guadagno')} {dev['gain_db']:.0f} dB" if dev.get("gain_db") else None,
                 i18n.tr(dev.get("notes")) if dev.get("notes") else None,
                 i18n.tr("fonte") + ": " + i18n.tr(dev.get("source")) if dev.get("source") else None]
-        st.info(" · ".join(x for x in info if x) + ("  \n⚠️ " + i18n.tr("valori tipici da confermare sul datasheet") if dev.get("check") else ""))
+        st.info(" · ".join(x for x in info if x) + ("  \n⚠️ " + i18n.tr("valori tipici da confermare sul datasheet") if dev.get("check") else
+                                                    "  \n✅ " + i18n.tr("valori verificati da te") if dev.get("verified") else "") +
+                "  \n" + i18n.tr("Per correggerli: «✏️ Correggi a mano» nel Catalogo dispositivi in fondo alla pagina."))
         if not cur or cur.get("part") != dev["part"] or cur.get("kind") != kind:
             if st.button("💾 Usa questo dispositivo su questa banda", key="pw_save", type="primary"):
                 _power_save_cb(D, band)
                 st.rerun()
     else:
-        c[2].info("Nessun dispositivo in catalogo per questa banda: aggiungilo dal datasheet nel catalogo qui sotto.")
+        c[2].info("Nessun dispositivo in catalogo per questa banda: aggiungilo a mano o dal datasheet nel catalogo qui sotto.")
     done = {k: v for k, v in _power_devices().items() if v.get("kind")}
     if done:
         st.markdown(i18n.tr("La tua stazione") + ": " + " · ".join(
@@ -1538,7 +1804,7 @@ def _dx_models(D, band):
     from emelab import dx
     out = []
     for r in D.stations():
-        e = (r.get("data", {}).get("directory") or {}).get(band)
+        e = D.directory_of(r.get("data", {})).get(band)
         if not e or not r.get("locator"):
             continue
         m = dx.from_directory(e, band)
@@ -1596,6 +1862,9 @@ def _learned_offset(D, band, me, my_loc, models):
     return res
 
 
+ASSUMED_COLOR = "#e8590c"        # assumed values (e.g. a Q65 submode the log does not say): orange
+
+
 def _num_rst(v):
     try:
         return float(str(v).replace("+", ""))
@@ -1629,6 +1898,15 @@ def _signal_tab(D):
     m[2].metric("Correzione appresa dai QSO", f"{off['offset_db']:+.1f} dB" if off["n"] else "–",
                 f"n={off['n']}" + (f", ±{off['mad_db']:.1f} dB" if off.get("mad_db") else ""), delta_color="off")
     m[3].metric("Stazioni con dati", len(models))
+    sets = openems_local.load_settings()
+    std = dx.Q65_STANDARD.get(band, "60E")
+    cur = dx.band_mode(band, sets)
+    q65 = st.selectbox(f"Modo Q65 su {band}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur), key=f"sg_q65_{band}",
+                       format_func=lambda k: f"Q65-{k}" + (" (" + i18n.tr("standard della banda") + ")" if k == std else ""),
+                       help="Soglie e margini sono calcolati per questo sottomodo. Di solito 60D a 10 GHz e 60E da 24 GHz in "
+                            "su. La scelta viene ricordata per la banda.")
+    if q65 != cur:
+        openems_local.save_settings(q65_modes={**(sets.get("q65_modes") or {}), band: q65})
     if len(off.get("epochs", {})) > 1 or (off.get("epochs") and "configurazione attuale" not in off["epochs"]):
         with st.expander("📜 Correzione per periodo (storico della stazione)"):
             st.dataframe([{"Dal": i18n.tr(k), "QSO": v["n"], "Misura − teoria (dB)": round(v["offset_db"], 1),
@@ -1644,8 +1922,10 @@ def _signal_tab(D):
         if c[2].button("🏆 Calcola la classifica", type="primary", key="sg_go"):
             with st.spinner("Calcolo delle finestre comuni…"):
                 _st.session_state["sg_rank"] = dx.rank(me, my_loc, models, band, datetime.now(timezone.utc), float(hours),
-                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0)
-        rk = _st.session_state.get("sg_rank")
+                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0,
+                                                       mode=q65)
+                _st.session_state["sg_rank_key"] = (band, q65)
+        rk = _st.session_state.get("sg_rank") if _st.session_state.get("sg_rank_key") == (band, q65) else None
         if rk:
             st.dataframe([{"Nominativo": r["call"], "Locator": r["locator"], "Antenna": r.get("antenna"), "Potenza (W)": r.get("power_w"),
                            "Probabilità": f"{100 * r['probability']:.0f} %",
@@ -1655,8 +1935,13 @@ def _signal_tab(D):
                            "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
                            "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
                            "Dpol (°)": round(r["best"]["dpol_deg"]) if r["best"] else None,
-                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None, "Sentito (ALL.TXT)": r.get("heard")}
+                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None,
+                           "Sentito (ALL.TXT)": str(r["heard"]) if r.get("heard") else "",
+                           "Nota": ("⚠️ " + i18n.tr("spread oltre la tolleranza")) if r["best"] and not r["best"]["spread_ok"] else ""}
                           for r in rk], hide_index=True, width="stretch")
+            if any(r["best"] and not r["best"]["spread_ok"] for r in rk):
+                st.warning(f"Per alcune stazioni il mutual spread supera quello che Q65-{q65} tollera "
+                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
             st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
                        "«Sentito» = quante decodifiche hai di quella stazione nel tuo ALL.TXT.")
     with t2:
@@ -1688,7 +1973,7 @@ def _signal_tab(D):
         rows = []
         t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
         for i in range(0, 24 * 4):
-            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band)
+            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band, mode=q65)
             if r:
                 rows.append(r)
         if not rows:
@@ -1697,87 +1982,157 @@ def _signal_tab(D):
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_a_hears_b"] + off["offset_db"] * (off["n"] >= 5) for r in rows], name="lo ricevi"))
             fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_b_hears_a"] for r in rows], name="ti riceve"))
-            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name="soglia Q65", line=dict(dash="dot")))
+            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name=f"soglia Q65-{q65}", line=dict(dash="dot")))
             fig.update_layout(title=f"{call} — " + i18n.tr("SNR atteso in 2500 Hz"), yaxis_title="dB", height=360,
                               margin=dict(l=10, r=10, t=40, b=10))
             st.plotly_chart(fig, width="stretch")
             b = max(rows, key=lambda r: r["margin_db"])
             hb = b["detail"][0]
             st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
-                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
+                        f"spread {b['spread_hz']:.0f} Hz · **Q65-{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
                         i18n.tr("perdita di polarizzazione") + f" {b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
                         f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
+            if not b["spread_ok"]:
+                st.warning(f"Il mutual spread ({b['spread_hz']:.0f} Hz) supera quello che Q65-{q65} tollera "
+                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
             if other["assumed"]:
                 st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
 
 
 # ------------------------------------------------------------------ device catalogue and heat sink
+def _num_cell(v) -> str:
+    """number for a table cell: empty instead of None / NaN"""
+    return "" if v is None or v != v else f"{v:g}"
+
+
+CAT_BANDS = [10.368, 24.048, 47.088, 76.032, 122.25, 134.928]
+_EDIT_FIELDS = [("f_lo", "Da GHz"), ("f_hi", "A GHz"), ("gain_db", "Guadagno (dB)"), ("nf_db", "NF (dB)"),
+                ("p1db_dbm", "P1dB (dBm)"), ("psat_dbm", "Psat (dBm)"), ("vdc", "Tensione (V)"), ("idc_a", "Corrente (A)")]
+_PDF_LABEL = {"f_range": "Da/A GHz", "gain_db": "Guadagno", "nf_db": "NF", "p1db_dbm": "P1dB", "psat_dbm": "Psat",
+              "vdc": "Tensione", "idc_a": "Corrente", "rth_jc": "R giunzione–case", "tj_max": "Tj max", "pae_pct": "PAE"}
+
+
 def _catalog_box(D, kinds, key):
-    """Devices for the band from EMELab's catalogue and the user's library, datasheet search and reading."""
+    """Devices for the band from EMELab's catalogue (with the user's corrections) and the user's library; every
+    device can be corrected by hand or from its datasheet PDF, and the correction can be undone."""
     import pandas as pd
     from emelab import catalog, parts
+    ss = _st.session_state
     st.subheader("📚 Catalogo dispositivi")
+    for kind_msg, msg in ss.pop(f"{key}_flash", None) or []:
+        getattr(st, kind_msg)(msg)
     c = st.columns(3)
-    band = c[0].selectbox("Banda", [10.368, 24.048, 47.088, 76.032, 122.25, 134.928], key=f"{key}_cb",
-                          format_func=lambda f: f"{f:g} GHz")
+    band = c[0].selectbox("Banda", CAT_BANDS, key=f"{key}_cb", format_func=lambda f: f"{f:g} GHz")
     kind_lbl = {k: catalog.TYPES[k] for k in kinds}
     kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
-    rows = [dict(d, origine="catalogo EMELab") for d in catalog.for_band(band, kind)]
-    pk = {"PA": "pa", "LNA": "lna", "SW": "passive", "TWT": "pa", "TRV": "mixer"}[kind]
-    for p in parts.all_parts(D, band, pk):
-        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "f_lo": p["f_lo_ghz"], "f_hi": p["f_hi_ghz"],
-                     "gain_db": p["gain_db"], "nf_db": p["nf_db"], "p1db_dbm": p.get("p1db_dbm"), "psat_dbm": p.get("psat_dbm"),
-                     "vdc": p.get("vdc"), "notes": p.get("notes"), "source": p.get("datasheet"), "origine": "la tua libreria"})
-    if not rows:
-        st.info("Nessun dispositivo per questa banda: cercalo e aggiungilo dal datasheet qui sotto.")
-        sel = None
-    else:
-        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
-                             "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
-                             "Note": i18n.tr(r.get("notes")),
-                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EMELab" else
-                             f"{i18n.tr(r['origine'])}: {r.get('source') or ''}",
-                             "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
+    rows = parts.devices(D, band, kind)
+    if rows:
+        def source(r):
+            if r["origin"] == "catalog":
+                return i18n.tr(r.get("source"))
+            who = i18n.tr("corretto da te") if r["origin"] == "edited" else i18n.tr("la tua libreria")
+            return f"{who}: {r.get('source') or ''}".rstrip(": ")
+        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": _num_cell(r.get("f_lo")),
+                             "A GHz": _num_cell(r.get("f_hi")), "Guadagno (dB)": _num_cell(r.get("gain_db")),
+                             "NF (dB)": _num_cell(r.get("nf_db")), "Psat (dBm)": _num_cell(r.get("psat_dbm")),
+                             "Note": i18n.tr(r.get("notes")) if r.get("notes") else "", "Fonte": source(r),
+                             "Verificato": "✅" if r.get("verified") else "⚠️" if r.get("check") else ""} for r in rows])
         tab.columns = [i18n.tr(x) for x in tab.columns]
         st.dataframe(tab, hide_index=True, width="stretch")
-        st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. Le celle vuote vanno lette "
-                   "dal datasheet: EMELab non inventa i numeri.")
-        sel = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"{key}_cs",
-                             format_func=lambda i: f"{rows[i]['part']} — {rows[i]['maker']}")
-        sel = rows[sel]
+        st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. ✅ = valori inseriti o "
+                   "corretti da te (restano su questo PC). Le celle vuote vanno lette dal datasheet: EMELab non inventa i numeri.")
+    else:
+        st.info("Nessun dispositivo per questa banda: aggiungilo a mano o dal datasheet qui sotto.")
+    NEW = len(rows)
+    pick = ss.pop(f"{key}_pick", None)                    # device just saved: select it
+    if pick:
+        ss[f"{key}_cs"] = next((i for i, r in enumerate(rows) if (r["part"], r["maker"]) == pick), NEW)
+    if not isinstance(ss.get(f"{key}_cs"), int) or ss[f"{key}_cs"] > NEW:
+        ss[f"{key}_cs"] = 0
+    i = c[2].selectbox("Il tuo dispositivo", range(NEW + 1), key=f"{key}_cs",
+                       format_func=lambda i: "➕ " + i18n.tr("Nuovo dispositivo") if i == NEW else
+                       f"{rows[i]['part']} — {rows[i]['maker']}" + (" ✅" if rows[i].get("verified") else ""))
+    sel = rows[i] if i < NEW else None
+    if sel:
         links = catalog.search_links(sel["part"], sel["maker"] if sel["maker"] != "—" else "")
         lc = st.columns(len(links))
         for col, (k, u) in zip(lc, links.items()):
             col.link_button("🔎 " + k, u)
-    with st.expander("📄 Leggi i valori da un datasheet (PDF) e salvali nella tua libreria"):
-        up = st.file_uploader("Datasheet PDF", type=["pdf"], key=f"{key}_ds")
-        if up is not None:
-            from emelab import stations as stn
-            try:
-                found = catalog.read_datasheet(stn.pdf_text(up.getvalue()))
-            except Exception as e:
-                found = {}
-                st.error(f"PDF: {e}")
-            st.caption("Valori trovati automaticamente: controllali sul datasheet prima di salvare.")
-            c = st.columns(4)
-            part = c[0].text_input("Sigla", up.name.rsplit(".", 1)[0], key=f"{key}_dp")
-            maker = c[1].text_input("Produttore", "", key=f"{key}_dm")
-            vals = {}
-            fields = [("f_lo_ghz", "Da GHz", found.get("f_lo")), ("f_hi_ghz", "A GHz", found.get("f_hi")),
-                      ("gain_db", "Guadagno dB", found.get("gain_db")), ("nf_db", "NF dB", found.get("nf_db")),
-                      ("p1db_dbm", "P1dB dBm", found.get("p1db_dbm")), ("psat_dbm", "Psat dBm", found.get("psat_dbm")),
-                      ("vdc", "V", found.get("vdc")), ("idc_a", "A", found.get("idc_a"))]
-            cc = st.columns(8)
-            for col, (k, lab, v) in zip(cc, fields):
-                vals[k] = col.number_input(lab, value=v, key=f"{key}_dv_{k}")
-            extra = {k: found[k] for k in ("rth_jc", "tj_max", "pae_pct") if k in found}
-            if extra:
-                st.markdown(" · ".join(f"**{k}** = {v:g}" for k, v in extra.items()))
-            if st.button("💾 Salva nella libreria", key=f"{key}_dsave", disabled=not part.strip()):
-                notes = "; ".join(f"{k}={v:g}" for k, v in extra.items())
-                parts.save(D, part=part.strip(), maker=maker.strip() or "—", type=pk, datasheet=up.name, notes=notes or None, **vals)
-                st.success("Salvato nella libreria componenti (solo su questo PC).")
+    title = (("✏️ " + i18n.tr("Correggi a mano i valori di") + f" {sel['part']} " + i18n.tr("o caricane il datasheet (PDF)"))
+             if sel else "➕ " + i18n.tr("Nuovo dispositivo: inserisci i valori a mano o caricane il datasheet (PDF)"))
+    with st.expander(title, expanded=sel is None):
+        _device_editor(D, key, kind, sel)
     return sel
+
+
+def _device_editor(D, key, kind, sel):
+    """Form to correct a device (or add a new one): values typed by hand or read from its datasheet PDF, saved in the
+    user's library as verified; a corrected catalogue device can go back to the catalogue values."""
+    from emelab import catalog, parts
+    ss = _st.session_state
+    up = st.file_uploader("📄 Datasheet PDF (facoltativo): EMELab legge i valori e li mette nei campi qui sotto",
+                          type=["pdf"], key=f"{key}_ds_{sel['part'] if sel else 'new'}")
+    found = {}
+    if up is not None:
+        from emelab import stations as stn
+        try:
+            found = catalog.read_datasheet(stn.pdf_text(up.getvalue()))
+        except Exception as e:
+            st.error(f"PDF: {e}")
+        lines = found.pop("_lines", {})
+        if lines:
+            st.caption(i18n.tr("Valori trovati nel PDF (controllali: prendo il valore tipico della riga)") + ":  \n" +
+                       "  \n".join(f"**{i18n.tr(_PDF_LABEL.get(k, k))}** ← «{v}»" for k, v in lines.items()))
+        elif not found:
+            st.warning("Nel PDF non ho trovato valori leggibili (forse è una scansione): inseriscili a mano qui sotto.")
+    base = sel or {}
+    stamp = f"{key}_{abs(hash((base.get('part'), base.get('maker'), base.get('origin'), base.get('updated'), up.file_id if up else '')))}"
+    c = st.columns([2, 2, 3])
+    fixed = bool(sel) and sel["origin"] != "mine"        # a catalogue device keeps its name: that is how it is matched
+    part = c[0].text_input("Sigla", base.get("part") or (up.name.rsplit(".", 1)[0] if up else ""), key=f"{stamp}_p",
+                           disabled=fixed)
+    maker = c[1].text_input("Produttore", base.get("maker") or "", key=f"{stamp}_m", disabled=fixed)
+    src = c[2].text_input("Fonte o link al datasheet", base.get("source") if sel and sel["origin"] != "catalog" else
+                          (up.name if up else ""), key=f"{stamp}_s")
+    vals = {}
+    cc = st.columns(len(_EDIT_FIELDS))
+    for col, (k, lab) in zip(cc, _EDIT_FIELDS):
+        v = found.get(k, base.get(k))
+        vals[k] = col.number_input(lab, value=None if v is None else float(v), key=f"{stamp}_{k}", format="%g")
+    extra = {k: found[k] for k in ("rth_jc", "tj_max", "pae_pct") if k in found}
+    notes0 = base.get("notes") or ""
+    if extra:
+        notes0 = "; ".join(x for x in [notes0, ", ".join(f"{k}={v:g}" for k, v in extra.items())] if x)
+    notes = st.text_area("Note", notes0, key=f"{stamp}_n", height=68)
+    if sel and sel["origin"] == "catalog" and sel.get("check"):
+        st.caption("⚠️ Valori tipici del catalogo: salvandoli dopo averli controllati sul datasheet diventano ✅ verificati da te.")
+    if sel and sel["origin"] == "edited":
+        cat = sel.get("catalog") or {}
+        st.caption(i18n.tr("Valori del catalogo EMELab") + ": " + " · ".join(
+            f"{i18n.tr(lab)} {_num_cell(cat.get(k)) or '—'}" for k, lab in _EDIT_FIELDS))
+    b = st.columns(3)
+    if b[0].button("💾 Salva i valori (verificati da te)", key=f"{stamp}_save", type="primary",
+                   disabled=not (part or "").strip()):
+        part_s, maker_s = (sel["part"], sel["maker"]) if fixed else (part.strip(), maker.strip() or "—")
+        if sel and sel["origin"] == "mine" and (part_s, maker_s) != (sel["part"], sel["maker"]):
+            parts.delete(D, sel["id"])                    # renamed own device: replace the old row
+        ltype = (parts.find(D, sel["part"], sel["maker"]) or {}).get("type") if sel and sel["origin"] == "mine" else None
+        parts.save(D, part=part_s, maker=maker_s, type=ltype or parts.KIND_TO_TYPE[kind], datasheet=src.strip() or None,
+                   notes=notes.strip() or None, tech=base.get("tech"), verified=1,
+                   **{lk: vals[ck] for lk, ck in parts.NUM_FIELDS})
+        ss[f"{key}_pick"] = (part_s, maker_s)
+        ss[f"{key}_flash"] = [("success", i18n.tr("Valori salvati e segnati come verificati da te (solo su questo PC)") +
+                               f": {part_s}")]
+        st.rerun()
+    if sel and sel["origin"] == "edited" and b[1].button("↩️ Ripristina i valori del catalogo", key=f"{stamp}_rev"):
+        parts.revert(D, sel["part"], sel["maker"])
+        ss[f"{key}_pick"] = (sel["part"], sel["maker"])
+        ss[f"{key}_flash"] = [("info", i18n.tr("Ripristinati i valori del catalogo EMELab") + f": {sel['part']}")]
+        st.rerun()
+    if sel and sel["origin"] == "mine" and b[1].button("🗑️ Elimina dalla tua libreria", key=f"{stamp}_del"):
+        parts.delete(D, sel["id"])
+        ss[f"{key}_flash"] = [("info", i18n.tr("Eliminato dalla tua libreria") + f": {sel['part']}")]
+        st.rerun()
 
 
 def _heatsink_box(dev, p_out_w, pae_default, key):
@@ -1979,7 +2334,7 @@ def _wz_plan(D, stn, hz, fc):
                    "Probabilità tecnica": f"{min(100 * r['probability'], 99):.0f} %",
                    "Momento migliore (UTC)": f"{r['best']['utc']:%d/%m %H:%M}", "Ore in comune": round(r["hours_common"], 1),
                    "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1),
-                   "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo consigliato": r["best"]["mode"],
+                   "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo": "Q65-" + r["best"]["mode"] + ("" if r["best"]["spread_ok"] else " ⚠️"),
                    "Mutual spread (Hz)": round(r["best"]["spread_hz"]),
                    "Polarizzazioni": f"{r['best']['pol_a']}/{r['best']['pol_b']}", "Dpol (°)": round(r["best"]["dpol_deg"]),
                    "Perdita di polarizzazione (dB)": round(r["best"]["pol_loss_db"], 1),
@@ -2026,13 +2381,114 @@ def _wsjtx_service():
 def _wsjtx_autostart():
     sets = openems_local.load_settings()
     svc = _wsjtx_service()
+    svc.auto_log = bool(sets.get("wsjtx_autolog", True))
+    svc.eme_only = bool(sets.get("wsjtx_eme_only", True))
+    svc.strict_eme = bool(sets.get("wsjtx_strict_eme", False))
+    svc.auto_fix = bool(sets.get("wsjtx_autofix", True))
     if sets.get("wsjtx_on") and not svc.running:
         try:
             svc.start(sets.get("wsjtx_host", "127.0.0.1"), int(sets.get("wsjtx_port", 2237)), sets.get("wsjtx_mcast") or None)
-            svc.auto_log = bool(sets.get("wsjtx_autolog", True))
         except OSError as e:
             svc.errors.append(f"avvio: {e}")
+    if sets.get("wsjtx_file_on") and not svc.file_running and sets.get("wsjtx_file"):
+        pos = sets.get("wsjtx_file_pos") or {}
+        svc.on_tail_pos = _wsjtx_save_pos
+        svc.start_file(sets["wsjtx_file"], pos.get("offset") if pos.get("path") == sets["wsjtx_file"] else None)
     return svc
+
+
+def _wsjtx_live_problems(svc):
+    """What is wrong in WSJT-X now (only while it is talking to EMELab)."""
+    if not (svc.running and svc.last_seen and svc.problems):
+        return []
+    return svc.problems if (datetime.now(timezone.utc) - svc.last_seen).total_seconds() < 90 else []
+
+
+def _wsjtx_banner():
+    """Warning on every page when the WSJT-X settings do not fit the band."""
+    probs = _wsjtx_live_problems(_wsjtx_service())
+    if probs:
+        st.warning(i18n.tr("⚠️ Impostazioni di WSJT-X da controllare") + ": " +
+                   " · ".join(i18n.tr(p["msg"]) + (f" ({p['detail']})" if p.get("detail") else "") for p in probs)
+                   + " — " + i18n.tr("dettagli nella scheda 📻 WSJT-X"))
+
+
+def _wsjtx_check_box(svc, sets):
+    st.markdown("#### " + i18n.tr("✅ Controllo delle impostazioni di WSJT-X"))
+    st.caption("A ogni messaggio di stato EMELab controlla modo, sottomodo e periodo T/R (Q65-60D a 10 GHz, Q65-60E da "
+               "24 GHz in su), la banda, il nominativo e il locator. Modo, sottomodo e T/R li può correggere da solo "
+               "(serve «Accept UDP requests» in WSJT-X), mai durante la trasmissione; il resto lo segnala soltanto. "
+               "Doppler tracking, Prop Mode e audio non passano dal protocollo UDP: controllali tu nella finestra Astro "
+               "e in «Log QSO».")
+    fix = st.checkbox("Correggi da solo modo, sottomodo e T/R", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
+    if fix != svc.auto_fix:
+        svc.auto_fix = fix
+        openems_local.save_settings(wsjtx_autofix=fix)
+    probs = _wsjtx_live_problems(svc)
+    if svc.last_seen and not probs:
+        st.success("Impostazioni di WSJT-X a posto per questa banda.")
+    for k, p in enumerate(probs):
+        c = st.columns([5, 1])
+        c[0].warning(i18n.tr(p["msg"]) + (f": {p['detail']}" if p.get("detail") else ""))
+        if p.get("fix") and c[1].button(f"⚙️ Q65-{p['fix']}", key=f"wj_fix_{k}"):
+            st.success("Inviato a WSJT-X.") if svc.set_q65(p["fix"]) else st.error("WSJT-X non raggiungibile.")
+    if svc.fixes:
+        f = svc.fixes[0]
+        st.caption(i18n.tr("Ultima correzione inviata") + f": {f['utc']:%H:%M:%S} UTC, {f['from']} → {f['to']}")
+
+
+def _wsjtx_save_pos(path, offset):
+    openems_local.save_settings(wsjtx_file_pos={"path": path, "offset": int(offset)})
+
+
+def _wsjtx_file_box(svc, sets):
+    from emelab import wsjtx_logfile
+    st.markdown("#### " + i18n.tr("📄 File di log di WSJT-X (wsjtx_log.adi)"))
+    st.caption("Il modo più semplice: ogni volta che premi OK in «Log QSO», WSJT-X aggiunge il QSO a wsjtx_log.adi ed "
+               "EMELab lo legge entro pochi secondi. Non serve nessuna porta UDP, quindi non disturba JTAlert, GridTracker "
+               "o altri logger. Il file è nella cartella che WSJT-X apre con File → Open log directory.")
+    found = wsjtx_logfile.find_default()
+    c = st.columns([4, 1])
+    path = c[0].text_input("Percorso di wsjtx_log.adi", sets.get("wsjtx_file") or (str(found) if found else ""), key="wj_file")
+    from pathlib import Path
+    ok = bool(path.strip()) and Path(path.strip()).is_file()
+    if not svc.file_running:
+        past = st.checkbox("Importa anche i QSO già presenti nel file (i doppioni vengono saltati)", False, key="wj_file_past")
+        if c[1].button("▶️ Segui il file", type="primary", key="wj_file_on", disabled=not ok):
+            p = path.strip()
+            openems_local.save_settings(wsjtx_file_on=True, wsjtx_file=p, wsjtx_file_pos={})
+            svc.on_tail_pos = _wsjtx_save_pos
+            svc.start_file(p, 0 if past else None)
+            st.rerun()
+        if path.strip() and not ok:
+            st.warning("File non trovato: controlla il percorso (in WSJT-X: File → Open log directory).")
+    else:
+        if c[1].button("⏹️ Smetti", key="wj_file_off"):
+            svc.stop_file()
+            openems_local.save_settings(wsjtx_file_on=False)
+            st.rerun()
+        st.markdown(i18n.tr("Seguo") + f" `{svc.tail.path}`" + (" · " + i18n.tr("ultimo QSO letto") +
+                    f" {svc.file_seen:%H:%M:%S} UTC" if svc.file_seen else ""))
+
+
+def _wsjtx_logged_table(svc):
+    if not svc.logged:
+        return
+    from emelab import logbook as lb
+    st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
+
+    def state(q):
+        if q.get("skipped"):
+            why = q["skipped"]
+            why = i18n.tr("propagazione") + why[12:] if why.startswith("propagazione ") else i18n.tr(why)
+            return i18n.tr("lasciato fuori") + ": " + why
+        return i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")
+    st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q.get("band"),
+                   "Modo": lb.mode_label(q)[0],
+                   "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                   "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
+                   "Fonte": q.get("source"), "Stato": state(q)} for q in svc.logged],
+                 hide_index=True, width="stretch")
 
 
 def _wsjtx_tab(D):
@@ -2044,14 +2500,27 @@ def _wsjtx_tab(D):
                "GridTracker, metti in WSJT-X un indirizzo multicast (per esempio 224.0.0.1) e lo stesso qui.")
     sets = openems_local.load_settings()
     svc = _wsjtx_autostart()
-    c = st.columns(5)
+    c = st.columns(3)
+    auto = c[0].checkbox("Registra i QSO nel log", bool(sets.get("wsjtx_autolog", True)), key="wj_auto")
+    eme_only = c[1].checkbox("Solo i QSO EME e delle bande da 10 GHz in su", bool(sets.get("wsjtx_eme_only", True)), key="wj_eme")
+    strict = c[2].checkbox("Solo con Prop Mode = EME", bool(sets.get("wsjtx_strict_eme", False)), key="wj_strict",
+                           disabled=not eme_only,
+                           help=i18n.tr("Senza questa spunta, un QSO senza Prop Mode entra se è in Q65, JT65, JT4 o QRA64 "
+                                        "oppure con una stazione EME nota. Un Prop Mode diverso da EME (tropo, rain scatter…) "
+                                        "resta sempre fuori. In WSJT-X il Prop Mode si sceglie nella finestra «Log QSO» e "
+                                        "viene ricordato."))
+    if (auto, eme_only, strict) != (svc.auto_log, svc.eme_only, svc.strict_eme):
+        svc.auto_log, svc.eme_only, svc.strict_eme = auto, eme_only, strict
+        openems_local.save_settings(wsjtx_autolog=auto, wsjtx_eme_only=eme_only, wsjtx_strict_eme=strict)
+    _wsjtx_file_box(svc, sets)
+    _wsjtx_logged_table(svc)
+    st.markdown("#### " + i18n.tr("📡 UDP (decodifiche, colori, sottomodo Q65)"))
+    c = st.columns(4)
     host = c[0].text_input("Indirizzo", sets.get("wsjtx_host", "127.0.0.1"), key="wj_host")
     port = c[1].number_input("Porta UDP", 1024, 65535, int(sets.get("wsjtx_port", 2237)), key="wj_port")
     mcast = c[2].text_input("Gruppo multicast (facoltativo)", sets.get("wsjtx_mcast", ""), key="wj_mcast")
-    auto = c[3].checkbox("Registra i QSO nel log", bool(sets.get("wsjtx_autolog", True)), key="wj_auto")
-    svc.auto_log = auto
     if not svc.running:
-        if c[4].button("▶️ Collega", type="primary", key="wj_start"):
+        if c[3].button("▶️ Collega", type="primary", key="wj_start"):
             try:
                 svc.start(host.strip(), int(port), mcast.strip() or None)
                 openems_local.save_settings(wsjtx_on=True, wsjtx_host=host.strip(), wsjtx_port=int(port),
@@ -2059,12 +2528,16 @@ def _wsjtx_tab(D):
                 st.rerun()
             except OSError as e:
                 st.error(i18n.tr("Porta non disponibile (forse un altro programma la usa)") + f": {e}")
-    elif c[4].button("⏹️ Scollega", key="wj_stop"):
+    elif c[3].button("⏹️ Scollega", key="wj_stop"):
         svc.stop()
         openems_local.save_settings(wsjtx_on=False)
         st.rerun()
     if not svc.running:
         st.info("Non collegato.")
+        if svc.errors:
+            with st.expander("⚠️ Messaggi"):
+                for e in list(svc.errors)[-10:]:
+                    st.text(e)
         return
     s = svc.status
     if not svc.last_seen:
@@ -2076,6 +2549,7 @@ def _wsjtx_tab(D):
                     + f"**{s.get('mode', '')} {s.get('submode', '')}** · DX **{s.get('dx_call') or '—'}** {s.get('dx_grid') or ''} · "
                     + ("🔴 TX" if s.get("transmitting") else "🟢 RX"))
     st.button("🔄 Aggiorna", key="wj_refresh")
+    _wsjtx_check_box(svc, sets)
     stn = D.station()
     band = None
     if s.get("dial_hz"):
@@ -2090,10 +2564,12 @@ def _wsjtx_tab(D):
                 L = astro.locator_to_latlon(grid)
                 mut = astro.mutual(datetime.now(timezone.utc), (stn["lat"], stn["lon"]), L)
                 spread = mut["spread_hz_per_ghz"] * dx.BAND_GHZ.get(band, 10.368)
-                mode, thr = dx.best_mode(spread)
+                mode = dx.band_mode(band)
+                thr = dx.q65_threshold_db(mode, spread)
                 c = st.columns([3, 1])
-                c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz → " + i18n.tr("modo consigliato") +
-                          f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)")
+                c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz · " + i18n.tr("modo della banda") +
+                          f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)" +
+                          ("" if dx.spread_ok(mode, spread) else " ⚠️ " + i18n.tr("spread oltre la tolleranza")))
                 if c[1].button(f"⚙️ Imposta Q65-{mode} in WSJT-X", key="wj_setmode"):
                     st.success("Inviato a WSJT-X.") if svc.set_q65(mode) else st.error("WSJT-X non raggiungibile.")
             except Exception:
@@ -2110,13 +2586,6 @@ def _wsjtx_tab(D):
             for call in {r["call"] for r in rec if r["call"]}:
                 n += svc.highlight(call, "#c8e6c9" if call not in worked else "#e0e0e0")
             st.success(i18n.tr("Nominativi colorati") + f": {n}")
-    if svc.logged:
-        st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
-        st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q["band"],
-                       "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
-                       "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
-                       "Stato": i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")} for q in svc.logged],
-                     hide_index=True, width="stretch")
     if svc.errors:
         with st.expander("⚠️ Messaggi"):
             for e in list(svc.errors)[-10:]:

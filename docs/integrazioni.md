@@ -13,6 +13,31 @@ EMELab riceve:
 - **QSOLogged**: quando confermi «Log QSO» in WSJT-X il QSO entra nel Log QSO di EMELab con tutte le condizioni di quel
   momento (Luna ai due capi, distanze, Doppler, spread, atmosfera, meteo).
 
+### QSO nel log da soli: wsjtx_log.adi e UDP
+
+Due strade indipendenti, anche insieme (scheda 📻 WSJT-X):
+- **wsjtx_log.adi** (consigliata): a ogni OK in «Log QSO» WSJT-X aggiunge un record ADIF al suo file di log
+  (cartella di *File → Open log directory*: `%LOCALAPPDATA%\WSJT-X` su Windows, `~/.local/share/WSJT-X` su Linux,
+  `~/Library/Application Support/WSJT-X` su macOS). EMELab segue il file ogni 3 s dal punto letto l'ultima volta
+  (salvato nelle impostazioni): nessuna porta UDP, nessun conflitto con JTAlert, GridTracker o altri logger.
+- **UDP QSOLogged**, come sopra.
+
+Filtro (attivo di base): banda da 10 GHz in su e Prop Mode EME. Prop Mode = EME entra sempre, un Prop Mode diverso
+(TR, RS, …) mai; senza Prop Mode (WSJT-X lo lascia vuoto finché non lo scegli in «Log QSO») entra se il modo è Q65,
+JT65, JT4 o QRA64 o il corrispondente è una stazione EME nota, a meno di spuntare «Solo con Prop Mode = EME».
+Doppioni: stesso nominativo e banda entro ±10 minuti = stesso QSO, che arrivi da UDP, dal file o da un ADIF importato.
+Q65 scritto da WSJT-X come MODE=MFSK/SUBMODE=Q65 torna «Q65», con la lettera del sottomodo presa dallo Status UDP.
+
+### Controllo delle impostazioni di WSJT-X
+
+A ogni Status EMELab controlla (`emelab/wsjtx_check.py`) e mostra un avviso in cima a ogni pagina:
+- **modo, sottomodo, T/R** rispetto alla banda (Q65-60D a 10 GHz, Q65-60E da 24 GHz in su, o la scelta per banda):
+  **corretti da soli** con Configure (spunta disattivabile), mai in trasmissione, al massimo 3 tentativi; se WSJT-X
+  li ignora, avviso «Accept UDP requests»;
+- **banda** fuori da quelle ≥10 GHz, **nominativo** e **locator** diversi dalla stazione EMELab, **TX watchdog**: solo
+  avviso, il protocollo UDP non li può cambiare.
+Doppler tracking, Prop Mode, audio e CAT non sono nello Status: EMELab non li vede.
+
 EMELab invia:
 - **HighlightCallsign**: colora i nominativi nella finestra Band Activity (verde = da collegare, grigio = già collegato);
 - **Configure**: imposta Q65 e il sottomodo consigliato (60D, 60E, 120E…) in base al mutual spread con il DX;

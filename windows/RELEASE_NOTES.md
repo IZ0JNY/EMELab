@@ -1,3 +1,29 @@
+## EMELab 0.1.3 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.3.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.3-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📻 WSJT-X, QSO nel log da soli:** EMELab segue il file `wsjtx_log.adi` (oppure UDP) e registra ogni QSO che confermi in WSJT-X, solo EME da 10 GHz in su e senza doppioni. A ogni stato controlla modo, sottomodo e periodo T/R, banda, nominativo e locator: modo, sottomodo e T/R li corregge da solo (mai in trasmissione), il resto lo segnala.
+- **Q65 per banda:** si usa il sottomodo standard della banda (Q65-60D a 10 GHz, Q65-60E da 24 GHz in su), modificabile e ricordato per ogni banda. Nel Log QSO il modo si legge come «Q65-60D» invece di «MFSK Q65»; il sottomodo presunto è in arancione con la legenda.
+- **🗑️ Cancellare i dati importati:** nelle Stazioni EME per fonte, per stazione o tutto; nel Log QSO un'importazione ADIF o tutto il log, per reimportare da capo.
+- **✏️ Correzioni a mano:** nelle Stazioni EME Locator, Nome e QTH si correggono nella tabella, antenna e potenza per banda nel riquadro dedicato; restano anche dopo una nuova importazione e si possono togliere.
+- **🏠 Stazione:** mappa OpenStreetMap interattiva, con un clic si sceglie la posizione e la quota del terreno viene letta da sola.
+- **🌡️ Stazione meteo:** il file dati viene trovato anche se non è nella radice del sito (link della pagina, frame, cartelle usuali, http e https).
+- **📊 Statistiche QSO:** interruttori per banda, numeri e grafici seguono il filtro.
+- **⚡ Catalogo dispositivi:** i valori si correggono a mano o si leggono dal datasheet PDF, segnati come verificati e ripristinabili.
+- Celle vuote invece di «None» nelle tabelle.
+
+### 🇬🇧 What's new
+- **📻 WSJT-X, QSOs logged by themselves:** EMELab follows `wsjtx_log.adi` (or UDP) and logs every QSO you confirm in WSJT-X, EME from 10 GHz up only and without duplicates. On every status it checks mode, submode and T/R period, band, callsign and locator: mode, submode and T/R it corrects by itself (never while transmitting), the rest it reports.
+- **Q65 per band:** the band's standard submode is used (Q65-60D at 10 GHz, Q65-60E from 24 GHz up), changeable and remembered for each band. In the QSO log the mode reads «Q65-60D» instead of «MFSK Q65»; an assumed submode is shown in orange with a legend.
+- **🗑️ Delete imported data:** in EME Stations by source, by station or everything; in the QSO log one ADIF import or the whole log, to import again from scratch.
+- **✏️ Corrections by hand:** in EME Stations, Locator, Name and QTH are corrected in the table, antenna and power per band in their own box; they stay after a new import and can be removed.
+- **🏠 Station:** interactive OpenStreetMap map, one click sets the position and the ground height is read by itself.
+- **🌡️ Weather station:** the data file is found even when it is not at the root of the site (page links, frames, usual folders, http and https).
+- **📊 QSO statistics:** switches per band, figures and charts follow the filter.
+- **⚡ Device catalogue:** values can be corrected by hand or read from the datasheet PDF, marked as verified and restorable.
+- Empty cells instead of «None» in the tables.
+
 ## EMELab 0.1.2 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.2.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.2-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

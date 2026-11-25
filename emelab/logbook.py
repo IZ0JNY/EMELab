@@ -87,6 +87,35 @@ def from_adif_record(r: dict) -> dict | None:
             "qsl_sent": r.get("QSL_SENT"), "qsl_rcvd": r.get("QSL_RCVD"), "prop_mode": r.get("PROP_MODE"), "adif": r}
 
 
+EME_DIGI = ("Q65", "JT65", "JT4", "QRA64")
+
+
+def eme_verdict(q: dict, eme_calls=(), strict: bool = False) -> str | None:
+    """None if the QSO is to be kept as EME at 10 GHz and up, otherwise the reason it is left out.
+    PROP_MODE=EME is always kept; another PROP_MODE (tropo, rain scatter…) never. Without PROP_MODE it is kept only
+    when it is with a known EME station or in an EME digital mode (Q65, JT65, JT4, QRA64), unless strict."""
+    if q.get("band") not in BAND_F:
+        return "sotto i 10 GHz"
+    pm = (q.get("prop_mode") or "").upper()
+    if pm == "EME":
+        return None
+    if pm:
+        return "propagazione " + pm
+    if strict:
+        return "senza PROP_MODE=EME"
+    digi = " ".join(x for x in (q.get("mode"), q.get("submode")) if x).upper()
+    if q.get("call") in eme_calls or any(m in digi for m in EME_DIGI):
+        return None
+    return "non EME"
+
+
+def wsjtx_mode(q: dict) -> dict:
+    """WSJT-X writes Q65 in ADIF as MODE=MFSK, SUBMODE=Q65: bring it back to mode Q65 as in the rest of EMELab."""
+    if (q.get("mode") or "").upper() == "MFSK" and (q.get("submode") or "").upper() in EME_DIGI:
+        q["mode"], q["submode"] = q["submode"].upper(), None
+    return q
+
+
 # ------------------------------------------------------------------ conditions of a QSO
 def conditions(utc: datetime, my_loc: tuple[float, float], dx_loc: tuple[float, float] | None, f_ghz: float,
                wx: dict | None = None, my_h: float = 0.0) -> dict:
@@ -149,18 +178,36 @@ def enrich(q: dict, my_locator: str, my_h: float = 0.0, wx: dict | None = None) 
     return conditions(q["utc"], my, latlon(q.get("locator")), f, wx, my_h)
 
 
+def fill_locators(D, my_locator: str, my_h: float = 0.0) -> int:
+    """QSOs without a locator (common in ADIF files of other loggers): take it from the EME stations database and
+    recompute distance, EME path, Moon elevations and spread. Returns how many QSOs were completed."""
+    n = 0
+    known = {}
+    for q in D.qsos():
+        if q.get("locator"):
+            continue
+        if q["call"] not in known:
+            s = D.station_of(q["call"])
+            known[q["call"]] = (s or {}).get("locator") if s and latlon((s or {}).get("locator")) else None
+        loc = known[q["call"]]
+        if not loc:
+            continue
+        q["locator"] = loc
+        D.update_qso(q["id"], locator=loc, calc=enrich(q, my_locator, my_h))
+        n += 1
+    return n
+
+
 # ------------------------------------------------------------------ statistics
 def statistics(qsos: list[dict]) -> dict:
     """Distributions of the conditions over the logged QSOs: what the successful ones had in common."""
     import numpy as np
     rows = [q for q in qsos if q.get("calc")]
     out = {"n": len(qsos), "n_with_conditions": len(rows)}
-    if not rows:
-        return out
     def arr(k):
         return np.array([q["calc"].get(k) for q in rows if q["calc"].get(k) is not None], float)
     for k in ("moon_el", "dx_moon_el", "mutual_spread_hz", "path_loss_vs_perigee_db", "sun_moon_deg", "atm_db", "moon_dec"):
-        a = arr(k)
+        a = arr(k) if rows else np.array([])
         if a.size:
             out[k] = {"median": float(np.median(a)), "p10": float(np.percentile(a, 10)), "p90": float(np.percentile(a, 90))}
     out["by_band"] = {}
@@ -173,3 +220,43 @@ def statistics(qsos: list[dict]) -> dict:
         out["by_hour"][t.hour] += 1
         out["by_month"][t.month - 1] += 1
     return out
+
+
+# ------------------------------------------------------------------ how the mode of a QSO is shown
+Q65_PERIODS = (15, 30, 60, 120, 300)
+Q65_SUBMODES = tuple(f"{p}{x}" for p in Q65_PERIODS for x in "ABCDE")
+_Q65_CODE = re.compile(r"(?<![\w.])(15|30|60|120|300)\s*([A-E])(?![A-Za-z0-9])")
+
+
+def q65_submode(q: dict) -> tuple[str | None, bool]:
+    """Q65 submode of a QSO as «60D»: from the submode field, the notes or the raw ADIF record; otherwise the band's
+    submode (EMELab's choice for the band, by default 60D at 10 GHz and 60E from 24 GHz up), flagged as assumed.
+    (None, False) when the QSO is not Q65."""
+    mode, sub = (q.get("mode") or "").upper().strip(), (q.get("submode") or "").upper().strip()
+    if "Q65" not in (mode, sub) and not mode.startswith("Q65") and not sub.startswith("Q65"):
+        return None, False
+    texts = [sub.replace("Q65", ""), mode.replace("Q65", ""), str(q.get("comment") or "").upper()]
+    texts += [str(v).upper() for k, v in (q.get("adif") or {}).items()
+              if k.upper() in ("COMMENT", "NOTES", "SUBMODE") or k.upper().startswith("APP_")]
+    for t in texts:
+        m = _Q65_CODE.search(t)
+        if m:
+            return m.group(1) + m.group(2), False
+    s = sub.replace("Q65", "").replace("-", "").strip()
+    from . import dx
+    std = dx.band_mode(q.get("band") or "")
+    if len(s) == 1 and s in "ABCDE":            # WSJT-X UDP gives the tone-spacing letter, not the T/R period
+        return f"{std[:-1]}{s}", True
+    return std, True
+
+
+def mode_label(q: dict) -> tuple[str, bool]:
+    """Mode as shown in EMELab: «Q65-60D» for Q65 (never «MFSK Q65»), otherwise mode and submode as logged.
+    The flag is True when the Q65 submode is assumed."""
+    sub, assumed = q65_submode(q)
+    if sub:
+        return f"Q65-{sub}", assumed
+    mode, s = q.get("mode") or "", q.get("submode") or ""
+    if mode.upper() == "MFSK" and s:
+        return s, False
+    return " ".join(x for x in (mode, s) if x), False

@@ -1,0 +1,131 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
+     EMELab station map: OpenStreetMap tiles drawn with Leaflet (bundled here, BSD-2, see LICENSE-leaflet.txt),
+     Maidenhead locator grid, the station and the EME stations of the directory. A click sends {lat, lon} back
+     to Streamlit (bidirectional component protocol, no build step). -->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; font-family: "Source Sans Pro", sans-serif; }
+  #map { width: 100%; border-radius: 6px; background: #dfeaf3; cursor: crosshair; }
+  .loc-lbl { color: #8b2c2c; font: 600 11px/1 sans-serif; text-shadow: 0 0 3px #fff, 0 0 3px #fff;
+             white-space: nowrap; pointer-events: none; transform: translate(-50%, -50%); }
+  .leaflet-container { cursor: crosshair; }
+  .hint { position: absolute; z-index: 1000; left: 50px; top: 10px; background: rgba(255,255,255,.88);
+          padding: 3px 8px; border-radius: 4px; font: 12px sans-serif; color: #333; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="hint" id="hint"></div>
+<script src="leaflet.js"></script>
+<script>
+(function () {
+  "use strict";
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  var map = null, me = null, grid = null, dx = null, args = {}, lastPos = null;
+  var L1 = "ABCDEFGHIJKLMNOPQR", L2 = "abcdefghijklmnopqrstuvwx";
+
+  function locator(lat, lon, n) {            // Maidenhead locator, n = 2, 4, 6, 8 or 10 characters
+    var x = lon + 180, y = lat + 90, s = "";
+    x = Math.min(Math.max(x, 0), 359.999999); y = Math.min(Math.max(y, 0), 179.999999);
+    s += L1[Math.floor(x / 20)] + L1[Math.floor(y / 10)];
+    if (n >= 4) s += Math.floor((x % 20) / 2) + "" + Math.floor(y % 10);
+    var xs = (x % 2) * 12, ys = (y % 1) * 24;
+    if (n >= 6) s += L2[Math.floor(xs)] + L2[Math.floor(ys)];
+    if (n >= 8) s += Math.floor((xs % 1) * 10) + "" + Math.floor((ys % 1) * 10);
+    return s;
+  }
+
+  // grid step for the zoom: fields 20°×10°, squares 2°×1°, subsquares 5'×2.5', extended squares 30"×15"
+  function level(z) {
+    if (z < 5) return { dx: 20, dy: 10, n: 2 };
+    if (z < 9) return { dx: 2, dy: 1, n: 4 };
+    if (z < 13) return { dx: 2 / 24, dy: 1 / 24, n: 6 };
+    return { dx: 2 / 240, dy: 1 / 240, n: 8 };
+  }
+
+  function drawGrid() {
+    grid.clearLayers();
+    var b = map.getBounds(), lv = level(map.getZoom());
+    var w = Math.max(b.getWest(), -180), e = Math.min(b.getEast(), 180);
+    var s = Math.max(b.getSouth(), -90), nn = Math.min(b.getNorth(), 90);
+    var x0 = Math.floor((w + 180) / lv.dx) * lv.dx - 180, y0 = Math.floor((s + 90) / lv.dy) * lv.dy - 90;
+    var nx = Math.ceil((e - x0) / lv.dx), ny = Math.ceil((nn - y0) / lv.dy);
+    if (nx > 200 || ny > 200) return;
+    var st = { color: "#c0392b", weight: 1, opacity: 0.55, interactive: false };
+    for (var i = 0; i <= nx; i++) { var x = x0 + i * lv.dx; grid.addLayer(L.polyline([[s, x], [nn, x]], st)); }
+    for (var j = 0; j <= ny; j++) { var y = y0 + j * lv.dy; grid.addLayer(L.polyline([[y, w], [y, e]], st)); }
+    if (nx * ny > 300) return;
+    for (i = 0; i < nx; i++) for (j = 0; j < ny; j++) {
+      var cx = x0 + (i + 0.5) * lv.dx, cy = y0 + (j + 0.5) * lv.dy;
+      if (cx < -180 || cx > 180 || cy < -90 || cy > 90) continue;
+      grid.addLayer(L.marker([cy, cx], { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: "", html: '<div class="loc-lbl">' + locator(cy, cx, lv.n) + "</div>", iconSize: [0, 0] }) }));
+    }
+  }
+
+  function setMe(lat, lon) {
+    if (me) { me.setLatLng([lat, lon]); return; }
+    me = L.circleMarker([lat, lon], { radius: 8, color: "#fff", weight: 2, fillColor: "#e74c3c", fillOpacity: 1 })
+      .bindTooltip(args.me_label || "", { direction: "top", offset: [0, -8] }).addTo(map);
+  }
+
+  function init() {
+    var el = document.getElementById("map");
+    el.style.height = (args.height || 460) + "px";
+    map = L.map(el, { worldCopyJump: true, zoomControl: true, attributionControl: true, minZoom: 2, maxZoom: 19 });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>' })
+      .addTo(map);
+    map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank">Leaflet</a>');
+    grid = L.layerGroup().addTo(map);
+    dx = L.layerGroup().addTo(map);
+    if (args.has_pos) { map.setView([args.lat, args.lon], args.zoom || 13); setMe(args.lat, args.lon); }
+    else map.setView([42, 12], 3);
+    lastPos = [args.lat, args.lon];
+    map.on("moveend zoomend", drawGrid);
+    map.on("click", function (ev) {
+      var p = ev.latlng.wrap(), lat = +p.lat.toFixed(6), lon = +p.lng.toFixed(6);
+      setMe(lat, lon);
+      lastPos = [lat, lon];
+      if (map.getZoom() < 12) map.setView([lat, lon], Math.min(map.getZoom() + 4, 15));   // closer, to refine with the next click
+      send("streamlit:setComponentValue", { dataType: "json",
+            value: { lat: lat, lon: lon, zoom: map.getZoom(), t: Date.now() } });
+    });
+    drawGrid();
+    send("streamlit:setFrameHeight", { height: (args.height || 460) + 4 });
+  }
+
+  function update() {
+    document.getElementById("hint").textContent = args.hint || "";
+    if (me) me.setTooltipContent(args.me_label || "");
+    if (args.has_pos && (!lastPos || Math.abs(lastPos[0] - args.lat) > 1e-6 || Math.abs(lastPos[1] - args.lon) > 1e-6)) {
+      setMe(args.lat, args.lon);                  // position changed outside the map (typed, locator, Google Maps)
+      lastPos = [args.lat, args.lon];
+      if (!map.getBounds().pad(-0.1).contains([args.lat, args.lon])) map.setView([args.lat, args.lon], Math.max(map.getZoom(), 11));
+    }
+    dx.clearLayers();
+    (args.stations || []).forEach(function (s) {
+      L.circleMarker([s[0], s[1]], { radius: 4, color: "#555", weight: 1, fillColor: "#7f8c8d", fillOpacity: 0.9 })
+        .bindTooltip(s[2] || "", { direction: "top" }).addTo(dx);
+    });
+  }
+
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    args = d.args || {};
+    if (!map) init();
+    update();
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

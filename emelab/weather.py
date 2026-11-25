@@ -20,13 +20,18 @@ HOURLY = ["temperature_2m", "relative_humidity_2m", "surface_pressure", "dew_poi
 
 
 def _get(url: str, timeout: float = 10.0) -> bytes:
+    return _get_final(url, timeout)[0]
+
+
+def _get_final(url: str, timeout: float = 10.0) -> tuple[bytes, str]:
+    """Body and final address after redirects."""
     from .net import _contexts
     err = None
     for _, ctx in _contexts():
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "FeedLab-EMELab"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; EMELab)"})
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
-                return r.read()
+                return r.read(), r.geturl()
         except Exception as e:                    # try the next TLS context
             err = e
             if url.startswith("http://"):
@@ -101,7 +106,7 @@ def parse_station(text: str) -> dict:
         pick = lambda *ks: next((_num(js[k]) for k in ks if k in js and _num(js[k]) is not None), None)
         out = {"t_c": pick("t", "temp", "temperature", "outtemp"), "rh": pick("h", "hum", "humidity", "outhumidity"),
                "p_hpa": pick("p", "press", "pressure", "barometer"), "dew_c": pick("d", "dew", "dewpoint"),
-               "rain_mmh": pick("rr", "rainrate", "rain_rate")}
+               "rain_mmh": pick("rr", "rrate", "rainrate", "rain_rate")}
         w = pick("w", "wind", "windspeed", "wind_speed")       # Meteotemplate: km/h
         if w is not None:
             out["wind_ms"] = w / 3.6 if "w" in js or "wind" in js else w
@@ -122,21 +127,124 @@ def parse_station(text: str) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
+# file names written by the usual station programs, in order of preference
+STATION_FILES = ["meteotemplateLive.txt", "realtime.txt", "clientraw.txt", "realtimegauges.txt",
+                 "customclientraw.txt"]
+# folders where these programs are often installed under the home page of the site
+STATION_DIRS = ["", "template/", "meteotemplate/", "meteo/", "weather/", "wd/", "cumulus/", "data/", "live/"]
+_FILE_RE = None
+
+
+def _page_candidates(page_url: str, html: str) -> list[str]:
+    """Data files and frames referenced by the home page (links, scripts, iframes), as absolute URLs."""
+    import re
+    global _FILE_RE
+    if _FILE_RE is None:
+        names = "|".join(re.escape(n) for n in STATION_FILES)
+        _FILE_RE = re.compile(r"""["'(=\s]([^"'()<>\s]*?(?:%s))(?:\?[^"'()<>\s]*)?["')\s&]""" % names, re.I)
+    found, frames = [], []
+    for m in _FILE_RE.finditer(html):
+        found.append(urllib.parse.urljoin(page_url, m.group(1)))
+    for m in re.finditer(r"""<i?frame[^>]+src\s*=\s*["']([^"']+)["']""", html, re.I):
+        frames.append(urllib.parse.urljoin(page_url, m.group(1)))
+    return list(dict.fromkeys(found)), list(dict.fromkeys(frames))
+
+
+def _folder(u: str) -> str:
+    p = urllib.parse.urlsplit(u)
+    path = p.path if p.path.endswith("/") else p.path.rsplit("/", 1)[0] + "/"
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, path, "", ""))
+
+
+def _read(u: str, timeout: float) -> dict:
+    d = parse_station(_get(u, timeout).decode("utf-8", "replace"))
+    if d.get("t_c") is None and d.get("rh") is None:
+        raise RuntimeError("nessun valore di temperatura o umidità")
+    return d
+
+
 def station_now(url: str, timeout: float = 8.0) -> dict:
-    """Read the personal station. For a Meteotemplate site the live file next to the home page is tried too."""
-    tried = []
-    urls = [url]
-    if not url.rstrip("/").endswith((".txt", ".json", ".php")):
-        root = url.rstrip("/") + "/"
-        urls = [root + "meteotemplateLive.txt", root + "realtime.txt", root + "clientraw.txt"]
-    for u in urls:
+    """Read the personal station.
+
+    A direct link to a data file is read as it is. For the address of a web site: the usual files next to the
+    home page, then the files the home page itself links (also inside frames), then the usual install folders;
+    http and https are both tried. The URL that worked is returned in "station_file"."""
+    url = url.strip()
+    if "://" not in url:
+        url = "http://" + url
+    tried, seen = [], set()
+
+    def attempt(u):
+        if u in seen:
+            return None
+        seen.add(u)
         try:
-            d = parse_station(_get(u, timeout).decode("utf-8", "replace"))
-            if d.get("t_c") is not None or d.get("rh") is not None:
-                now = datetime.now(timezone.utc)
-                t = d.pop("station_utc", now)
-                d.update(wx_utc=t.strftime("%Y-%m-%dT%H:%M:%SZ"), wx_source="stazione personale")
-                return d
+            d = _read(u, timeout)
         except Exception as e:
             tried.append(f"{u}: {e}")
-    raise RuntimeError("; ".join(tried) or "nessun dato")
+            return None
+        now = datetime.now(timezone.utc)
+        t = d.pop("station_utc", now)
+        d.update(wx_utc=t.strftime("%Y-%m-%dT%H:%M:%SZ"), wx_source="stazione personale", station_file=u)
+        return d
+
+    path = urllib.parse.urlsplit(url).path
+    if path.lower().endswith((".txt", ".json", ".php", ".xml")) and not path.lower().endswith(("index.php",)):
+        d = attempt(url)
+        if d:
+            return d
+        raise RuntimeError("; ".join(tried))
+
+    root = _folder(url if url.endswith("/") or "." in path.rsplit("/", 1)[-1] else url + "/")
+    other = root.replace("http://", "https://", 1) if root.startswith("http://") else root.replace("https://", "http://", 1)
+    # 1) the usual files next to the home page
+    for name in STATION_FILES[:3]:
+        d = attempt(root + name)
+        if d:
+            return d
+    # 2) what the home page links (after redirects), also one level of frames; https if http does not answer
+    bases = [root]
+    for page in ([url, other] if other != root else [url]):
+        try:
+            body, page = _get_final(page, timeout)
+            html = body.decode("utf-8", "replace")
+        except Exception as e:
+            tried.append(f"{page}: {e}")
+            if page == url:
+                bases = [other]
+            continue
+        files, frames = _page_candidates(page, html)
+        for f in frames[:5]:
+            try:
+                ff, _ = _page_candidates(f, _get(f, timeout).decode("utf-8", "replace"))
+                files += ff + [_folder(f) + n for n in STATION_FILES[:3]]
+            except Exception as e:
+                tried.append(f"{f}: {e}")
+        for u in files:
+            d = attempt(u)
+            if d:
+                return d
+        bases = [_folder(page)]
+        break
+    # 3) the usual install folders
+    for base in bases:
+        for sub in STATION_DIRS:
+            for name in STATION_FILES[:3]:
+                d = attempt(base + sub + name)
+                if d:
+                    return d
+    nf = sum("404" in t for t in tried)
+    head = (f"nessun file dati trovato ({nf} indirizzi provati danno 404). Apri il sito nel browser e incolla qui "
+            "l'indirizzo diretto del file dati (es. .../clientraw.txt, .../realtime.txt, .../meteotemplateLive.txt)")
+    raise RuntimeError(head + " — " + "; ".join(tried[:6]))
+
+
+def elevation(lat: float, lon: float, timeout: float = 6.0) -> float:
+    """Ground height (m above sea level) at one point from the free Open-Meteo elevation API (Copernicus DEM
+    GLO-90, about 90 m resolution). Only latitude and longitude are sent; raises if the service is not reachable."""
+    q = urllib.parse.urlencode({"latitude": f"{lat:.6f}", "longitude": f"{lon:.6f}"})
+    js = json.loads(_get("https://api.open-meteo.com/v1/elevation?" + q, timeout))
+    h = (js.get("elevation") or [None])[0]
+    if h is None or (isinstance(h, float) and math.isnan(h)):
+        raise ValueError("no elevation in the answer")
+    return float(h)

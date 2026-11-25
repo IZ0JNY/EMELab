@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS decodes (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TE
 CREATE INDEX IF NOT EXISTS d_utc ON decodes(utc);
 CREATE TABLE IF NOT EXISTS setup_history (id INTEGER PRIMARY KEY AUTOINCREMENT, band TEXT NOT NULL, from_utc TEXT NOT NULL,
     dish_m REAL, dish_kind TEXT, eta REAL, power_w REAL, nf_db REAL, line_loss_db REAL, pol TEXT, notes TEXT);
+CREATE TABLE IF NOT EXISTS station_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, source TEXT NOT NULL,
+    label TEXT, n INTEGER);
+CREATE TABLE IF NOT EXISTS qso_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, label TEXT,
+    ids TEXT);
 """
 QSO_COLS = ["id", "utc", "call", "band", "freq_mhz", "mode", "submode", "rst_sent", "rst_rcvd", "locator", "my_locator",
             "name", "qth", "tx_pwr", "setup_id", "comment", "qsl_sent", "qsl_rcvd", "t_c", "rh", "p_hpa", "wx_source",
@@ -165,6 +169,11 @@ class DB:
         cur = self.station_of(call) or {"call": call, "data": {}}
         data = {**cur.get("data", {}), **(kw.pop("data", None) or {})}
         row = {**{k: v for k, v in cur.items() if k != "data"}, **{k: v for k, v in kw.items() if v not in (None, "")}}
+        for k, v in (data.get("manual") or {}).items():       # corrections made by hand win over every import
+            if k in self.MANUAL_FIELDS:
+                if kw.get(k) not in (None, ""):
+                    data.setdefault("orig", {})[k] = kw[k]
+                row[k] = v
         row.update(call=call, data=json.dumps(data, default=str), updated_utc=iso_utc(datetime.now(timezone.utc)))
         keys = ["call", "locator", "name", "qth", "address", "country", "email", "eme", "data", "updated_utc"]
         self.con.execute(f"INSERT OR REPLACE INTO stations ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
@@ -189,6 +198,162 @@ class DB:
             out.append(d)
         return out
 
+    # where the station data came from, and how to take it away again ------------------
+    # data keys written by each source: "call3" (CALL3.TXT), "heard" (ALL.TXT and live WSJT-X decodes),
+    # "directory" {band: …} (EME Directory PA0PLY), "qrz" (QRZ.com, which also fills name/address/QTH/country).
+    QRZ_FIELDS = ("address", "qth", "country", "email")
+
+    @staticmethod
+    def _station_sources(data: dict) -> list[str]:
+        out = []
+        if data.get("call3"):
+            out.append("call3")
+        if data.get("heard"):
+            out.append("heard")
+        out += [f"directory:{b}" for b in sorted(data.get("directory") or {})]
+        if data.get("qrz"):
+            out.append("qrz")
+        if data.get("manual"):
+            out.append("manual")
+        return out
+
+    # corrections made by hand ------------------------------------------------------
+    # data["manual"] = {"locator"/"name"/"qth": value, "bands": {band: {"antenna", "power_w"}}}; data["orig"] keeps the
+    # imported value of a corrected field, so that taking the correction away gives it back.
+    MANUAL_FIELDS = ("locator", "name", "qth")
+
+    @staticmethod
+    def directory_of(data: dict) -> dict:
+        """Station per band: the EME Directory, with the bands corrected by hand on top."""
+        out = {b: dict(v) for b, v in (data.get("directory") or {}).items()}
+        for b, v in ((data.get("manual") or {}).get("bands") or {}).items():
+            out[b] = {**out.get(b, {}), **v}
+        return out
+
+    def set_station_manual(self, call: str, fields: dict | None = None, bands: dict | None = None):
+        """Correct fields by hand. A blank value takes the correction away (the imported value comes back);
+        bands: {band: {"antenna": …, "power_w": …}} or {band: None} to take that band's correction away."""
+        call = call.upper()
+        cur = self.station_of(call) or {"call": call, "data": {}}
+        data = cur["data"]
+        man, orig = dict(data.get("manual") or {}), dict(data.get("orig") or {})
+        row = {k: cur.get(k) for k in self.MANUAL_FIELDS}
+        for k, v in (fields or {}).items():
+            if k not in self.MANUAL_FIELDS:
+                continue
+            v = (v or "").strip() or None
+            if v is None:
+                if k in man:
+                    man.pop(k)
+                    row[k] = orig.pop(k, None)
+                continue
+            if k not in man:
+                orig[k] = cur.get(k)
+            man[k] = v
+            row[k] = v
+        mb = dict(man.get("bands") or {})
+        for b, v in (bands or {}).items():
+            if v:
+                mb[b] = {"antenna": (v.get("antenna") or "").strip(), "power_w": v.get("power_w")}
+            else:
+                mb.pop(b, None)
+        if mb:
+            man["bands"] = mb
+        else:
+            man.pop("bands", None)
+        for k, v in (("manual", man), ("orig", orig)):
+            if v:
+                data[k] = v
+            else:
+                data.pop(k, None)
+        if cur.get("updated_utc") is None and not man:
+            return
+        self.con.execute("INSERT OR REPLACE INTO stations (call, locator, name, qth, address, country, email, eme, data, "
+                         "updated_utc) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         [call, row["locator"], row["name"], row["qth"], cur.get("address"), cur.get("country"),
+                          cur.get("email"), cur.get("eme"), json.dumps(data, default=str),
+                          iso_utc(datetime.now(timezone.utc))])
+        if not self._station_sources(data):
+            self.con.execute("DELETE FROM stations WHERE call = ?", (call,))
+        self.con.commit()
+
+    def log_station_import(self, source: str, label: str, n: int):
+        self.con.execute("INSERT INTO station_imports (utc, source, label, n) VALUES (?,?,?,?)",
+                         (iso_utc(datetime.now(timezone.utc)), source, label, int(n)))
+        self.con.commit()
+
+    def station_imports(self) -> list[dict]:
+        return [dict(r) for r in self.con.execute("SELECT * FROM station_imports ORDER BY utc DESC, id DESC")]
+
+    def station_source_counts(self) -> dict[str, int]:
+        """Source key ("call3", "heard", "directory:10G", "qrz") → number of stations holding data from it."""
+        out: dict[str, int] = {}
+        for s in self.stations():
+            for k in self._station_sources(s["data"]):
+                out[k] = out.get(k, 0) + 1
+        return dict(sorted(out.items()))
+
+    def remove_station_source(self, source: str) -> tuple[int, int]:
+        """Take away everything a source brought; a station left with no source at all is deleted.
+        Returns (stations changed, stations deleted)."""
+        band = source.split(":", 1)[1] if source.startswith("directory:") else None
+        changed = deleted = 0
+        for s in self.stations():
+            data = s["data"]
+            if source not in self._station_sources(data):
+                continue
+            if source == "manual":
+                orig = data.pop("orig", {})
+                for k in data.pop("manual", {}):
+                    if k in self.MANUAL_FIELDS:
+                        s[k] = orig.get(k)
+            elif band:
+                dirb = dict(data.get("directory") or {})
+                dirb.pop(band, None)
+                if dirb:
+                    data["directory"] = dirb
+                else:
+                    data.pop("directory", None)
+            else:
+                data.pop(source, None)
+            if not self._station_sources(data):
+                self.con.execute("DELETE FROM stations WHERE call = ?", (s["call"],))
+                deleted += 1
+                continue
+            row = {k: s.get(k) for k in ("locator", "name", "qth", "address", "country", "email", "eme")}
+            if source == "qrz":
+                for k in self.QRZ_FIELDS:
+                    row[k] = None
+                row["name"] = next((v.get("name") for v in (data.get("directory") or {}).values() if v.get("name")), None)
+            elif band and not data.get("qrz") and not data.get("directory"):
+                row["name"] = None                                   # the name came only from the directory
+            for k, v in (data.get("manual") or {}).items():          # a correction by hand stays
+                if k in self.MANUAL_FIELDS:
+                    if row[k] != s.get(k):                           # the imported value under it changed
+                        data.setdefault("orig", {})[k] = row[k]
+                    row[k] = v
+            self.con.execute("UPDATE stations SET locator=?, name=?, qth=?, address=?, country=?, email=?, eme=?, data=?, "
+                             "updated_utc=? WHERE call=?",
+                             [row["locator"], row["name"], row["qth"], row["address"], row["country"], row["email"],
+                              row["eme"], json.dumps(data, default=str), iso_utc(datetime.now(timezone.utc)), s["call"]])
+            changed += 1
+        self.con.execute("DELETE FROM station_imports WHERE source = ?", (source,))
+        self.con.commit()
+        return changed, deleted
+
+    def delete_stations(self, calls: list[str]) -> int:
+        n = 0
+        for c in calls:
+            n += self.con.execute("DELETE FROM stations WHERE call = ?", (c.upper(),)).rowcount
+        self.con.commit()
+        return n
+
+    def clear_stations(self) -> int:
+        n = self.con.execute("DELETE FROM stations").rowcount
+        self.con.execute("DELETE FROM station_imports")
+        self.con.commit()
+        return n
+
     # QSOs -----------------------------------------------------------------------
     def add_qso(self, **q) -> int | None:
         q = dict(q)
@@ -203,6 +368,15 @@ class DB:
         self.con.commit()
         return int(cur.lastrowid) if cur.rowcount else None
 
+    def qso_near(self, call: str, band: str | None, utc: datetime, minutes: float = 10) -> dict | None:
+        """A QSO already in the log with the same call and band within ± minutes (the same QSO from another source:
+        WSJT-X over UDP, its log file, an ADIF export of another logger with or without the seconds)."""
+        from datetime import timedelta
+        a, b = iso_utc(utc - timedelta(minutes=minutes)), iso_utc(utc + timedelta(minutes=minutes))
+        r = self.con.execute("SELECT id, utc FROM qsos WHERE call = ? AND IFNULL(band, '') = IFNULL(?, '') AND utc BETWEEN ? AND ? "
+                             "LIMIT 1", (call.upper(), band, a, b)).fetchone()
+        return dict(r) if r else None
+
     def update_qso(self, qid: int, **q):
         for k in ("calc", "adif"):
             if isinstance(q.get(k), dict):
@@ -214,6 +388,45 @@ class DB:
     def delete_qso(self, qid: int):
         self.con.execute("DELETE FROM qsos WHERE id=?", (qid,))
         self.con.commit()
+
+    # ADIF imports: which QSOs came from which file(s), so that an import can be taken back ------------
+    def max_qso_id(self) -> int:
+        return int(self.con.execute("SELECT IFNULL(MAX(id), 0) FROM qsos").fetchone()[0])
+
+    def log_qso_import(self, label: str, since_id: int) -> int:
+        """Record the QSOs added after `since_id` (by an import just finished) under `label`; returns how many."""
+        ids = [r[0] for r in self.con.execute("SELECT id FROM qsos WHERE id > ? ORDER BY id", (since_id,))]
+        if ids:
+            self.con.execute("INSERT INTO qso_imports (utc, label, ids) VALUES (?,?,?)",
+                             (iso_utc(datetime.now(timezone.utc)), label, json.dumps(ids)))
+            self.con.commit()
+        return len(ids)
+
+    def qso_imports(self) -> list[dict]:
+        """Every import, newest first, with how many of its QSOs are still in the log."""
+        have = {r[0] for r in self.con.execute("SELECT id FROM qsos")}
+        out = []
+        for r in self.con.execute("SELECT * FROM qso_imports ORDER BY utc DESC, id DESC"):
+            d = dict(r)
+            d["ids"] = json.loads(d["ids"] or "[]")
+            d["n"] = sum(1 for i in d["ids"] if i in have)
+            out.append(d)
+        return out
+
+    def delete_qso_import(self, imp_id: int) -> int:
+        r = self.con.execute("SELECT ids FROM qso_imports WHERE id = ?", (imp_id,)).fetchone()
+        n = 0
+        for qid in json.loads(r["ids"] or "[]") if r else []:
+            n += self.con.execute("DELETE FROM qsos WHERE id = ?", (qid,)).rowcount
+        self.con.execute("DELETE FROM qso_imports WHERE id = ?", (imp_id,))
+        self.con.commit()
+        return n
+
+    def clear_qsos(self) -> int:
+        n = self.con.execute("DELETE FROM qsos").rowcount
+        self.con.execute("DELETE FROM qso_imports")
+        self.con.commit()
+        return n
 
     def qsos(self, band: str | None = None, call: str | None = None) -> list[dict]:
         q, a = "SELECT * FROM qsos WHERE 1=1", []

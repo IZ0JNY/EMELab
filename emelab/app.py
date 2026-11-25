@@ -42,6 +42,7 @@ def _biblio_dialog():
 
 D = ui._db()
 ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
+ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
 if "update_info" not in S:                         # new version on GitHub: checked once per launch (as in FeedLab)
     from emelab import updates as _updates
     S["update_info"] = _updates.check(emelab.__version__, i18n.get_lang())
