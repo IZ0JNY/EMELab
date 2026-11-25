@@ -303,48 +303,134 @@ LB_VID = 0x1DD2
 LB_PIDS = {0x2211: "mini GPS Reference Clock", 0x2210: "GPS Disciplined Clock (doppia uscita)"}
 
 
+LB_FEATURE_LEN = 61                      # feature report length (report id 0 + 60 bytes), as the device reports it
+LB_UBX_PVT = (0x01, 0x07)                # u-blox UBX-NAV-PVT: fix type, satellites used, position, UTC
+FIX_TYPES = {0: "nessun fix", 1: "solo stima", 2: "2D", 3: "3D", 4: "GNSS + stima", 5: "solo tempo"}
+
+# Protocol as used by the maker's «mini GPS Clock Configuration» program (v1.15) and checked on a mini GPS Reference
+# Clock with firmware 1.17 against what that program shows:
+# - input reports (interrupt IN): byte 0 report id 0; byte 1 < 0x80 → status report, byte 1 = signal loss count,
+#   byte 2 bit 0 = no GPS signal, bit 1 = no PLL lock; byte 1 ≥ 0x80 → bytes 2… are a chunk of the u-blox
+#   receiver's UBX stream (only while UBX messages are enabled);
+# - feature report: the configuration (drive strength, GPS reference, N31, N2_HS, N2_LS, N1_HS, NC1_LS, BW);
+# - set feature [0, 8, class, id, len lo, len hi, payload…]: the clock wraps it as a UBX message for its receiver.
+#   The program enables NAV-PVT with CFG-MSG (06 01) rate 10 and sets the rate back to 0 when it closes; EMELab
+#   does the same, only in the receiver's RAM, and only when no UBX stream is already flowing.
+
+
 def parse_lb_status(buf) -> dict:
-    """Feature report of a Leo Bodnar mini/dual GPS clock → {"gps_ok", "pll_ok", "loss_count"}.
-    Layout read from the maker's «mini GPS Clock Configuration» program (v1.15): byte 1 = signal loss count,
-    byte 2 bit 0 = no GPS signal, bit 1 = no PLL lock (report id 0 in byte 0)."""
+    """Status input report of a Leo Bodnar mini/dual GPS clock → {"gps_ok", "pll_ok", "loss_count"}."""
     b = bytes(buf or b"")
     if len(b) < 3:
         return {"error": "risposta troppo corta"}
+    if b[1] & 0x80:
+        return {"error": "non è un report di stato"}
     return {"gps_ok": not (b[2] & 0x01), "pll_ok": not (b[2] & 0x02), "loss_count": b[1], "raw": b[:16].hex(" ")}
 
 
-def read_leo_bodnar() -> dict:
-    """Read lock state from the Leo Bodnar clock on USB (needs the «hidapi» package; Windows needs no driver).
-    Close the maker's configuration program first: it may keep the device busy."""
+def parse_lb_config(buf) -> dict:
+    """Feature report (configuration) → drive strength, GPS reference and dividers, and the output frequency
+    f_out = f_ref / N31 · N2_HS · N2_LS / (N1_HS · NC1_LS)."""
+    b = bytes(buf or b"")
+    if len(b) < 22:
+        return {}
+    u24 = lambda i: b[i] | b[i + 1] << 8 | b[i + 2] << 16
+    c = {"drive_ma": {0: 8, 1: 16, 2: 24, 3: 32}.get(b[1]), "f_ref_hz": u24(3), "n31": u24(6) + 1, "n2_hs": b[9] + 4,
+         "n2_ls": u24(10) + 1, "n1_hs": b[13] + 4, "nc1_ls": u24(14) + 1, "bw": b[21]}
+    try:
+        c["f_out_hz"] = c["f_ref_hz"] / c["n31"] * c["n2_hs"] * c["n2_ls"] / (c["n1_hs"] * c["nc1_ls"])
+    except ZeroDivisionError:
+        c["f_out_hz"] = None
+    return c
+
+
+def parse_ubx_pvt(stream: bytes) -> dict | None:
+    """Last valid UBX-NAV-PVT in a byte stream (checksum checked) → fix type, satellites used, position, UTC."""
+    s, last, i = bytes(stream), None, 0
+    while True:
+        i = s.find(b"\xb5\x62\x01\x07", i)
+        if i < 0 or i + 6 > len(s):
+            break
+        n = s[i + 4] | s[i + 5] << 8
+        end = i + 6 + n + 2
+        if n < 64 or end > len(s):
+            i += 2
+            continue
+        a = c = 0
+        for x in s[i + 2:i + 6 + n]:
+            a = (a + x) & 0xFF
+            c = (c + a) & 0xFF
+        if (a, c) == (s[end - 2], s[end - 1]):
+            p = s[i + 6:i + 6 + n]
+            i32 = lambda k: int.from_bytes(p[k:k + 4], "little", signed=True)
+            last = {"fix_type": p[20], "fix": FIX_TYPES.get(p[20], str(p[20])), "fix_ok": bool(p[21] & 0x01),
+                    "sats_used": p[23], "lon": i32(24) * 1e-7, "lat": i32(28) * 1e-7, "alt_m": i32(36) / 1000.0,
+                    "gps_utc": f"{p[4] | p[5] << 8:04d}-{p[6]:02d}-{p[7]:02d} {p[8]:02d}:{p[9]:02d}:{p[10]:02d}"
+                    if p[11] & 0x03 == 0x03 else None}
+            i = end
+        else:
+            i += 2
+    return last
+
+
+def _lb_cfg_msg(cls: int, mid: int, rate: int) -> bytes:
+    """Set-feature buffer that makes the clock send its receiver UBX CFG-MSG (rate on the receiver's first port)."""
+    return bytes([0, 8, 0x06, 0x01, 8, 0, cls, mid, rate]).ljust(LB_FEATURE_LEN, b"\0")
+
+
+def read_leo_bodnar(seconds: float = 4.0, satellites: bool = True) -> dict:
+    """Read lock state, configuration and (with satellites=True) satellites used from the Leo Bodnar clock on USB
+    (needs the «hidapi» package; Windows needs no driver). Close the maker's configuration program first."""
     try:
         import hid
     except ImportError:
         return {"error": "pacchetto hidapi non installato"}
+    import time
     found = [d for d in hid.enumerate(LB_VID) if d.get("product_id") in LB_PIDS]
     if not found:
         return {"error": "nessun GPSDO Leo Bodnar (mini o doppia uscita) trovato sulle porte USB"}
     d0 = found[0]
     dev = hid.device()
+    status, stream, cfg, enabled = None, bytearray(), {}, False
+
+    def pump(t_end):
+        nonlocal status
+        while time.monotonic() < t_end:
+            r = bytes(dev.read(65, 100) or b"")
+            if len(r) < 3:
+                continue
+            if r[1] & 0x80:
+                stream.extend(r[2:])
+            else:
+                status = parse_lb_status(r)
+            if status and (not satellites or (len(stream) > 100 and parse_ubx_pvt(stream))):
+                return
+
     try:
         dev.open_path(d0["path"])
-        buf = b""
-        for n in (60, 61, 64, 9):
-            try:
-                buf = bytes(dev.get_feature_report(0, n))
-            except (OSError, ValueError):
-                continue
-            if len(buf) >= 3:
-                break
+        try:
+            cfg = parse_lb_config(dev.get_feature_report(0, LB_FEATURE_LEN))
+        except (OSError, ValueError):
+            cfg = {}
+        pump(time.monotonic() + 0.6)                     # a UBX stream already flowing (e.g. the maker's program)?
+        if satellites and not stream:
+            dev.send_feature_report(_lb_cfg_msg(*LB_UBX_PVT, 10))
+            enabled = True
+        pump(time.monotonic() + seconds)
     except Exception as e:
         return {"error": str(e)}
     finally:
         try:
+            if enabled:
+                dev.send_feature_report(_lb_cfg_msg(*LB_UBX_PVT, 0))
             dev.close()
         except Exception:
             pass
-    out = parse_lb_status(buf)
-    out.update(model=LB_PIDS[d0["product_id"]], serial=d0.get("serial_number") or "",
-               utc=datetime.now(timezone.utc).strftime("%H:%M:%S"))
+    if not status:
+        return {"error": "nessun report di stato ricevuto dal GPSDO"}
+    out = dict(status)
+    out.update(model=LB_PIDS[d0["product_id"]], serial=d0.get("serial_number") or "", config=cfg,
+               utc=datetime.now(timezone.utc).strftime("%H:%M:%S"), pvt=parse_ubx_pvt(stream) if satellites else None)
     return out
 
 

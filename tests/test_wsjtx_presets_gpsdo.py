@@ -71,6 +71,30 @@ def test_gpsdo_reminder_hid_nmea():
     assert s["gps_ok"] and s["pll_ok"] and s["loss_count"] == 3
     s = gpsdo.parse_lb_status(bytes([0, 0, 2]))
     assert s["gps_ok"] and not s["pll_ok"]
+    assert gpsdo.parse_lb_status(bytes([0, 0x84, 0xb5, 0x62]))["error"]          # a UBX data chunk, not a status
+    # status report and feature (configuration) report read from a mini GPS Reference Clock (fw 1.17) set to 10 MHz
+    s = gpsdo.parse_lb_status(bytes.fromhex("00 04 00 62 05 01 02 00 06 01 0f 38"))
+    assert s["gps_ok"] and s["pll_ok"] and s["loss_count"] == 4
+    cfg = gpsdo.parse_lb_config(bytes.fromhex("00 03 03 40 7d 01 00 00 00 06 69 18 00 01 79 00 00 79 00 00 00 09 14 00"))
+    assert cfg["f_ref_hz"] == 97600 and cfg["n2_ls"] == 6250 and cfg["nc1_ls"] == 122 and cfg["drive_ma"] == 32
+    assert cfg["bw"] == 9 and abs(cfg["f_out_hz"] - 10e6) < 1e-6
+    # UBX-NAV-PVT: 3D fix, 13 satellites, split across HID chunks with junk around it
+    p = bytearray(92)
+    p[4:12] = bytes([0xea, 0x07, 11, 25, 17, 3, 7, 0x37])
+    p[20], p[21], p[23] = 3, 0x03, 13
+    p[24:28] = (132748499).to_bytes(4, "little", signed=True)
+    p[28:32] = (415259678).to_bytes(4, "little", signed=True)
+    body = bytes([0x01, 0x07, 92, 0]) + bytes(p)
+    a = c = 0
+    for x in body:
+        a = (a + x) & 0xFF
+        c = (c + a) & 0xFF
+    frame = b"\xb5\x62" + body + bytes([a, c])
+    pvt = gpsdo.parse_ubx_pvt(b"\xff\x00\xb5\x62\x01" + frame + b"\xb5\x62\x01\x07\x5c")
+    assert pvt["sats_used"] == 13 and pvt["fix"] == "3D" and pvt["fix_ok"] and abs(pvt["lat"] - 41.5259678) < 1e-6
+    assert pvt["gps_utc"] == "2026-11-25 17:03:07"
+    assert gpsdo.parse_ubx_pvt(frame[:-1] + b"\x00") is None                      # bad checksum
+    assert gpsdo._lb_cfg_msg(1, 7, 10)[:9] == bytes([0, 8, 6, 1, 8, 0, 1, 7, 10]) and len(gpsdo._lb_cfg_msg(1, 7, 0)) == 61
 
     def ck(b):
         x = 0
