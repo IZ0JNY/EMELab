@@ -84,7 +84,9 @@ def _wx_test_cb():
                  f"{d['rh']:.0f} %" if d.get("rh") is not None else None,
                  f"{d['p_hpa']:.1f} hPa" if d.get("p_hpa") is not None else None]
         _st.session_state["em_wx_msg"] = ("ok", i18n.tr("Stazione meteo letta") + ": " + " · ".join(x for x in parts if x) +
-                                          f" ({d.get('wx_utc', '')})")
+                                          f" ({d.get('wx_utc', '')})" +
+                                          (f" — file: {d['station_file']}"
+                                           if d.get("station_file") and d["station_file"] != url else ""))
     except Exception as e:
         _st.session_state["em_wx_msg"] = ("err", i18n.tr("Stazione meteo non letta") + f": {str(e)[:300]}")
 
