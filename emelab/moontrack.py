@@ -370,6 +370,17 @@ def ref_point(w: int, h: int, rf_az_deg: float, rf_el_deg: float, scale: float, 
     return (w - 1) / 2 + dx, (h - 1) / 2 - dy
 
 
+TOL_CHOICES = (0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3)
+
+
+def suggested_tol(hpbw_deg: float, max_echo_loss_db: float = 1.0) -> float:
+    """Largest offset whose echo loss (2 × 12 (θ/θ₃dB)² dB) stays within max_echo_loss_db, rounded down to 0.005°."""
+    if not hpbw_deg or hpbw_deg <= 0:
+        return 0.0
+    t = hpbw_deg * math.sqrt(max_echo_loss_db / 24.0)
+    return max(0.005, math.floor(t / 0.005 + 1e-9) * 0.005)
+
+
 def pointing_loss_db(off_deg: float, hpbw_deg: float) -> float:
     """Loss of a Gaussian beam pointed off_deg away: 12 (θ/θ₃dB)² dB, one way (twice for the echo)."""
     return 12.0 * (off_deg / hpbw_deg) ** 2 if hpbw_deg > 0 else 0.0
@@ -478,3 +489,118 @@ def beep_wav(freq: float = 1000.0, seconds: float = 0.6, rate: int = 16000) -> b
         w.setframerate(rate)
         w.writeframes(y.tobytes())
     return buf.getvalue()
+
+
+# ------------------------------------------------------------------ Sun alignment (camera ↔ radio beam)
+def fit_peak_1d(off: list[float], db: list[float]) -> float | None:
+    """Offset of the noise maximum from readings across the Sun: parabola through the top part of the scan
+    (the points within 3 dB of the best one, at least the best three)."""
+    x, y = np.asarray(off, float), np.asarray(db, float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    if len(x) < 3 or len(set(x.tolist())) < 3:
+        return None
+    top = y >= y.max() - 3.0
+    if top.sum() < 3:
+        top = np.zeros_like(top)
+        top[np.argsort(y)[-3:]] = True
+    a, b, _ = np.polyfit(x[top], y[top], 2)
+    if a >= 0:                                       # no maximum: take the best reading
+        return float(x[np.argmax(y)])
+    p = -b / (2 * a)
+    return float(np.clip(p, x.min(), x.max()))
+
+
+def fit_peak_2d(az: list[float], el: list[float], db: list[float]) -> tuple[float, float] | None:
+    """Maximum of a Sun-noise heatmap (offsets Az, El → dB): quadratic surface through the points within 3 dB of the
+    best one; with too few points, the weighted centre of the top points."""
+    x, y, z = (np.asarray(v, float) for v in (az, el, db))
+    ok = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    x, y, z = x[ok], y[ok], z[ok]
+    if len(z) < 3:
+        return None
+    top = z >= z.max() - 3.0
+    if top.sum() >= 6 and len(set(x[top].tolist())) >= 3 and len(set(y[top].tolist())) >= 3:
+        xt, yt, zt = x[top], y[top], z[top]
+        A = np.c_[xt * xt, yt * yt, xt * yt, xt, yt, np.ones_like(xt)]
+        c, *_ = np.linalg.lstsq(A, zt, rcond=None)
+        M = np.array([[2 * c[0], c[2]], [c[2], 2 * c[1]]])
+        if np.all(np.linalg.eigvalsh(M) < 0):        # a real maximum
+            px, py = np.linalg.solve(M, [-c[3], -c[4]])
+            if x.min() <= px <= x.max() and y.min() <= py <= y.max():
+                return float(px), float(py)
+    w = 10 ** (z[top] / 10) - 10 ** ((z.max() - 3.0) / 10) * 0.999
+    return float((x[top] * w).sum() / w.sum()), float((y[top] * w).sum() / w.sum())
+
+
+def parse_heatmap(text: str) -> dict:
+    """Sun-noise heatmap or scan from a text/CSV file → {"az": [...], "el": [...], "db": [...]} (offsets in degrees).
+    Accepts a list (columns named az/el/sn or dB, or simply three numbers per row: Az offset, El offset, dB) or a
+    matrix (first row the Az offsets, first column the El offsets, cells in dB)."""
+    import re
+    rows = []
+    header = None
+    for line in text.splitlines():
+        s = line.strip().lstrip(";").strip()
+        if not s:
+            continue
+        parts = [p.strip() for p in re.split(r"[;,\t]|\s{2,}|\s(?=[-+]?\d)", s) if p.strip()]
+        nums = []
+        for p in parts:
+            try:
+                nums.append(float(p.replace(",", ".")))
+            except ValueError:
+                nums.append(None)
+        if all(v is None for v in nums):
+            header = [p.lower() for p in parts]
+            continue
+        rows.append(nums)
+    out = {"az": [], "el": [], "db": []}
+    if not rows:
+        return out
+    # matrix: first row has an empty/None corner and numbers; the others start with an El offset
+    if len(rows) > 2 and rows[0] and (rows[0][0] is None or len(rows[0]) == len(rows[1]) - 1) and len(rows[1]) >= 4:
+        azs = [v for v in (rows[0][1:] if rows[0][0] is None else rows[0])]
+        for r in rows[1:]:
+            if not r or r[0] is None:
+                continue
+            for a, v in zip(azs, r[1:]):
+                if a is not None and v is not None:
+                    out["az"].append(a); out["el"].append(r[0]); out["db"].append(v)
+        if out["db"]:
+            return out
+    idx = (0, 1, 2)
+    if header:
+        def find(*names):
+            for i, h in enumerate(header):
+                if any(n in h for n in names):
+                    return i
+            return None
+        ia, ie, iv = find("az"), find("el"), find("sn", "db", "noise", "rumore", "power", "level")
+        if None not in (ia, ie, iv):
+            shift = len(header) - len(rows[0])          # date columns split differently: align from the right
+            idx = (ia - shift, ie - shift, iv - shift) if shift > 0 else (ia, ie, iv)
+    for r in rows:
+        try:
+            a, e, v = r[idx[0]], r[idx[1]], r[idx[2]]
+        except IndexError:
+            continue
+        if None not in (a, e, v):
+            out["az"].append(a); out["el"].append(e); out["db"].append(v)
+    return out
+
+
+def best_alignment_band(beams: dict[float, float], sun_diam: float = 0.53) -> float | None:
+    """Band for the Sun alignment: the narrowest beam still wider than ~1.2 × the Sun (a sharp, round peak);
+    if all are narrower, the widest of them. beams = {f_ghz: hpbw_deg}."""
+    if not beams:
+        return None
+    ok = {f: h for f, h in beams.items() if h >= 1.2 * sun_diam}
+    return min(ok, key=ok.get) if ok else max(beams, key=beams.get)
+
+
+def rf_from_sun(sun_cam: tuple[float, float], peak: tuple[float, float] = (0.0, 0.0)) -> tuple[float, float]:
+    """Radio centre in the camera (Az, El offsets from the image centre). sun_cam: where the Sun is in the camera;
+    peak: how far the dish still is from the noise maximum (0 if it is already on it). Turning the dish by +peak
+    moves the Sun by −peak in the image, and then the beam is on the Sun."""
+    return sun_cam[0] - peak[0], sun_cam[1] - peak[1]
