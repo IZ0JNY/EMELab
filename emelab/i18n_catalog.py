@@ -1102,7 +1102,7 @@ ENTRIES = [
     ('Solo lettura. In DriverDish: Setup → abilita il server telnet (porta 9999).', 'Read only. In DriverDish: Setup → enable the telnet server (port 9999).'),
     ("EA3HMJ Tracking Software Suite (DriverDish, DishController, Astroserver, SNserver): file DriftScan e corrections.txt, server telnet e server delle effemeridi letti da EMELab", "EA3HMJ Tracking Software Suite (DriverDish, DishController, Astroserver, SNserver): DriftScan and corrections.txt files, telnet server and ephemeris servers read by EMELab"),
     ("deconvoluzione delle scansioni a deriva di Sole e Luna (Lunar Drift Scans)", "deconvolution of Sun and Moon drift scans (Lunar Drift Scans)"),
-    ("⚡ AMPLI", "⚡ AMP"),
+    ("⚡ RF Power", "⚡ RF Power"),
     ("non EME o sotto i 10 GHz, lasciati fuori", "not EME or below 10 GHz, left out"),
     ('🆕 Nuova versione disponibile', '🆕 New version available'),
     ('**EMELab {new}** è disponibile (stai usando la {cur}).', '**EMELab {new}** is available (you are using {cur}).'),
