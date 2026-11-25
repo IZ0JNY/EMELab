@@ -120,7 +120,7 @@ TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
-    ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ Potenza", ui._power_tab),
+    ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ AMPLI", ui._power_tab),
      ("design", "🧪 Laboratorio", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
     ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
 OFF_BY_DEFAULT = {"camera"}           # shown only when chosen in «Schede da mostrare»

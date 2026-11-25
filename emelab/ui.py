@@ -2346,9 +2346,9 @@ def _sspa_tab(D):
     st.caption("Amplificatori a stato solido: compressione con il modello di Rapp, combinazione di più moduli, perdite fino "
                "al feed, consumo e dissipatore. In Q65 si trasmette un periodo sì e uno no (50 %).")
     c = st.columns(4)
-    _st.session_state.setdefault("sp_psat", 43.0)          # set by the device chosen in ⚡ Potenza
+    _st.session_state.setdefault("sp_psat", 43.0)          # set by the device chosen in ⚡ AMPLI
     psat = c[0].number_input("Psat di un modulo (dBm)", 10.0, 60.0, step=0.5, key="sp_psat")
-    _st.session_state.setdefault("sp_g", 30.0)          # set by the device chosen in ⚡ Potenza
+    _st.session_state.setdefault("sp_g", 30.0)          # set by the device chosen in ⚡ AMPLI
     g = c[1].number_input("Guadagno (dB)", 5.0, 60.0, step=0.5, key="sp_g")
     s_r = c[2].number_input("Morbidezza di Rapp s", 0.5, 10.0, 2.0, 0.5, key="sp_s", help="2 tipico GaAs/GaN; alto = limitatore netto")
     pin = c[3].number_input("Potenza di pilotaggio (dBm)", -20.0, 40.0, 10.0, 0.5, key="sp_pin")
@@ -2390,7 +2390,7 @@ def _twt_tab(D):
     st.caption("Tubo a onda progressiva: caratteristica AM/AM e AM/PM con il modello di Saleh, alimentazioni, efficienza e "
                "perdite fino al feed. Il tubo va pilotato vicino alla saturazione, non oltre: oltre il picco la potenza cala.")
     c = st.columns(4)
-    _st.session_state.setdefault("tw_ps", 20.0)          # set by the device chosen in ⚡ Potenza
+    _st.session_state.setdefault("tw_ps", 20.0)          # set by the device chosen in ⚡ AMPLI
     psat = c[0].number_input("Potenza di saturazione (W)", 1.0, 500.0, step=1.0, key="tw_ps")
     g0 = c[1].number_input("Guadagno di piccolo segnale (dB)", 20.0, 60.0, 35.0, 0.5, key="tw_g")
     pin = c[2].number_input("Pilotaggio (dBm)", -20.0, 30.0, 10.0, 0.5, key="tw_pin")
