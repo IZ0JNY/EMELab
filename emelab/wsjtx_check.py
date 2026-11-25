@@ -19,7 +19,10 @@ Band presets (settings «wsjtx_presets», editable in the 📻 WSJT-X tab), from
   Max Drift 0, Auto Seq on;
 - 10 GHz: Q65-60D, Tx 1000 Hz, Rx 1000 Hz, Doppler tracking CFOM (Constant Frequency On Moon); the rest as 24 GHz;
 - every band: Split Operation «Rig»;
-- the higher bands copy 24 GHz (assumed values, to be checked)."""
+- 47 and 76 GHz: Q65-60E with the 24 GHz values (assumed, shown in orange until the user saves them);
+- 122 and 134 GHz copy 24 GHz too (assumed).
+Every value of every band is editable in the tab and stored in the settings; EMELab only compares and, with UDP
+Configure, corrects mode/T/R/F Tol/Rx: it never writes WSJT-X.ini."""
 from __future__ import annotations
 
 from . import dx, stations
@@ -43,6 +46,8 @@ PRESET_DEFAULT = {"config": "EME mm-wave", "tx_df": 700, "rx_df": 700, "f_tol": 
                   "tx_first": True, "auto_seq": True, "doppler": "CFOM", "split": "Rig"}
 PRESET_BAND = {"10G": {"tx_df": 1000, "rx_df": 1000, "doppler": "CFOM"}}
 PRESET_GIVEN = {"10G", "24G"}       # bands whose preset IZ0JNY gave; the others are assumed copies of 24 GHz
+EDITABLE_BANDS = ("10G", "24G", "47G", "76G")       # bands with a preset editor in the WSJT-X tab
+Q65_PRESET_MODES = tuple(f"{tr}{s}" for tr in (15, 30, 60, 120, 300) for s in "ABCDE")   # every Q65 code WSJT-X offers
 DOPPLER = {"CFOM": "CFOM (Constant Frequency On Moon)", "Full": "Full Doppler to DX Grid", "OwnEcho": "Own Echo",
            "OnDxEcho": "On DX Echo", "CallDx": "Call DX", "None": "nessuno"}
 SPLIT = ("Rig", "Fake It", "None")
@@ -62,25 +67,41 @@ def preset(band: str, settings: dict | None = None) -> dict:
         settings = _s.load_settings()
     mine = (settings.get("wsjtx_presets") or {}).get(band) or {}
     p = {**PRESET_DEFAULT, **PRESET_BAND.get(band, {}), **{k: v for k, v in mine.items() if k in PRESET_DEFAULT}}
-    try:
-        mode = dx.band_mode(band, settings)
-    except Exception:
-        mode = Q65_STANDARD.get(band, "60E")
+    mode = mine.get("mode")                 # a submode without a decoding threshold in dx (e.g. 120D) lives here
+    if mode not in Q65_PRESET_MODES:
+        try:
+            mode = dx.band_mode(band, settings)
+        except Exception:
+            mode = Q65_STANDARD.get(band, "60E")
     return {**p, "mode": mode, "tr": int(mode[:-1]), "submode": mode[-1], "saved": bool(mine),
             "assumed": not mine and band not in PRESET_GIVEN}
 
 
 def save_preset(band: str, **values) -> dict:
-    """Store the band's preset (only the known keys); the Q65 submode goes to «q65_modes» like the Signal tab."""
+    """Store the band's preset (only the known keys). The Q65 submode goes to «q65_modes» like the Signal tab when
+    EMELab has a decoding threshold for it (60D, 60E, 120E); any other Q65 code (e.g. 30C) stays in the preset."""
     from . import settings as _s
     sets = _s.load_settings()
     all_p = dict(sets.get("wsjtx_presets") or {})
     mode = values.pop("mode", None)
-    all_p[band] = {**(all_p.get(band) or {}), **{k: v for k, v in values.items() if k in PRESET_DEFAULT}}
-    kw = {"wsjtx_presets": all_p}
+    new = {**(all_p.get(band) or {}), **{k: v for k, v in values.items() if k in PRESET_DEFAULT}}
+    new.pop("mode", None)
+    kw = {}
     if mode in dx.Q65_MODES:
         kw["q65_modes"] = {**(sets.get("q65_modes") or {}), band: mode}
+    elif mode in Q65_PRESET_MODES:
+        new["mode"] = mode
+    all_p[band] = new
+    kw["wsjtx_presets"] = all_p
     return _s.save_settings(**kw)
+
+
+def reset_preset(band: str) -> dict:
+    """Forget the user's preset of the band: back to EMELab's defaults (the Q65 choice of the Signal tab stays)."""
+    from . import settings as _s
+    all_p = dict(_s.load_settings().get("wsjtx_presets") or {})
+    all_p.pop(band, None)
+    return _s.save_settings(wsjtx_presets=all_p)
 
 
 def check(status: dict, station: dict | None = None, settings: dict | None = None) -> list[dict]:

@@ -3260,6 +3260,8 @@ def _wsjtx_tab(D):
             with st.expander("⚠️ Messaggi"):
                 for e in list(svc.errors)[-10:]:
                     st.text(e)
+        from emelab import ui_wsjtx_panel
+        ui_wsjtx_panel._preset_editors(None)        # presets can be written also with WSJT-X closed
         return
     s = svc.status
     if not svc.last_seen:
