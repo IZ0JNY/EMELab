@@ -1,3 +1,25 @@
+## EMELab 0.1.6 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.6.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.6-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📻 WSJT-X:** preset per banda con un pannello in tempo reale; controllo dei parametri del QSO con un avviso a comparsa (chiuso due volte non compare più). EMELab legge da `WSJT-X.ini` Doppler tracking, Split (preset «Rig»), Tx even/1st, Max Drift e Auto Seq. Nuova icona del satellite.
+- **🛰️ Nuova scheda GPSDO:** catalogo con il rumore di fase riportato a 10, 24 e 47 GHz, stima della perdita in Q65, stima da un file WAV e lettura via USB dello stato di aggancio del Leo Bodnar mini.
+- **ALL.TXT di WSJT-X seguito in tempo reale:** vista come in WSJT-X e statistiche degli ascolti da 10 GHz in su.
+- **Stazioni EME:** solo stazioni EME da CALL3.TXT e ALL.TXT, conferma oltre 300 stazioni, «Svuota tutto e re-importa» vicino all'importazione, tabella più veloce con ricerca.
+- **Log QSO:** azimut della Luna (tuo e del DX) e QTH, nome e cognome da QRZ.com.
+- **Nomi delle schede:** Puntamento diventa «Tracking», Progettazione diventa «Laboratorio».
+- **🆕 Avviso di nuova versione:** ora funziona per tutti, perché il repository è pubblico.
+
+### 🇬🇧 What's new
+- **📻 WSJT-X:** per-band presets with a live panel; QSO parameter check with a pop-up (closed twice, it does not come back). EMELab reads Doppler tracking, Split (preset «Rig»), Tx even/1st, Max Drift and Auto Seq from `WSJT-X.ini`. New satellite icon.
+- **🛰️ New GPSDO tab:** catalogue with phase noise scaled to 10, 24 and 47 GHz, Q65 loss estimate, estimate from a WAV file and USB read of the Leo Bodnar mini lock state.
+- **WSJT-X ALL.TXT followed live:** a WSJT-X-like view and statistics of what you heard from 10 GHz up.
+- **EME Stations:** only EME stations from CALL3.TXT and ALL.TXT, confirmation above 300 stations, «Empty all and re-import» next to the import, faster table with search.
+- **QSO log:** Moon azimuth (yours and the DX's) and QTH, name and surname from QRZ.com.
+- **Tab names:** Pointing becomes «Tracking», Design becomes «Laboratory».
+- **🆕 New-version notice:** now works for everyone, since the repository is public.
+
 ## EMELab 0.1.5 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.5.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.5-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
