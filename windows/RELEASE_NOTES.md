@@ -1,3 +1,43 @@
+## EMELab 0.1.1 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.1.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.1-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **Interfaccia in italiano e in inglese:** si sceglie nella barra laterale.
+- **📻 Collegamento con WSJT-X** (protocollo UDP):
+  - riceve frequenza, modo e decodifiche;
+  - registra nel Log QSO ogni QSO che confermi in WSJT-X, con tutte le condizioni di quel momento (Luna ai due capi, distanze, Doppler, spread, atmosfera, meteo);
+  - colora in WSJT-X chi ti manca e chi hai già collegato;
+  - imposta il sottomodo Q65 consigliato in base al mutual spread con il DX.
+- **📜 Storico della stazione:** parabola, potenza e ricevitore per ogni banda e periodo. Il segnale atteso e la correzione appresa dai QSO usano il periodo giusto per ogni QSO, con la tabella della correzione periodo per periodo.
+- **🎯 Puntamento:**
+  - scansione del Sole (a croce o a deriva) adattata con il modello disco ⊗ fascio: larghezza del fascio vera, errore di puntamento e fattore Y, salvati nel diario;
+  - modello di puntamento: zero AZ ed EL, inclinazione dell'asse, flessione, con il residuo rispetto a HPBW/10.
+- **EA3HMJ Tracking Software Suite (DriverDish):**
+  - importa le scansioni a deriva (DriftScan) e la mappa delle correzioni (corrections.txt);
+  - legge posizione, offset e stato dell'antenna dal server telnet di DriverDish, solo in lettura.
+- **Polarizzazione:** sfasamento spaziale (Dpol) e convenzione H/V per regione (orizzontale in Nord America, verticale altrove), modificabile per ogni stazione.
+
+### 🇬🇧 What's new
+- **Italian and English interface:** chosen in the sidebar.
+- **📻 WSJT-X link** (UDP protocol):
+  - receives frequency, mode and decodes;
+  - logs every QSO you accept in WSJT-X with all the conditions of that moment (Moon at both ends, distances, Doppler, spread, atmosphere, weather);
+  - colours in WSJT-X the stations you still need and the ones already worked;
+  - sets the Q65 submode recommended for the mutual spread with the DX.
+- **📜 Station history:** dish, power and receiver for each band and period. The expected signal and the correction learned from the QSOs use the right period for each QSO, with a table of the correction period by period.
+- **🎯 Pointing:**
+  - sun scan (cross or drift) fitted with the disc ⊗ beam model: true beamwidth, pointing error and Y-factor, saved in the diary;
+  - pointing model: AZ and EL zero, axis tilt, sag, with the residual compared with HPBW/10.
+- **EA3HMJ Tracking Software Suite (DriverDish):**
+  - imports the drift scans (DriftScan) and the correction map (corrections.txt);
+  - reads the dish position, offsets and status from DriverDish's telnet server, read-only.
+- **Polarisation:** spatial offset (Dpol) and H/V convention by region (horizontal in North America, vertical elsewhere), editable for each station.
+
+Requisiti / Requirements: Windows 10/11 64-bit.
+
+---
+
 ## EMELab 0.1.0 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.0.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.0-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
