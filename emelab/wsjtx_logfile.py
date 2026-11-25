@@ -18,27 +18,62 @@ from . import logbook
 EOR = re.compile(rb"<eor>", re.I)
 
 
-def default_paths() -> list[Path]:
-    """Where WSJT-X keeps wsjtx_log.adi (File → Open log directory), main instance first, then --rig-name instances."""
+def _bases() -> list[Path]:
     home = Path.home()
     if sys.platform.startswith("win"):
-        base = [Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")]
+        out = [Path(os.environ["LOCALAPPDATA"])] if os.environ.get("LOCALAPPDATA") else []
+        out.append(home / "AppData" / "Local")
+        if os.environ.get("USERPROFILE"):
+            out.append(Path(os.environ["USERPROFILE"]) / "AppData" / "Local")
     elif sys.platform == "darwin":
-        base = [home / "Library" / "Application Support"]
+        out = [home / "Library" / "Application Support"]
     else:
-        base = [Path(os.environ.get("XDG_DATA_HOME") or home / ".local" / "share")]
+        out = [Path(os.environ["XDG_DATA_HOME"])] if os.environ.get("XDG_DATA_HOME") else []
+        out.append(home / ".local" / "share")
+    seen, uniq = set(), []
+    for b in out:
+        k = str(b).lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(b)
+    return uniq
+
+
+def default_paths() -> list[Path]:
+    """Where WSJT-X keeps wsjtx_log.adi (File → Open log directory): main instance first, then --rig-name instances
+    («WSJT-X - IC9700») and WSJT-X Improved / JTDX, which use the same file name."""
     out = []
-    for b in base:
+    for b in _bases():
         out.append(b / "WSJT-X" / "wsjtx_log.adi")
-        try:
-            out += sorted(p / "wsjtx_log.adi" for p in b.glob("WSJT-X - *") if p.is_dir())
-        except OSError:
-            pass
+        for pat in ("WSJT-X*", "JTDX*"):
+            try:
+                out += sorted(p / "wsjtx_log.adi" for p in b.glob(pat) if p.is_dir() and p.name != "WSJT-X")
+            except OSError:
+                pass
     return out
 
 
 def find_default() -> Path | None:
-    return next((p for p in default_paths() if p.is_file()), None)
+    """The wsjtx_log.adi that exists; with more than one, the one written most recently."""
+    found = [p for p in default_paths() if p.is_file()]
+    if not found:
+        return None
+    try:
+        return max(found, key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return found[0]
+
+
+def clean_path(text: str) -> str:
+    """The path as typed or pasted: without the quotes Windows adds with «Copy as path»; a folder (the one WSJT-X
+    opens with File → Open log directory) becomes the wsjtx_log.adi inside it; %LOCALAPPDATA% and ~ are expanded."""
+    p = (text or "").strip().strip('"').strip("'").strip()
+    if not p:
+        return ""
+    p = os.path.expanduser(os.path.expandvars(p))
+    if Path(p).is_dir():
+        p = str(Path(p) / "wsjtx_log.adi")
+    return p
 
 
 class LogTail:

@@ -10,6 +10,8 @@ from datetime import datetime
 
 import numpy as np
 
+from .stations import band_label
+
 A4 = (8.27, 11.69)
 
 
@@ -68,7 +70,7 @@ def log_pdf(qsos: list[dict], station: str = "") -> bytes:
     rows = []
     for q in qsos:
         c = q.get("calc") or {}
-        rows.append([q["utc"].strftime("%Y-%m-%d %H:%M"), q["call"], q.get("band") or "", _mode(q),
+        rows.append([q["utc"].strftime("%Y-%m-%d %H:%M"), q["call"], band_label(q.get("band")), _mode(q),
                      q.get("rst_sent") or "", q.get("rst_rcvd") or "", q.get("locator") or "", _fmt(c.get("ground_km"), 0),
                      _fmt(c.get("eme_path_km"), 0), _fmt(c.get("moon_el")), _fmt(c.get("dx_moon_el")), _fmt(c.get("mutual_spread_hz"), 0)])
     with PdfPages(buf) as pdf:
@@ -86,7 +88,7 @@ def _map_page(pdf, qsos, station):
     _header(fig, "Mappa dei QSO", station)
     ax = fig.add_axes([0.06, 0.40, 0.88, 0.50])
     world_outline(ax)
-    cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
+    cols = logbook.BAND_COLORS
     for q in qsos:
         my, dx = logbook.latlon(q.get("my_locator")), logbook.latlon(q.get("locator"))
         if my and dx:
@@ -94,7 +96,7 @@ def _map_page(pdf, qsos, station):
             ax.plot(lon, lat, color=cols.get(q.get("band"), "0.4"), lw=0.8, alpha=0.8)
             ax.plot(dx[1], dx[0], "o", ms=3, color=cols.get(q.get("band"), "0.4"))
     for b, c in cols.items():
-        ax.plot([], [], color=c, label=b)
+        ax.plot([], [], color=c, label=band_label(b))
     ax.legend(fontsize=7, loc="lower left")
     ax.set_xlim(-180, 180); ax.set_ylim(-90, 90); ax.set_aspect("equal")
     ax.set_xlabel("°E"); ax.set_ylabel("°N")
@@ -136,10 +138,10 @@ def diary_pdf(rows: list[dict], station: str = "", advice: list[str] | None = No
     from . import db as edb
     plt = _plt()
     buf = io.BytesIO()
-    head = ["Data UTC", "GHz", "Tipo", "Y (dB)", "Y atteso", "ΔY", "SNR", "EL", "°C", "UR %", "Note"]
+    head = ["Data UTC", "Banda", "Tipo", "Y (dB)", "Y atteso", "ΔY", "SNR", "EL", "°C", "UR %", "Note"]
     tab = []
     for r in rows:
-        tab.append([r["utc"].replace("T", " ").replace("Z", "")[:16], _fmt(r.get("band_ghz"), 3), _tr(edb.KINDS.get(r["kind"], r["kind"]))[:28],
+        tab.append([r["utc"].replace("T", " ").replace("Z", "")[:16], band_label(r.get("band_ghz")), _tr(edb.KINDS.get(r["kind"], r["kind"]))[:28],
                     _fmt(r.get("y_db"), 2), _fmt(r.get("_y_exp"), 2), _fmt(r.get("_y_delta"), 2), _fmt(r.get("snr_db")),
                     _fmt(r.get("_el")), _fmt(r.get("t_c")), _fmt(r.get("rh"), 0), (r.get("notes") or "")[:30]])
     with PdfPages(buf) as pdf:
@@ -176,7 +178,7 @@ def qsl_labels_pdf(qsos: list[dict], my_call: str, my_locator: str = "", cols: i
                     fig.text(x0 + 0.02, y0 + h - 0.045, q["name"][:40], fontsize=7)
                 if q.get("address"):
                     fig.text(x0 + 0.02, y0 + h - 0.060, q["address"][:48], fontsize=6)
-                fig.text(x0 + 0.02, y0 + 0.040, f"{q['utc']:%Y-%m-%d}  {q['utc']:%H:%M} UTC  {q.get('band') or ''}  "
+                fig.text(x0 + 0.02, y0 + 0.040, f"{q['utc']:%Y-%m-%d}  {q['utc']:%H:%M} UTC  {band_label(q.get('band'))}  "
                          f"{q.get('mode') or ''}  {_tr('rapporto')} {q.get('rst_sent') or ''}", fontsize=6.5)
                 fig.text(x0 + 0.02, y0 + 0.020, f"EME · {my_call} {my_locator} · {_tr('Grazie per il QSO')}", fontsize=6.5, color="0.3")
             pdf.savefig(fig); plt.close(fig)
