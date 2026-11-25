@@ -327,6 +327,28 @@ def _editor_rows(rows):
     return pd.DataFrame([{i18n.tr(k): (i18n.tr(v) if isinstance(v, str) else v) for k, v in r.items()} for r in rows])
 
 
+def _blank_cols(df):
+    """Number columns with empty cells become text columns: the editor shows a blank there, never "None".
+    Returns the table and the column_config that keeps those columns editable; _num reads them back."""
+    import pandas as pd
+    cfg = {}
+    for c in df.columns:
+        v = df[c]
+        if v.isna().any() and not v.dropna().map(lambda x: isinstance(x, str)).any():
+            df[c] = v.map(lambda x: "" if x is None or pd.isna(x) else f"{x:g}").astype(object)
+            cfg[c] = _st.column_config.TextColumn(c, alignment="right")
+    return df, cfg
+
+
+def _num(v):
+    """A number typed in an editable table (float, text or empty) → float, or None when empty or not a number."""
+    try:
+        f = float(str(v).replace(",", ".")) if v is not None and str(v).strip() not in ("", "None", "nan") else None
+    except ValueError:
+        return None
+    return None if f is None or f != f else f
+
+
 def _editor_back(ed, cols):
     if i18n.get_lang() == "it":
         return ed.to_dict("records")
@@ -819,32 +841,38 @@ def _stations_tab(D):
             _pa0ply_update(D)
         upp = st.file_uploader("…oppure carica i PDF", type=["pdf"], accept_multiple_files=True, key="st_pa0ply_up")
     if up3 is not None and st.button("📥 Importa CALL3.TXT", key="st_call3_go"):
-        rows = stn.parse_call3(up3.getvalue().decode("utf-8", "replace"))
-        for r in rows:
-            D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
-        D.commit()
-        D.log_station_import("call3", up3.name, len(rows))
-        st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
+        allrows = stn.parse_call3(up3.getvalue().decode("utf-8", "replace"))
+        rows = stn.eme_only(allrows, D.eme_10g_calls())
+        st.info(i18n.tr("Righe in CALL3.TXT") + f": {len(allrows)} · " + i18n.tr("stazioni EME da 10 GHz in su tenute")
+                + f": {len(rows)}")
+        if not rows:
+            st.warning("CALL3.TXT non dice chi fa EME: completa solo il locator delle stazioni EME già note. "
+                       "Importa prima la EME Directory (o ALL.TXT, o il log QSO), poi CALL3.TXT.")
+        _import_or_ask(D, "call3", (rows, up3.name), {r["call"] for r in rows})
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
-        dec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
-        summ = stn.heard_summary(dec)
-        for call, s in summ.items():
-            old = (D.station_of(call) or {}).get("data", {}).get("heard", {})
-            heard = {"n": old.get("n", 0) + s["n"], "first": min(str(s["first"]), old.get("first", "9999")),
-                     "last": max(str(s["last"]), old.get("last", "")), "snr_best": max(s["snr_best"], old.get("snr_best", -99)),
-                     "snr_median": s["snr_median"], "bands": sorted(set(old.get("bands", [])) | s["bands"]),
-                     "modes": sorted(set(old.get("modes", [])) | s["modes"])}
-            D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
-        D.commit()
-        D.log_station_import("heard", upa.name, len(summ))
-        st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
+        from emelab import alltxt
+        lines = upa.getvalue().decode("utf-8", "replace").splitlines()
+        rows = alltxt.parse_eme(lines)              # only 10 GHz and up, Rx and Tx
+        st.info(i18n.tr("Righe in ALL.TXT") + f": {len(lines)} · " + i18n.tr("righe da 10 GHz in su tenute") + f": {len(rows)}")
+        _import_or_ask(D, "heard", (rows, upa.name), {r["call"] for r in rows if r["rxtx"] == "Rx" and r["call"]})
     if upp and st.button("📥 Importa i PDF", key="st_pa0ply_go"):
         _pa0ply_import(D, [(f.name, f.getvalue()) for f in upp])
+    _import_confirm(D)
+    _stations_quick_clear(D)
     rows = D.stations()
     if rows:
         import pandas as pd
         tab = []
-        for r in rows:
+        shown = rows
+        if len(rows) > TABLE_MAX:
+            q = st.text_input("🔎 Cerca nominativo o locator", "", key="st_find").strip().upper()
+            if q:
+                shown = [r for r in rows if q in r["call"] or q in (r.get("locator") or "").upper()]
+            if len(shown) > TABLE_MAX:
+                st.caption(i18n.tr("Mostro le prime") + f" {TABLE_MAX} " + i18n.tr("stazioni su") + f" {len(shown)}" + ". " +
+                           i18n.tr("Scrivi un nominativo per trovare le altre."))
+                shown = shown[:TABLE_MAX]
+        for r in shown:
             d = r.get("data", {})
             h = d.get("heard", {})
             dirb = D.directory_of(d)
@@ -852,7 +880,8 @@ def _stations_tab(D):
                         "QTH": r.get("qth") or "", "Bande (directory)": _bands_text(dirb),
                         "Stazione": _station_text(dirb), "✏️": "✏️" if d.get("manual") else "",
                         "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
-                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": _bands_text(h.get("bands", []))})
+                        "SNR migliore": _blank(h.get("snr_best")), "SNR medio": _blank(h.get("snr_mean")),
+                        "Bande sentite": _bands_text(h.get("bands", []))})
         df = pd.DataFrame(tab)
         cols = list(df.columns)
         df.columns = [i18n.tr(c) for c in cols]
@@ -871,6 +900,9 @@ def _stations_tab(D):
         _qrz_box(D, [r["call"] for r in rows])
     if rows or D.station_imports():
         _stations_manage(D, [r["call"] for r in rows])
+
+
+TABLE_MAX = 500                # rows shown at once in the EME stations table (it stays fast with any database)
 
 
 def _station_text(dirb: dict) -> str:
@@ -1025,24 +1057,101 @@ def _pa0ply_update(D):
 
 def _pa0ply_import(D, files):
     from emelab import stations as stn
-    n = 0
+    parsed = []
     for name, data in files:
-        nb = 0
         nl = name.lower()
         band = "10G" if nl.startswith(("10368", "10g")) else "24G" if nl.startswith(("24048", "24g")) else \
             "47G" if nl.startswith("47") else "76G" if nl.startswith("76") else None
-        if band is None:
-            continue
-        for r in stn.parse_pa0ply(stn.pdf_text(data), band):
-            old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
-            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
-            D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
-            n += 1
-            nb += 1
+        if band is not None:
+            parsed.append((name, band, stn.parse_pa0ply(stn.pdf_text(data), band)))
+    _import_or_ask(D, "directory", parsed, {r["call"] for _, _, rows in parsed for r in rows})
+
+
+IMPORT_ASK_OVER = 300          # above this many stations in one import EMELab asks before going on
+
+
+def _import_or_ask(D, kind, payload, calls: set):
+    """Import at once, or — with more than IMPORT_ASK_OVER stations — keep it waiting for an OK."""
+    if len(calls) > IMPORT_ASK_OVER:
+        have = {r["call"] for r in D.stations()}
+        st.session_state["st_import_pending"] = {"kind": kind, "payload": payload, "n": len(calls),
+                                                 "new": len(calls - have)}
+    else:
+        st.session_state.pop("st_import_pending", None)
+        _import_apply(D, kind, payload)
+
+
+def _import_confirm(D):
+    p = st.session_state.get("st_import_pending")
+    if not p:
+        return
+    st.warning(i18n.tr("Questa importazione contiene") + f" {p['n']} " + i18n.tr("stazioni") + f" ({p['new']} " +
+               i18n.tr("nuove") + "), " + i18n.tr("più di") + f" {IMPORT_ASK_OVER}. " + i18n.tr("Continuo?"))
+    c = st.columns(2)
+    if c[0].button("✅ OK, continua l'importazione", key="st_import_yes"):
+        st.session_state.pop("st_import_pending", None)
+        _import_apply(D, p["kind"], p["payload"])
+    if c[1].button("✖️ Annulla l'importazione", key="st_import_no"):
+        st.session_state.pop("st_import_pending", None)
+        st.rerun()
+
+
+def _import_apply(D, kind, payload):
+    if kind == "call3":
+        rows, name = payload
+        for r in rows:
+            old = (D.station_of(r["call"]) or {}).get("locator") or ""
+            loc = r["locator"] if len(r["locator"]) > len(old) else None      # never a less precise locator
+            D.upsert_station(r["call"], locator=loc, eme=1, data={"call3": True})
         D.commit()
-        D.log_station_import(f"directory:{band}", name, nb)
-    D.commit()
-    st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
+        D.log_station_import("call3", name, len(rows))
+        st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
+    elif kind == "heard":
+        from emelab import alltxt
+        rows, name = payload
+        res = alltxt.store(D, rows)                 # into the decodes; «heard» rebuilt from them (no double counts)
+        D.log_station_import("heard", name, len(res["calls"]))
+        st.success(i18n.tr("Decodifiche lette") + f": {res['rx']} ({res['new_rx']} " + i18n.tr("nuove") + ") · " +
+                   i18n.tr("stazioni") + f": {len(res['calls'])}")
+    elif kind == "directory":
+        n = 0
+        for name, band, rows in payload:
+            for r in rows:
+                old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
+                old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
+                D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
+            n += len(rows)
+            D.commit()
+            D.log_station_import(f"directory:{band}", name, len(rows))
+        st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
+
+
+def _stations_quick_clear(D):
+    """Empty the station database and start again: right under the import buttons, so it is easy to find."""
+    n = len(D.stations())
+    if not n:                                    # just emptied: the message, then nothing else to show
+        for kind, msg in st.session_state.pop("st_flash", None) or []:
+            getattr(st, kind)(msg)
+        if not D.station_imports():
+            return
+    c = st.columns([3, 2])
+    c[0].markdown(f"**{n}** " + i18n.tr("stazioni nel database") + " · " +
+                  i18n.tr("per cancellare solo una fonte o singole stazioni apri «🗑️ Cancella i dati importati» in fondo alla pagina"))
+    if c[1].button("🗑️ Svuota tutto e re-importa", key="st_quick_clear"):
+        st.session_state["st_quick_clear_ask"] = True
+    if st.session_state.get("st_quick_clear_ask"):
+        st.warning(i18n.tr("Cancellare tutte le") + f" {n} " + i18n.tr("stazioni e l'elenco dei file importati? "
+                                                                       "Poi potrai importare di nuovo i file da capo."))
+        c = st.columns(2)
+        if c[0].button("✅ Sì, svuota", key="st_quick_clear_yes"):
+            D.clear_stations()
+            st.session_state.pop("st_quick_clear_ask", None)
+            st.session_state.pop("st_table" + _lang_key(), None)
+            st.session_state["st_flash"] = [("success", i18n.tr("Database delle stazioni svuotato: ora puoi re-importare i file."))]
+            st.rerun()
+        if c[1].button("Annulla", key="st_quick_clear_no"):
+            st.session_state.pop("st_quick_clear_ask", None)
+            st.rerun()
 
 
 def _qrz_box(D, calls):
@@ -1062,10 +1171,7 @@ def _qrz_box(D, calls):
             try:
                 q = qrz.QRZ(user, pw)
                 for call in pick:
-                    r = q.lookup(call)
-                    D.upsert_station(call, name=r.get("name"), address=r.get("address"), qth=r.get("qth"),
-                                     country=r.get("country"), locator=r.get("locator"),
-                                     data={"qrz": {k: r.get(k) for k in ("qsl_via", "lotw", "eqsl", "lat", "lon")}})
+                    qrz.store(D, {**q.lookup(call), "call": call})
                 D.commit()
                 D.log_station_import("qrz", ", ".join(pick)[:200], len(pick))
                 st.success(i18n.tr("Aggiornati da QRZ.com") + f": {len(pick)}")
@@ -1175,17 +1281,23 @@ def _logbook_tab(D):
                        + (f" · " + i18n.tr("non EME o sotto i 10 GHz, lasciati fuori") + f": {skipped}" if skipped else ""))
             D.log_qso_import(", ".join(f.name for f in ups), id0)
     lb.fill_locators(D, my_loc, stn.get("height_m") or 0)
+    lb.fill_moon_az(D, my_loc, stn.get("height_m") or 0)
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
         return
+    from emelab import qrz
+    _qso_qrz_fill(D, [q["call"] for q in qs])
+    ppl = qrz.qso_people(D, {q["call"] for q in qs})
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
                         "Banda": _bl(q.get("band")), "Modo": lb.mode_label(q)[0],
                         "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                        "QTH": ppl[q["call"]]["qth"], "Nome": ppl[q["call"]]["fname"], "Cognome": ppl[q["call"]]["lname"],
                         "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
                         "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
-                        "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
+                        "AZ Luna": _blank(_r(q["calc"].get("moon_az"), 1)), "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)),
+                        "AZ DX": _blank(_r(q["calc"].get("dx_moon_az"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
                         "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
                        for q in qs])
     raw_cols = list(df.columns)
@@ -1214,6 +1326,44 @@ def _logbook_tab(D):
         D.delete_qso(dl)
         st.rerun()
     _qsos_manage(D, len(qs))
+
+
+def _qso_qrz_fill(D, calls):
+    """QTH, first and last name of the QSO partners from QRZ.com: only the callsigns not looked up yet, on request."""
+    from emelab import qrz
+    todo = qrz.missing(D, calls)
+    sets = openems_local.load_settings()
+    user, pw = sets.get("qrz_user", ""), sets.get("qrz_pw", "")
+    with st.expander("🔎 QTH, nome e cognome da QRZ.com" + (f" ({len(todo)} " + i18n.tr("da cercare") + ")" if todo else "")):
+        if not (user and pw):
+            st.caption("Salva prima utente e password di QRZ.com nella scheda Stazioni EME (riquadro «🔎 QRZ.com»).")
+            return
+        st.caption("Cerca su QRZ.com solo i nominativi del log non ancora cercati; i dati restano nel database delle "
+                   "stazioni EME. Nome, cognome e QTH arrivano anche senza abbonamento XML di QRZ.com.")
+        c = st.columns(2)
+        go = c[0].button("🔎 Cerca i mancanti su QRZ.com", key="q_qrz_go", disabled=not todo)
+        again = c[1].button("🔄 Aggiorna tutti da QRZ.com", key="q_qrz_all")
+        if not (go or again):
+            return
+        pick = todo if go else list(dict.fromkeys(calls))
+        q, ok, bad = qrz.QRZ(user, pw), 0, []
+        bar = st.progress(0.0)
+        for k, call in enumerate(pick):
+            try:
+                qrz.store(D, {**q.lookup(call), "call": call}, locator=False)
+                ok += 1
+            except Exception as e:
+                if not q.key:                                    # login refused: no point trying the others
+                    st.error(f"QRZ.com: {e}")
+                    break
+                bad.append(call)
+            bar.progress((k + 1) / len(pick))
+        D.commit()
+        if ok:
+            D.log_station_import("qrz", ", ".join(pick)[:200], ok)
+            st.success(i18n.tr("Aggiornati da QRZ.com") + f": {ok}")
+        if bad:
+            st.warning(i18n.tr("Non trovati su QRZ.com") + ": " + ", ".join(bad))
 
 
 def _qsos_manage(D, n_qsos):
@@ -1309,6 +1459,12 @@ def _qso_band_filter(qs, lb):
 
 
 def _qso_stats_tab(D):
+    from emelab import ui_alltxt
+    _qso_stats_log(D)
+    ui_alltxt.stats_section(D)          # every decode of ALL.TXT at 10 GHz and up
+
+
+def _qso_stats_log(D):
     from emelab import logbook as lb
     qs = D.qsos()
     if not qs:
@@ -1458,13 +1614,14 @@ def _design_tab(D):
     c = st.columns(2)
     with c[0]:
         st.markdown("**Ricezione (dal feed al transverter)**")
-        rx = st.data_editor(_editor_rows(_st.session_state.get("rx_tab", _RX_DEFAULT)), num_rows="dynamic",
+        rx_df, rx_cfg = _blank_cols(_editor_rows(_st.session_state.get("rx_tab", _RX_DEFAULT)))
+        rx = st.data_editor(rx_df, num_rows="dynamic", column_config=rx_cfg,
                             key="rx_ed" + _lang_key(), hide_index=True, width="stretch")
         t_ant = st.number_input("Temperatura d'antenna (K)", 3.0, 500.0, 40.0, 1.0, key="ch_tant",
                                 help="dal progetto FeedLab o dalla misura; cielo freddo + spillover")
-        stages = [chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
-                  {"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "nf_db": float(r["NF (dB)"])}
-                  for r in _editor_back(rx, _RX_DEFAULT[0]) if r.get("Stadio") and r.get("Guadagno (dB)") is not None]
+        stages = [chain.passive(r["Stadio"], -_num(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
+                  {"name": r["Stadio"], "gain_db": _num(r["Guadagno (dB)"]), "nf_db": _num(r.get("NF (dB)")) or 0.0}
+                  for r in _editor_back(rx, _RX_DEFAULT[0]) if r.get("Stadio") and _num(r.get("Guadagno (dB)")) is not None]
         if stages:
             res = chain.rx_chain(stages, t_ant)
             m = st.columns(3)
@@ -1478,18 +1635,19 @@ def _design_tab(D):
             st.plotly_chart(fig, width="stretch")
     with c[1]:
         st.markdown("**Trasmissione (dal transverter al feed)**")
-        tx = st.data_editor(_editor_rows(_st.session_state.get("tx_tab", _TX_DEFAULT)), num_rows="dynamic",
+        tx_df, tx_cfg = _blank_cols(_editor_rows(_st.session_state.get("tx_tab", _TX_DEFAULT)))
+        tx = st.data_editor(tx_df, num_rows="dynamic", column_config=tx_cfg,
                             key="tx_ed" + _lang_key(), hide_index=True, width="stretch")
         pin = st.number_input("Potenza in ingresso (dBm)", -30.0, 40.0, 10.0, 0.5, key="ch_pin")
         st_tx = []
         for r in _editor_back(tx, _TX_DEFAULT[0]):
-            if not r.get("Stadio") or r.get("Guadagno (dB)") is None:
+            if not r.get("Stadio") or _num(r.get("Guadagno (dB)")) is None:
                 continue
             if r["Tipo"] == "passivo":
-                st_tx.append(chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])))
+                st_tx.append(chain.passive(r["Stadio"], -_num(r["Guadagno (dB)"])))
             else:
-                f = lambda k: None if r.get(k) is None or pd.isna(r.get(k)) else float(r[k])
-                st_tx.append({"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "psat_dbm": f("Psat (dBm)"),
+                f = lambda k: _num(r.get(k))
+                st_tx.append({"name": r["Stadio"], "gain_db": _num(r["Guadagno (dB)"]), "psat_dbm": f("Psat (dBm)"),
                               "p1db_dbm": f("P1dB (dBm)"), "vdc": f("V"), "idc_a": f("A")})
         if st_tx:
             res = chain.tx_chain(pin, st_tx)
@@ -1499,8 +1657,9 @@ def _design_tab(D):
             m[2].metric("Calore da dissipare", f"{res['heat_w']:.0f} W")
             st.dataframe(pd.DataFrame([{i18n.tr("Stadio"): s["name"], i18n.tr("Ingresso (dBm)"): round(s["p_in_dbm"], 2),
                                         i18n.tr("Uscita (dBm)"): round(s["p_out_dbm"], 2),
-                                        i18n.tr("Margine dal P1dB (dB)"): None if s["p1db_margin_db"] is None else round(s["p1db_margin_db"], 1)}
-                                       for s in res["stages"]]), hide_index=True, width="stretch")
+                                        i18n.tr("Margine dal P1dB (dB)"): "" if s["p1db_margin_db"] is None else f"{s['p1db_margin_db']:.1f}"}
+                                       for s in res["stages"]]), hide_index=True, width="stretch",
+                         column_config={i18n.tr("Margine dal P1dB (dB)"): _st.column_config.TextColumn(alignment="right")})
     st.divider()
     st.subheader("Libreria dei componenti")
     st.caption("Componenti con i valori dei datasheet dei produttori (inseriti da te o trovati nel catalogo Mouser) e il "
@@ -1673,7 +1832,7 @@ def _setup_pick(D, key):
 
 def _pointing_tab(D):
     from emelab import chain, sunscan
-    st.subheader("Puntamento")
+    st.subheader("Tracking")
     st.caption("Bilancio degli errori di puntamento: ogni causa indipendente si somma in quadratura (RSS). La perdita su un "
                "fascio gaussiano è −12·(θ/HPBW)² dB in una direzione; le eco proprie e il rumore solare la vedono due volte.")
     s = _setup_pick(D, "pt_setup")
@@ -2434,7 +2593,7 @@ def _wizard(D):
     elif goal == "setup":
         for sgg in coach.suggestions(D)[:8]:
             st.markdown("- " + i18n.tr(sgg["text"]))
-        st.info("Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
+        st.info("Nella scheda 🎯 Tracking trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
                 "Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.")
     elif goal == "analyse":
         st.info("Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, "
@@ -2568,6 +2727,8 @@ def _wsjtx_autostart():
         pos = sets.get("wsjtx_file_pos") or {}
         svc.on_tail_pos = _wsjtx_save_pos
         svc.start_file(sets["wsjtx_file"], pos.get("offset") if pos.get("path") == sets["wsjtx_file"] else None)
+    from emelab import ui_alltxt
+    ui_alltxt.autostart(svc, sets)
     return svc
 
 
@@ -2580,35 +2741,11 @@ def _wsjtx_live_problems(svc):
 
 def _wsjtx_banner():
     """Warning on every page when the WSJT-X settings do not fit the band."""
-    probs = _wsjtx_live_problems(_wsjtx_service())
+    probs = [p for p in _wsjtx_live_problems(_wsjtx_service()) if not p.get("soft")]
     if probs:
         st.warning(i18n.tr("⚠️ Impostazioni di WSJT-X da controllare") + ": " +
                    " · ".join(i18n.tr(p["msg"]) + (f" ({p['detail']})" if p.get("detail") else "") for p in probs)
                    + " — " + i18n.tr("dettagli nella scheda 📻 WSJT-X"))
-
-
-def _wsjtx_check_box(svc, sets):
-    st.markdown("#### " + i18n.tr("✅ Controllo delle impostazioni di WSJT-X"))
-    st.caption("A ogni messaggio di stato EMELab controlla modo, sottomodo e periodo T/R (Q65-60D a 10 GHz, Q65-60E da "
-               "24 GHz in su), la banda, il nominativo e il locator. Modo, sottomodo e T/R li può correggere da solo "
-               "(serve «Accept UDP requests» in WSJT-X), mai durante la trasmissione; il resto lo segnala soltanto. "
-               "Doppler tracking, Prop Mode e audio non passano dal protocollo UDP: controllali tu nella finestra Astro "
-               "e in «Log QSO».")
-    fix = st.checkbox("Correggi da solo modo, sottomodo e T/R", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
-    if fix != svc.auto_fix:
-        svc.auto_fix = fix
-        openems_local.save_settings(wsjtx_autofix=fix)
-    probs = _wsjtx_live_problems(svc)
-    if svc.last_seen and not probs:
-        st.success("Impostazioni di WSJT-X a posto per questa banda.")
-    for k, p in enumerate(probs):
-        c = st.columns([5, 1])
-        c[0].warning(i18n.tr(p["msg"]) + (f": {p['detail']}" if p.get("detail") else ""))
-        if p.get("fix") and c[1].button(f"⚙️ Q65-{p['fix']}", key=f"wj_fix_{k}"):
-            st.success("Inviato a WSJT-X.") if svc.set_q65(p["fix"]) else st.error("WSJT-X non raggiungibile.")
-    if svc.fixes:
-        f = svc.fixes[0]
-        st.caption(i18n.tr("Ultima correzione inviata") + f": {f['utc']:%H:%M:%S} UTC, {f['from']} → {f['to']}")
 
 
 def _wsjtx_save_pos(path, offset):
@@ -2698,6 +2835,8 @@ def _wsjtx_tab(D):
         svc.auto_log, svc.eme_only, svc.strict_eme = auto, eme_only, strict
         openems_local.save_settings(wsjtx_autolog=auto, wsjtx_eme_only=eme_only, wsjtx_strict_eme=strict)
     _wsjtx_file_box(svc, sets)
+    from emelab import ui_alltxt
+    ui_alltxt.file_box(D, svc, sets)
     _wsjtx_logged_table(svc)
     st.markdown("#### " + i18n.tr("📡 UDP (decodifiche, colori, sottomodo Q65)"))
     c = st.columns(4)
@@ -2734,7 +2873,8 @@ def _wsjtx_tab(D):
                     + f"**{s.get('mode', '')} {s.get('submode', '')}** · DX **{s.get('dx_call') or '—'}** {s.get('dx_grid') or ''} · "
                     + ("🔴 TX" if s.get("transmitting") else "🟢 RX"))
     st.button("🔄 Aggiorna", key="wj_refresh")
-    _wsjtx_check_box(svc, sets)
+    from emelab import ui_wsjtx_panel
+    ui_wsjtx_panel.render(svc, sets)
     stn = D.station()
     band = None
     if s.get("dial_hz"):

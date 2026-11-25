@@ -149,3 +149,103 @@ def test_save_station_edits_from_table(tmp_path):
     msgs = ui._save_station_edits(D, df, ed, cols)
     assert D.station_of("DF3GJ")["qth"] == "Bonn" and D.station_of("OK1KIR")["locator"] == "JO70EB"
     assert [k for k, _ in msgs] == ["success", "error"]
+
+
+def _app(tmp_path, monkeypatch, n_stations=2):
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    monkeypatch.setenv("EMELAB_LANG", "it")
+    from emelab import db as edb
+    D = edb.DB()
+    for i in range(n_stations):
+        D.upsert_station(f"K{i}AA", locator="FN20", data={"call3": True})
+    D.commit()
+    from streamlit.testing.v1 import AppTest
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    at = AppTest.from_file(os.path.join(root, "emelab_main.py"), default_timeout=300)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at, edb
+
+
+def test_quick_clear_button_asks_then_empties(tmp_path, monkeypatch):
+    at, edb = _app(tmp_path, monkeypatch)
+    at.button(key="st_quick_clear").click().run()
+    assert edb.DB().stations()                       # nothing deleted before the OK
+    at.button(key="st_quick_clear_no").click().run()
+    assert len(edb.DB().stations()) == 2
+    at.button(key="st_quick_clear").click().run()
+    at.button(key="st_quick_clear_yes").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert edb.DB().stations() == []
+    assert any("svuotato" in s.value for s in at.success)
+    from emelab import i18n
+    i18n.set_lang("it")
+
+
+def test_big_import_asks_for_ok(tmp_path):
+    import streamlit as st
+    from emelab import db as edb, ui
+    D = edb.DB(tmp_path / "t.sqlite")
+    rows = [{"call": f"K{i}AB", "locator": "FN20", "eme": False} for i in range(301)]
+    st.session_state.clear()
+    ui._import_or_ask(D, "call3", (rows, "CALL3.TXT"), {r["call"] for r in rows})
+    assert D.stations() == [] and st.session_state["st_import_pending"]["n"] == 301
+    ui._import_apply(D, "call3", st.session_state.pop("st_import_pending")["payload"])
+    assert len(D.stations()) == 301
+    few = rows[:300]
+    D.clear_stations()
+    ui._import_or_ask(D, "call3", (few, "CALL3.TXT"), {r["call"] for r in few})
+    assert len(D.stations()) == 300 and "st_import_pending" not in st.session_state
+
+
+def test_call3_and_all_keep_only_eme():
+    from emelab import stations as stn
+    rows = stn.parse_call3("1A0C,JN61FV\n2E0AAG,IO82VE\nOK1KIR,JO70EB,EME\nDF3GJ,JO31\n")
+    assert [r["call"] for r in stn.eme_only(rows, {"DF3GJ"})] == ["DF3GJ"]      # the EME mark alone is not enough
+    dec = [{"call": "K1JT", "band": "10G"}, {"call": "EA1XX", "band": None}, {"call": "PA0PLY", "band": None}]
+    assert [d["call"] for d in stn.eme_decodes(dec, {"PA0PLY"})] == ["K1JT", "PA0PLY"]
+
+
+def test_big_table_is_limited_and_searchable(tmp_path, monkeypatch):
+    at, edb = _app(tmp_path, monkeypatch, n_stations=520)
+    assert any("Mostro le prime" in c.value for c in at.caption)
+    at.text_input(key="st_find").input("K51").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not any("Mostro le prime" in c.value for c in at.caption)
+    from emelab import i18n
+    i18n.set_lang("it")
+
+
+def test_eme_10g_calls(tmp_path):
+    from datetime import datetime, timezone
+    from emelab import db as edb
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.upsert_station("PA0PLY", data={"directory": {"10G": {"antenna": "3m dish"}}})
+    D.upsert_station("K1JT", data={"heard": {"n": 2, "bands": ["10G"]}})
+    D.upsert_station("EA1XX", data={"heard": {"n": 2, "bands": []}})       # heard live, band unknown
+    D.upsert_station("2E0AAG", data={"call3": True})
+    D.commit()
+    D.add_qso(utc=datetime(2026, 1, 1, tzinfo=timezone.utc), call="OK1KIR", band="24G")
+    D.add_qso(utc=datetime(2026, 1, 1, tzinfo=timezone.utc), call="G4ABC", band="2m")
+    assert D.eme_10g_calls() == {"PA0PLY", "K1JT", "OK1KIR"}
+
+
+def test_real_call3_keeps_only_known_eme_10g():
+    """Head of a real WSJT-X CALL3.TXT (133 087 lines, none marked EME, no band information)."""
+    from emelab import stations as stn
+    text = ("// Version: 2024-08-14_14:10Z\n1A0C,JN61FV,,,\n2E0AAG,IO82VE,,,\n3B8DU,LG89,,,\n3B8EME,LG89QT,,,\n"
+            "9A5AA,JN75XT,,,\nDF3GJ,JO31,,,\n")
+    rows = stn.parse_call3(text)
+    assert len(rows) == 6
+    assert [r["call"] for r in stn.eme_only(rows, {"3B8DU", "9A5AA", "OH2DG"})] == ["3B8DU", "9A5AA"]
+
+
+def test_call3_does_not_spoil_a_precise_locator(tmp_path):
+    from emelab import db as edb, ui
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.upsert_station("3B8DU", locator="LG89SQ", data={"directory": {"10G": {"antenna": "3m dish"}}})
+    D.upsert_station("9A5AA", locator="JN75", data={"directory": {"10G": {"antenna": "2.4m dish"}}})
+    D.commit()
+    ui._import_apply(D, "call3", ([{"call": "3B8DU", "locator": "LG89", "eme": False},
+                                   {"call": "9A5AA", "locator": "JN75XT", "eme": False}], "CALL3.TXT"))
+    assert D.station_of("3B8DU")["locator"] == "LG89SQ" and D.station_of("9A5AA")["locator"] == "JN75XT"

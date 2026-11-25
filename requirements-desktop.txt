@@ -3,3 +3,5 @@
 -r requirements.txt
 pywebview>=5.0
 truststore>=0.9
+pyserial>=3.5
+hidapi>=0.14

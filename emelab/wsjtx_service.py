@@ -14,10 +14,11 @@ import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from . import logbook, stations, wsjtx, wsjtx_check, wsjtx_logfile
+from . import alltxt, logbook, stations, wsjtx, wsjtx_check, wsjtx_logfile
 
 CALL = re.compile(r"^(?=.*\d)[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(?:/[A-Z0-9]{1,4})?$")
 GRID = re.compile(r"^[A-R]{2}\d{2}$")
+_FIX_NAMES = {"freq_tol": "F Tol", "rx_df": "Rx"}
 
 
 def sender_of(message: str) -> tuple[str | None, str | None]:
@@ -54,8 +55,15 @@ class Service:
         self.auto_fix = True            # correct mode/submode/T-R in WSJT-X when they do not match the band
         self.problems: list[dict] = []  # what is wrong in the WSJT-X settings now (wsjtx_check)
         self.fixes = deque(maxlen=20)   # corrections sent to WSJT-X
-        self._fix_try: dict = {}        # Q65 code → (attempts, last time)
+        self._fix_try: dict = {}        # what was sent → (attempts, last time)
+        self._preset_band: str | None = None   # band whose preset (Rx DF too) was applied or found in place
         self._file_stop = threading.Event()
+        self.all_tail: alltxt.LineTail | None = None     # ALL.TXT followed live (alltxt)
+        self.on_all_pos = None          # callback(path, offset)
+        self.all_recent = deque(maxlen=400)              # last Rx/Tx lines at 10 GHz and up, newest first
+        self.all_seen: datetime | None = None            # when the last new line was read
+        self.all_read = {"rx": 0, "tx": 0, "new_rx": 0}  # counted since EMELab started following the file
+        self._all_stop = threading.Event()
         self._db = None
         self._lock = threading.Lock()
 
@@ -120,6 +128,57 @@ class Service:
                 pass
         return len(recs)
 
+    # ---------------------------------------------------------------- ALL.TXT
+    def start_alltxt(self, path, offset: int | None = None, interval: float = 2.0):
+        """Follow WSJT-X ALL.TXT in the background (offset None: from now on; 0: the whole history first)."""
+        self.stop_alltxt()
+        self.all_tail = alltxt.LineTail(path, offset)
+        self._all_stop = threading.Event()
+        stop = self._all_stop
+
+        def run():
+            while not stop.is_set():
+                more = self.poll_alltxt()
+                if not more:
+                    stop.wait(interval)
+        threading.Thread(target=run, name="wsjtx-alltxt", daemon=True).start()
+        return self
+
+    def stop_alltxt(self):
+        self._all_stop.set()
+        self.all_tail = None
+
+    @property
+    def alltxt_running(self) -> bool:
+        return self.all_tail is not None
+
+    def poll_alltxt(self) -> bool:
+        """Read the lines WSJT-X appended to ALL.TXT; True while a long history is still being read."""
+        tail = self.all_tail
+        if tail is None:
+            return False
+        try:
+            before = tail.offset
+            lines = tail.read_new()
+            rows = alltxt.parse_eme(lines)
+            if rows:
+                with self._lock:
+                    res = alltxt.store(self.db(), rows)
+                for k in ("rx", "tx", "new_rx"):
+                    self.all_read[k] += res[k]
+                for r in rows:
+                    self.all_recent.appendleft(r)
+                self.all_seen = datetime.now(timezone.utc)
+        except Exception as e:
+            self.errors.append(f"ALL.TXT: {e}")
+            return False
+        if tail.offset != before and self.on_all_pos:
+            try:
+                self.on_all_pos(str(tail.path), tail.offset)
+            except Exception:
+                pass
+        return tail.offset != before and tail.behind > 0
+
     @property
     def running(self) -> bool:
         return self.listener is not None
@@ -146,17 +205,29 @@ class Service:
         except Exception:
             stn = {}
         probs = wsjtx_check.check(m, stn)
+        band = self._band()
         want = next((p["fix"] for p in probs if p.get("fix")), None)
-        if want is None:
+        extra = {}
+        for p in probs:
+            if p.get("cfg") and (not p.get("soft") or band != self._preset_band):    # Rx DF only on a band change
+                extra.update(p["cfg"])
+        if want is None and not extra:
             self._fix_try = {}
+            if band and not m.get("transmitting"):
+                self._preset_band = band
         elif self.auto_fix and not m.get("transmitting"):
-            n, last = self._fix_try.get(want, (0, None))
+            key = (want or "") + "".join(f" {k}={v}" for k, v in sorted(extra.items()))
+            n, last = self._fix_try.get(key, (0, None))
             now = datetime.now(timezone.utc)
             if n < 3 and (last is None or (now - last).total_seconds() > 15):
-                if self.set_q65(want):
-                    self._fix_try = {want: (n + 1, now)}
-                    self.fixes.appendleft({"utc": now, "to": f"Q65-{want}", "from": f"{m.get('mode')} {m.get('submode')}"})
+                if self.set_q65(want, **extra) if extra else self.set_q65(want):
+                    self._fix_try = {key: (n + 1, now)}
+                    self._preset_band = band
+                    to = " ".join(x for x in ((f"Q65-{want}" if want else ""),
+                                               *(f"{_FIX_NAMES.get(k, k)} {v} Hz" for k, v in sorted(extra.items()))) if x)
+                    self.fixes.appendleft({"utc": now, "to": to, "from": f"{m.get('mode')} {m.get('submode')}"})
             elif n >= 3:
+                self._preset_band = band
                 probs.append({"code": "udp_requests", "msg": "WSJT-X non accetta le correzioni: in Settings → Reporting "
                               "spunta «Accept UDP requests»", "detail": "", "fix": None})
         self.problems = probs
@@ -176,7 +247,7 @@ class Service:
              "dial_mhz": (self.status.get("dial_hz") or 0) / 1e6 or None, "client": m["id"]}
         self.recent.appendleft(d)
         self.db().add_decode(**d)
-        if call:
+        if call and d["band"]:                           # only the EME bands (10 GHz and up) fill the station list
             data = (self.db().station_of(call) or {}).get("data", {})
             heard = data.get("heard", {})
             band = d["band"]
@@ -239,11 +310,23 @@ class Service:
     def highlight(self, call: str, bg: str | None, fg: str | None = "#000000") -> bool:
         return bool(self.listener and self.client and self.listener.send(self.client, wsjtx.highlight(self.client, call, bg, fg)))
 
-    def set_q65(self, submode_code: str) -> bool:
-        """'60D' → Q65, submode D, T/R 60 s (and the same for 30/120/300 s and A–E)."""
-        period, sub = int(submode_code[:-1]), submode_code[-1]
+    def set_q65(self, submode_code: str | None, freq_tol: int = 0, rx_df: int | None = None) -> bool:
+        """'60D' → Q65, submode D, T/R 60 s (and the same for 30/120/300 s and A–E); with freq_tol / rx_df also the
+        frequency tolerance and the Rx audio frequency. submode_code None = leave mode and submode as they are."""
+        if submode_code:
+            mode, period, sub = "Q65", int(submode_code[:-1]), submode_code[-1]
+        else:
+            mode, period, sub = "", 0, ""
         return bool(self.listener and self.client and
-                    self.listener.send(self.client, wsjtx.configure(self.client, "Q65", sub, period)))
+                    self.listener.send(self.client, wsjtx.configure(self.client, mode, sub, period, freq_tol, rx_df=rx_df)))
+
+    def apply_preset(self, band: str) -> bool:
+        """Send the whole band preset that Configure can carry: Q65 submode, T/R, F Tol and Rx."""
+        p = wsjtx_check.preset(band)
+        ok = self.set_q65(p["mode"], int(p.get("f_tol") or 0), p.get("rx_df"))
+        if ok:
+            self._preset_band = band
+        return ok
 
     def replay(self) -> bool:
         return bool(self.listener and self.client and self.listener.send(self.client, wsjtx.replay(self.client)))

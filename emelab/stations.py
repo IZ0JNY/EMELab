@@ -62,6 +62,13 @@ def parse_call3(text: str) -> list[dict]:
     return out
 
 
+def eme_only(rows: list[dict], known_eme: set[str]) -> list[dict]:
+    """CALL3.TXT holds every station WSJT-X knows (over 100 000, with no band and usually no EME mark): keep only
+    the stations already known to do EME from 10 GHz up (EME Directory, heard on 10 GHz and up, QSOs in the log).
+    CALL3 then only completes their locator."""
+    return [r for r in rows if r["call"] in known_eme]
+
+
 # ------------------------------------------------------------------ WSJT-X ALL.TXT
 _ALL_NEW = re.compile(r"^(\d{6})_(\d{6})\s+([\d.]+)\s+(Rx|Tx)\s+(\S+)\s+(-?\d+)\s+(-?[\d.]+)\s+(-?\d+)\s+(.*)$")
 _ALL_OLD = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([\d.]+)\s+(Rx|Tx)\s+(\S+)\s+(-?\d+)\s+(-?[\d.]+)\s+(-?\d+)\s+(.*)$")
@@ -103,6 +110,12 @@ def parse_all(text: str) -> list[dict]:
                     "freq_mhz": fmhz, "band": band_of(fmhz), "mode": mode, "snr_db": int(snr), "dt_s": float(dt),
                     "df_hz": int(df), "message": msg})
     return out
+
+
+def eme_decodes(decodes: list[dict], known_eme: set[str] = frozenset()) -> list[dict]:
+    """Only the decodes on the EME bands of EMELab (10 GHz and up), or of stations already known as EME (for a
+    WSJT-X that shows the transverter IF instead of the real frequency): HF/VHF FT8 traffic in ALL.TXT stays out."""
+    return [d for d in decodes if d.get("band") or d["call"] in known_eme]
 
 
 def heard_summary(decodes: list[dict]) -> dict[str, dict]:

@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS decodes (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TE
     snr INTEGER, dt REAL, df INTEGER, mode TEXT, message TEXT, band TEXT, dial_mhz REAL, client TEXT,
     UNIQUE(utc, message, df));
 CREATE INDEX IF NOT EXISTS d_utc ON decodes(utc);
+CREATE INDEX IF NOT EXISTS d_call ON decodes(call);
+CREATE TABLE IF NOT EXISTS tx_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, call TEXT, mode TEXT,
+    message TEXT, band TEXT, dial_mhz REAL, df INTEGER, UNIQUE(utc, message));
 CREATE TABLE IF NOT EXISTS setup_history (id INTEGER PRIMARY KEY AUTOINCREMENT, band TEXT NOT NULL, from_utc TEXT NOT NULL,
     dish_m REAL, dish_kind TEXT, eta REAL, power_w REAL, nf_db REAL, line_loss_db REAL, pol TEXT, notes TEXT);
 CREATE TABLE IF NOT EXISTS station_imports (id INTEGER PRIMARY KEY AUTOINCREMENT, utc TEXT NOT NULL, source TEXT NOT NULL,
@@ -277,6 +280,19 @@ class DB:
             self.con.execute("DELETE FROM stations WHERE call = ?", (call,))
         self.con.commit()
 
+    def eme_10g_calls(self) -> set[str]:
+        """Stations with evidence of EME from 10 GHz up: a band in the EME Directory (or corrected by hand), heard on
+        10 GHz and up (ALL.TXT, live WSJT-X), or a QSO in the log on 10 GHz and up."""
+        out = set()
+        for s in self.stations():
+            d = s["data"]
+            if self.directory_of(d) or (d.get("heard") or {}).get("bands"):
+                out.add(s["call"])
+        bands = ("10G", "24G", "47G", "76G", "122G", "134G")
+        out |= {r[0] for r in self.con.execute(
+            f"SELECT DISTINCT call FROM qsos WHERE band IN ({','.join('?' * len(bands))})", bands)}
+        return out
+
     def log_station_import(self, source: str, label: str, n: int):
         self.con.execute("INSERT INTO station_imports (utc, source, label, n) VALUES (?,?,?,?)",
                          (iso_utc(datetime.now(timezone.utc)), source, label, int(n)))
@@ -337,6 +353,9 @@ class DB:
                              [row["locator"], row["name"], row["qth"], row["address"], row["country"], row["email"],
                               row["eme"], json.dumps(data, default=str), iso_utc(datetime.now(timezone.utc)), s["call"]])
             changed += 1
+        if source == "heard":                       # the decodes and Tx lines the heard summaries came from
+            self.con.execute("DELETE FROM decodes")
+            self.con.execute("DELETE FROM tx_lines")
         self.con.execute("DELETE FROM station_imports WHERE source = ?", (source,))
         self.con.commit()
         return changed, deleted
@@ -474,6 +493,58 @@ class DB:
             q += " AND call = ?"
             a.append(call.upper())
         return [dict(r) for r in self.con.execute(q + " ORDER BY utc DESC LIMIT ?", a + [limit])]
+
+    def add_decodes(self, rows: list[dict]) -> int:
+        """Many decodes at once (ALL.TXT); duplicates skipped. Returns how many were new."""
+        keys = ["utc", "call", "grid", "snr", "dt", "df", "mode", "message", "band", "dial_mhz", "client"]
+        before = self.con.total_changes
+        self.con.executemany(f"INSERT OR IGNORE INTO decodes ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                             [[iso_utc(d[k]) if k == "utc" and isinstance(d[k], datetime) else d.get(k) for k in keys]
+                              for d in rows])
+        self.con.commit()
+        return self.con.total_changes - before
+
+    def add_tx_lines(self, rows: list[dict]) -> int:
+        """Own transmissions read from ALL.TXT (Tx lines): when and on which band I was on the air."""
+        keys = ["utc", "call", "mode", "message", "band", "dial_mhz", "df"]
+        before = self.con.total_changes
+        self.con.executemany(f"INSERT OR IGNORE INTO tx_lines ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
+                             [[iso_utc(d[k]) if k == "utc" and isinstance(d[k], datetime) else d.get(k) for k in keys]
+                              for d in rows])
+        self.con.commit()
+        return self.con.total_changes - before
+
+    def eme_decodes(self, calls: list[str] | None = None, bands: list[str] | None = None,
+                    since: str | None = None) -> list[dict]:
+        """All the decodes on the EME bands (10 GHz and up: band set), oldest first."""
+        q, a = "SELECT * FROM decodes WHERE band IS NOT NULL AND band != ''", []
+        if calls:
+            q += f" AND call IN ({','.join('?' * len(calls))})"
+            a += [c.upper() for c in calls]
+        if bands:
+            q += f" AND band IN ({','.join('?' * len(bands))})"
+            a += list(bands)
+        if since:
+            q += " AND utc >= ?"
+            a.append(since)
+        return [dict(r) for r in self.con.execute(q + " ORDER BY utc", a)]
+
+    def tx_lines(self, bands: list[str] | None = None, since: str | None = None) -> list[dict]:
+        q, a = "SELECT * FROM tx_lines WHERE band IS NOT NULL", []
+        if bands:
+            q += f" AND band IN ({','.join('?' * len(bands))})"
+            a += list(bands)
+        if since:
+            q += " AND utc >= ?"
+            a.append(since)
+        return [dict(r) for r in self.con.execute(q + " ORDER BY utc", a)]
+
+    def clear_alltxt(self) -> int:
+        """Forget what was read from ALL.TXT (decodes and Tx lines), to read the file again from the start."""
+        n = self.con.execute("DELETE FROM decodes WHERE client = 'ALL.TXT'").rowcount
+        n += self.con.execute("DELETE FROM tx_lines").rowcount
+        self.con.commit()
+        return n
 
     # station history (what was used on each band, from which date) -----------------
     HIST_COLS = ["band", "from_utc", "dish_m", "dish_kind", "eta", "power_w", "nf_db", "line_loss_db", "pol", "notes"]
