@@ -1107,7 +1107,7 @@ def _logbook_tab(D):
         st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
             "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
             "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
-    cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
+    cols = lb.BAND_COLORS
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {q.get('band') or ''}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
     st.plotly_chart(world_fig(paths[-300:], height=460), width="stretch")
@@ -1163,6 +1163,9 @@ def _qso_band_filter(qs, lb):
     if len(bands) < 2:
         return qs
     st.caption("Bande da includere")
+    st.markdown("<style>" + "".join(
+        f".st-key-qs_band_{b} label[data-selected='true'] > span + div {{background-color: {lb.BAND_COLORS[b]} !important;}}"
+        for b in bands if b in lb.BAND_COLORS) + "</style>", unsafe_allow_html=True)
     c = st.columns(6)
     on = set()
     for i, b in enumerate(bands):
@@ -1190,20 +1193,58 @@ def _qso_stats_tab(D):
         c[2].metric("EL Luna mediana", f"{s['moon_el']['median']:.0f}°")
     if "mutual_spread_hz" in s:
         c[3].metric("Spread mutuo mediano", f"{s['mutual_spread_hz']['median']:.0f} Hz")
+    _qso_stats_charts(qs, lb)
+
+
+def _qso_stats_charts(qs, lb):
+    """Hour, month, Moon elevation and spread: one coloured piece per band, stacked from 10 GHz upwards."""
+    order = list(lb.BAND_F)
+    bands = sorted({q.get("band") or "?" for q in qs}, key=lambda b: (order.index(b) if b in order else len(order), b))
+    many = len(bands) > 1
+
+    def name(b):
+        return f"{b[:-1]} GHz" if b.endswith("G") and b[:-1].isdigit() else b
+
+    def layout(fig, title):
+        fig.update_layout(title=title, height=300, margin=dict(l=10, r=10, t=40, b=10), barmode="stack",
+                          showlegend=many, legend=dict(orientation="h", y=1.12, x=1, xanchor="right", traceorder="normal"))
+        return fig
+
+    def of(b):
+        return [q for q in qs if (q.get("band") or "?") == b]
+
+    def utc(q):
+        t = q["utc"]
+        return t if isinstance(t, datetime) else datetime.strptime(t.replace("Z", ""), "%Y-%m-%dT%H:%M:%S")
+
+    months = [i18n.tr(m) for m in planner.MONTHS_IT]
     cc = st.columns(2)
-    fig = go.Figure(go.Bar(x=list(range(24)), y=s["by_hour"]))
-    fig.update_layout(title="QSO per ora UTC", height=300, margin=dict(l=10, r=10, t=40, b=10))
-    cc[0].plotly_chart(fig, width="stretch")
-    fig = go.Figure(go.Bar(x=[i18n.tr(m) for m in planner.MONTHS_IT], y=s["by_month"]))
-    fig.update_layout(title="QSO per mese", height=300, margin=dict(l=10, r=10, t=40, b=10))
-    cc[1].plotly_chart(fig, width="stretch")
+    fig, fig2 = go.Figure(), go.Figure()
+    for b in bands:
+        h, m = [0] * 24, [0] * 12
+        for q in of(b):
+            t = utc(q)
+            h[t.hour] += 1
+            m[t.month - 1] += 1
+        color = lb.BAND_COLORS.get(b, "#777")
+        fig.add_bar(x=list(range(24)), y=h, name=name(b), marker_color=color)
+        fig2.add_bar(x=months, y=m, name=name(b), marker_color=color)
+    cc[0].plotly_chart(layout(fig, "QSO per ora UTC"), width="stretch")
+    cc[1].plotly_chart(layout(fig2, "QSO per mese"), width="stretch")
     cc = st.columns(2)
     for col, k, title in ((cc[0], "moon_el", "Elevazione della Luna ai QSO (°)"), (cc[1], "mutual_spread_hz", "Spread mutuo ai QSO (Hz)")):
-        v = [q["calc"].get(k) for q in qs if q.get("calc") and q["calc"].get(k) is not None]
-        if v:
-            fig = go.Figure(go.Histogram(x=v, nbinsx=20))
-            fig.update_layout(title=title, height=300, margin=dict(l=10, r=10, t=40, b=10))
-            col.plotly_chart(fig, width="stretch")
+        val = {b: [q["calc"].get(k) for q in of(b) if q.get("calc") and q["calc"].get(k) is not None] for b in bands}
+        allv = [x for v in val.values() for x in v]
+        if not allv:
+            continue
+        lo, hi = min(allv), max(allv)
+        size = (hi - lo) / 20 or 1                       # same 20 bins for every band, so the pieces stack
+        fig = go.Figure()
+        for b in bands:
+            if val[b]:
+                fig.add_histogram(x=val[b], name=name(b), marker_color=lb.BAND_COLORS.get(b, "#777"),
+                                  xbins=dict(start=lo, end=hi + size * 1e-6, size=size))
+        col.plotly_chart(layout(fig, title), width="stretch")
 
 
 # ------------------------------------------------------------------ prints and database
