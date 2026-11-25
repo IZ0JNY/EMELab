@@ -850,12 +850,11 @@ def _stations_tab(D):
                        "Importa prima la EME Directory (o ALL.TXT, o il log QSO), poi CALL3.TXT.")
         _import_or_ask(D, "call3", (rows, up3.name), {r["call"] for r in rows})
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
-        alldec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
-        dec = stn.eme_decodes(alldec, {r["call"] for r in D.stations() if (r.get("data") or {}).get("directory")})
-        if len(dec) < len(alldec):
-            st.info(i18n.tr("Decodifiche sotto i 10 GHz lasciate fuori") + f": {len(alldec) - len(dec)}")
-        summ = stn.heard_summary(dec)
-        _import_or_ask(D, "heard", (dec, summ, upa.name), set(summ))
+        from emelab import alltxt
+        lines = upa.getvalue().decode("utf-8", "replace").splitlines()
+        rows = alltxt.parse_eme(lines)              # only 10 GHz and up, Rx and Tx
+        st.info(i18n.tr("Righe in ALL.TXT") + f": {len(lines)} · " + i18n.tr("righe da 10 GHz in su tenute") + f": {len(rows)}")
+        _import_or_ask(D, "heard", (rows, upa.name), {r["call"] for r in rows if r["rxtx"] == "Rx" and r["call"]})
     if upp and st.button("📥 Importa i PDF", key="st_pa0ply_go"):
         _pa0ply_import(D, [(f.name, f.getvalue()) for f in upp])
     _import_confirm(D)
@@ -881,7 +880,8 @@ def _stations_tab(D):
                         "QTH": r.get("qth") or "", "Bande (directory)": _bands_text(dirb),
                         "Stazione": _station_text(dirb), "✏️": "✏️" if d.get("manual") else "",
                         "Sentito": _blank(h.get("n")), "Ultima volta": (h.get("last") or "")[:16],
-                        "SNR migliore": _blank(h.get("snr_best")), "Bande sentite": _bands_text(h.get("bands", []))})
+                        "SNR migliore": _blank(h.get("snr_best")), "SNR medio": _blank(h.get("snr_mean")),
+                        "Bande sentite": _bands_text(h.get("bands", []))})
         df = pd.DataFrame(tab)
         cols = list(df.columns)
         df.columns = [i18n.tr(c) for c in cols]
@@ -1107,17 +1107,12 @@ def _import_apply(D, kind, payload):
         D.log_station_import("call3", name, len(rows))
         st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
     elif kind == "heard":
-        dec, summ, name = payload
-        for call, s in summ.items():
-            old = (D.station_of(call) or {}).get("data", {}).get("heard", {})
-            heard = {"n": old.get("n", 0) + s["n"], "first": min(str(s["first"]), old.get("first", "9999")),
-                     "last": max(str(s["last"]), old.get("last", "")), "snr_best": max(s["snr_best"], old.get("snr_best", -99)),
-                     "snr_median": s["snr_median"], "bands": sorted(set(old.get("bands", [])) | s["bands"]),
-                     "modes": sorted(set(old.get("modes", [])) | s["modes"])}
-            D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
-        D.commit()
-        D.log_station_import("heard", name, len(summ))
-        st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
+        from emelab import alltxt
+        rows, name = payload
+        res = alltxt.store(D, rows)                 # into the decodes; «heard» rebuilt from them (no double counts)
+        D.log_station_import("heard", name, len(res["calls"]))
+        st.success(i18n.tr("Decodifiche lette") + f": {res['rx']} ({res['new_rx']} " + i18n.tr("nuove") + ") · " +
+                   i18n.tr("stazioni") + f": {len(res['calls'])}")
     elif kind == "directory":
         n = 0
         for name, band, rows in payload:
@@ -1464,6 +1459,12 @@ def _qso_band_filter(qs, lb):
 
 
 def _qso_stats_tab(D):
+    from emelab import ui_alltxt
+    _qso_stats_log(D)
+    ui_alltxt.stats_section(D)          # every decode of ALL.TXT at 10 GHz and up
+
+
+def _qso_stats_log(D):
     from emelab import logbook as lb
     qs = D.qsos()
     if not qs:
@@ -2726,6 +2727,8 @@ def _wsjtx_autostart():
         pos = sets.get("wsjtx_file_pos") or {}
         svc.on_tail_pos = _wsjtx_save_pos
         svc.start_file(sets["wsjtx_file"], pos.get("offset") if pos.get("path") == sets["wsjtx_file"] else None)
+    from emelab import ui_alltxt
+    ui_alltxt.autostart(svc, sets)
     return svc
 
 
@@ -2856,6 +2859,8 @@ def _wsjtx_tab(D):
         svc.auto_log, svc.eme_only, svc.strict_eme = auto, eme_only, strict
         openems_local.save_settings(wsjtx_autolog=auto, wsjtx_eme_only=eme_only, wsjtx_strict_eme=strict)
     _wsjtx_file_box(svc, sets)
+    from emelab import ui_alltxt
+    ui_alltxt.file_box(D, svc, sets)
     _wsjtx_logged_table(svc)
     st.markdown("#### " + i18n.tr("📡 UDP (decodifiche, colori, sottomodo Q65)"))
     c = st.columns(4)

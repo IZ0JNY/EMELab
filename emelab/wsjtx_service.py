@@ -14,7 +14,7 @@ import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from . import logbook, stations, wsjtx, wsjtx_check, wsjtx_logfile
+from . import alltxt, logbook, stations, wsjtx, wsjtx_check, wsjtx_logfile
 
 CALL = re.compile(r"^(?=.*\d)[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(?:/[A-Z0-9]{1,4})?$")
 GRID = re.compile(r"^[A-R]{2}\d{2}$")
@@ -56,6 +56,12 @@ class Service:
         self.fixes = deque(maxlen=20)   # corrections sent to WSJT-X
         self._fix_try: dict = {}        # Q65 code → (attempts, last time)
         self._file_stop = threading.Event()
+        self.all_tail: alltxt.LineTail | None = None     # ALL.TXT followed live (alltxt)
+        self.on_all_pos = None          # callback(path, offset)
+        self.all_recent = deque(maxlen=400)              # last Rx/Tx lines at 10 GHz and up, newest first
+        self.all_seen: datetime | None = None            # when the last new line was read
+        self.all_read = {"rx": 0, "tx": 0, "new_rx": 0}  # counted since EMELab started following the file
+        self._all_stop = threading.Event()
         self._db = None
         self._lock = threading.Lock()
 
@@ -119,6 +125,57 @@ class Service:
             except Exception:
                 pass
         return len(recs)
+
+    # ---------------------------------------------------------------- ALL.TXT
+    def start_alltxt(self, path, offset: int | None = None, interval: float = 2.0):
+        """Follow WSJT-X ALL.TXT in the background (offset None: from now on; 0: the whole history first)."""
+        self.stop_alltxt()
+        self.all_tail = alltxt.LineTail(path, offset)
+        self._all_stop = threading.Event()
+        stop = self._all_stop
+
+        def run():
+            while not stop.is_set():
+                more = self.poll_alltxt()
+                if not more:
+                    stop.wait(interval)
+        threading.Thread(target=run, name="wsjtx-alltxt", daemon=True).start()
+        return self
+
+    def stop_alltxt(self):
+        self._all_stop.set()
+        self.all_tail = None
+
+    @property
+    def alltxt_running(self) -> bool:
+        return self.all_tail is not None
+
+    def poll_alltxt(self) -> bool:
+        """Read the lines WSJT-X appended to ALL.TXT; True while a long history is still being read."""
+        tail = self.all_tail
+        if tail is None:
+            return False
+        try:
+            before = tail.offset
+            lines = tail.read_new()
+            rows = alltxt.parse_eme(lines)
+            if rows:
+                with self._lock:
+                    res = alltxt.store(self.db(), rows)
+                for k in ("rx", "tx", "new_rx"):
+                    self.all_read[k] += res[k]
+                for r in rows:
+                    self.all_recent.appendleft(r)
+                self.all_seen = datetime.now(timezone.utc)
+        except Exception as e:
+            self.errors.append(f"ALL.TXT: {e}")
+            return False
+        if tail.offset != before and self.on_all_pos:
+            try:
+                self.on_all_pos(str(tail.path), tail.offset)
+            except Exception:
+                pass
+        return tail.offset != before and tail.behind > 0
 
     @property
     def running(self) -> bool:
