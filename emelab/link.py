@@ -20,18 +20,20 @@ def path_loss_db(f_ghz: float, dist_km: float, reflectivity: float = REFLECTIVIT
     return 10 * math.log10((4 * math.pi) ** 3 * R ** 4 / (sigma * lam ** 2))
 
 
-def beam_moon_factor(moon_diam_deg: float, hpbw: float, n: int = 60) -> float:
+def beam_moon_factor(moon_diam_deg: float, hpbw: float, n: int = 60, hpbw_rx: float | None = None) -> float:
     """Fraction of the full-Moon echo kept when the beam is narrower than the Moon (24/47 GHz on big dishes).
 
     Echo ∝ ∫ G_tx·G_rx·σ0 dA over the disk: two-way Gaussian beam, scattering weighted by cos^1.5 of the
-    incidence angle (mostly diffuse Moon at cm/mm waves). 1.0 when the beam is much wider than the Moon."""
+    incidence angle (mostly diffuse Moon at cm/mm waves). 1.0 when the beam is much wider than the Moon.
+    With hpbw_rx the two beams differ (path A → Moon → B): G_tx·G_rx ∝ exp(−4 ln2 ρ² (1/θ_tx² + 1/θ_rx²))."""
+    k = 1 / hpbw ** 2 + 1 / (hpbw_rx or hpbw) ** 2
     a = moon_diam_deg / 2
     num = den = 0.0
     for i in range(n):
         r = (i + 0.5) / n                      # fraction of the Moon radius
         w = (1 - r ** 2) ** 0.75 * r           # cos^1.5(i)·ring area
         rho = r * a
-        num += w * math.exp(-4 * math.log(2) * 2 * rho ** 2 / hpbw ** 2)
+        num += w * math.exp(-4 * math.log(2) * rho ** 2 * k)
         den += w
     return num / den
 

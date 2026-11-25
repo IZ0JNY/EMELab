@@ -130,3 +130,37 @@ def monthly_from_means(means: dict, setup: dict, el_deg: float = 30.0) -> list[d
             r["d_gt_db"] = -10 * math.log10(r["tsys"] / best_ts) - (r["a_db"] - best_a)
             r["d_echo_db"] = r["d_gt_db"] - (r["a_db"] - best_a)        # echo: atmosphere twice + noise
     return rows
+
+
+def weather_quality(f_ghz: float, row: dict, series_me: list[dict] | None, series_dx: list[dict] | None,
+                    partner: tuple[float, float] | None) -> dict:
+    """Forecast at the best moment of a window, at both ends: rain probability, gusts (pointing) and the total
+    one-way atmospheric attenuation towards the Moon → ✅ good / ⚠️ fair / ❌ poor."""
+    from . import atmos
+    t = row["best_utc"].replace(minute=0, second=0, microsecond=0)
+
+    def at(series):
+        return next((w for w in series or [] if w["utc"] == t), None)
+    me, dxw = at(series_me), at(series_dx)
+    out = {"label": "—"}
+    bad = fair = 0
+    atm_total = 0.0
+    for tag, w, el in (("me", me, row.get("best_el")), ("dx", dxw, None)):
+        if not w:
+            continue
+        if tag == "dx" and partner:
+            el = astro.sky(row["best_utc"], partner[0], partner[1]).moon.el
+        pp, gust, rain = w.get("rain_prob"), w.get("gust_ms"), w.get("rain_mmh") or 0.0
+        out[f"pp_{tag}"], out[f"gust_{tag}"] = pp, gust
+        if el is not None and el > 0:
+            z = atmos.zenith_attenuation(f_ghz, w["t_c"], w["rh"], w["p_hpa"])["total"]
+            atm_total += atmos.slant_attenuation(z, max(el, 0.5))
+        if (pp is not None and pp >= 60) or rain >= 0.5 or (gust is not None and gust >= 15):
+            bad += 1
+        elif (pp is not None and pp >= 30) or (gust is not None and gust >= 10):
+            fair += 1
+    out["atm_total_db"] = round(atm_total, 2)
+    if atm_total > (1.5 if f_ghz > 20 else 0.6):
+        fair += 1
+    out["label"] = "❌ sconsigliate" if bad else ("⚠️ discrete" if fair else "✅ buone")
+    return out

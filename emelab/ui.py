@@ -29,6 +29,22 @@ def _fmt(v, f="{:.2f}"):
 
 
 # ------------------------------------------------------------------ station and setups
+def _noaa_cb(lon):
+    from emelab import solar
+    try:
+        b = solar.best_15g4(solar.rstn(), lon)
+        if not b:
+            _st.session_state["em_noaa_msg"] = ("warn", i18n.tr("Nessun valore a 15.4 GHz di buona qualità nelle ultime 36 ore."))
+            return
+        _st.session_state["em_flux"] = float(b["sfu"])
+        x = solar.xray_status()
+        msg = (f"{b['sfu']:.0f} SFU · {b['site']} {b['utc']:%Y-%m-%d %H:%M} UTC · GOES {x.get('now', '?')} "
+               f"(max 12 h {x.get('max', '?')}) — " + i18n.tr(x.get("advice", "")))
+        _st.session_state["em_noaa_msg"] = ("ok" if x.get("ok") else "warn", msg)
+    except Exception as e:
+        _st.session_state["em_noaa_msg"] = ("err", i18n.tr("NOAA non raggiungibile") + f": {e}")
+
+
 def _station(D):
     stn = D.station()
     st.subheader("Stazione")
@@ -52,6 +68,12 @@ def _station(D):
     flux = c[2].number_input("Flusso solare a 15.4 GHz (SFU)", 300.0, 3000.0, float(sets.get("emelab_flux", 550.0)), 10.0,
                              key="em_flux", help="valore del giorno dagli osservatori RSTN (San Vito, Learmonth, Sagamore "
                                                  "Hill, Palehua) pubblicato da NOAA SWPC; serve per il rumore solare atteso")
+    c[2].button("📡 Prendi da NOAA", key="em_noaa", on_click=_noaa_cb, args=(lon,),
+                help="valore di oggi a 15.4 GHz dall'osservatorio RSTN più vicino in longitudine (San Vito per l'Europa) "
+                     "e stato dei brillamenti GOES")
+    if _st.session_state.get("em_noaa_msg"):
+        kind, msg = _st.session_state["em_noaa_msg"]
+        (st.success if kind == "ok" else st.warning if kind == "warn" else st.error)(msg)
     if c[3].button("💾 Salva stazione", key="em_save_st"):
         D.save_station(callsign=call.strip().upper(), locator=loc.strip(), lat=lat, lon=lon, height_m=h)
         openems_local.save_settings(emelab_wx_url=url.strip(), emelab_flux=flux)
@@ -381,10 +403,20 @@ def _planner(D):
                 series = weather.open_meteo_series(stn["lat"], stn["lon"], datetime.now(timezone.utc), min(int(days), 16))
             except Exception as e:
                 st.warning(i18n.tr("Previsioni non disponibili") + f": {e}")
+        series_dx = None
+        if use_fc and partner:
+            try:
+                series_dx = weather.open_meteo_series(partner[0], partner[1], datetime.now(timezone.utc), min(int(days), 16))
+            except Exception as e:
+                st.warning(i18n.tr("Previsioni non disponibili") + f": {e}")
         with st.spinner("Calcolo delle finestre…"):
             smp = planner.windows(stn, setup, datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0),
                                   int(days), 15, min_el, partner, series)
-        _st.session_state["em_plan"] = (smp, planner.daily(smp))
+        rows = planner.daily(smp)
+        if series or series_dx:
+            for r in rows:
+                r["wx"] = planner.weather_quality(float(setup["band_ghz"]), r, series, series_dx, partner)
+        _st.session_state["em_plan"] = (smp, rows)
     if _st.session_state.get("em_plan"):
         smp, rows = _st.session_state["em_plan"]
         if not rows:
@@ -395,7 +427,14 @@ def _planner(D):
                        "EL max (°)": round(r["best_el"], 1), "Distanza (km)": round(r["dist_km"]),
                        "Eco SNR 1 Hz (dB)": _r(r["snr_1hz"], 1), "Eco SNR nell'allargamento (dB)": _r(r["snr_spread"], 1),
                        "Allargamento (Hz)": round(r["spread_hz"]), "Attenuazione (dB)": round(r["a_slant_db"], 2),
-                       "Sole–Luna min (°)": round(r["sun_moon_deg"], 1)} for r in rows], hide_index=True, width="stretch")
+                       "Sole–Luna min (°)": round(r["sun_moon_deg"], 1),
+                       **({"Meteo": i18n.tr(r["wx"]["label"]), "Pioggia da te (%)": r["wx"].get("pp_me"),
+                           "Pioggia DX (%)": r["wx"].get("pp_dx"), "Raffiche da te (m/s)": r["wx"].get("gust_me"),
+                           "Atmosfera totale (dB)": r["wx"].get("atm_total_db")} if r.get("wx") else {})}
+                      for r in rows], hide_index=True, width="stretch")
+        if any(r.get("wx") for r in rows):
+            st.caption("Meteo: ✅ buone, ⚠️ discrete, ❌ sconsigliate — probabilità di pioggia, raffiche di vento (puntamento) "
+                       "e attenuazione atmosferica ai due capi all'ora migliore, dalle previsioni Open-Meteo.")
         fig = go.Figure(go.Scatter(x=[s["utc"] for s in smp], y=[s["snr_1hz"] for s in smp], mode="markers",
                                    marker=dict(size=4, color=[s["el"] for s in smp], colorscale="Viridis", showscale=True,
                                                colorbar=dict(title="EL"))))
@@ -863,3 +902,747 @@ def _design_tab(D):
                          column_config={"datasheet": st.column_config.LinkColumn("Datasheet"),
                                         "mouser": st.column_config.LinkColumn("Mouser")})
             st.caption("Apri il datasheet, leggi i valori alla tua frequenza e aggiungi il componente alla libreria.")
+
+
+# ------------------------------------------------------------------ charts and fits
+def _charts_tab(D):
+    import pandas as pd
+    from emelab import plots
+    st.subheader("Grafici e interpolazioni")
+    st.caption("Qualsiasi parametro dei QSO o delle misure contro qualsiasi altro, con interpolazione: retta, polinomio, "
+               "LOESS (tendenza locale) o mediane per classi. Le condizioni di ogni QSO (Luna, spread, Doppler, atmosfera, "
+               "meteo) sono quelle calcolate da EMELab.")
+    src = st.radio("Dati", ["QSO", "Misure"], horizontal=True, key="pl_src")
+    rows = plots.rows_from_qsos(D.qsos()) if src == "QSO" else plots.rows_from_measurements(D.measurements())
+    if not rows:
+        st.info("Ancora nessun dato: registra o importa QSO e misure.")
+        return
+    cats = sorted({r.get("band") for r in rows if r.get("band")})
+    c = st.columns(4)
+    sel_b = c[0].multiselect("Bande", cats, cats, key="pl_bands")
+    rows = [r for r in rows if not cats or r.get("band") in sel_b]
+    if src == "QSO":
+        calls = sorted({r["call"] for r in rows if r.get("call")})
+        sel_c = c[1].multiselect("Nominativi (vuoto = tutti)", calls, [], key="pl_calls")
+        if sel_c:
+            rows = [r for r in rows if r.get("call") in sel_c]
+    dates = [r["utc"] for r in rows if r.get("utc")]
+    if dates:
+        d0, d1 = min(dates).date(), max(dates).date()
+        rng = c[2].date_input("Periodo", (d0, d1), min_value=d0, max_value=d1, key="pl_dates")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            rows = [r for r in rows if r.get("utc") and rng[0] <= r["utc"].date() <= rng[1]]
+    kind = c[3].selectbox("Tipo di grafico", ["Dispersione", "Serie nel tempo", "Istogramma", "Correlazioni"], key="pl_kind")
+    cols = plots.numeric_columns(rows)
+    if not cols:
+        st.info("Nessun parametro numerico nel periodo scelto.")
+        return
+    fmt = lambda k: i18n.tr(plots.label(k))
+    yd = "rst_sent_db" if "rst_sent_db" in cols else ("y_db" if "y_db" in cols else cols[0])
+    xd = "moon_el" if "moon_el" in cols else cols[0]
+    group = "band" if src == "QSO" else "kind"
+    if kind == "Correlazioni":
+        tgt = st.selectbox("Parametro da spiegare", cols, index=cols.index(yd), format_func=fmt, key="pl_tgt")
+        cr = plots.correlations(rows, tgt)
+        if not cr:
+            st.info("Servono almeno 8 valori per parametro.")
+            return
+        st.caption("Correlazione di rango di Spearman: +1 crescono insieme, −1 uno cresce e l'altro cala, 0 nessun legame. "
+                   "Indica dove guardare, non la causa.")
+        top = cr[:20]
+        fig = go.Figure(go.Bar(x=[v for _, v, _ in top][::-1], y=[fmt(k) for k, _, _ in top][::-1], orientation="h",
+                               marker_color=["#2e7d32" if v > 0 else "#c62828" for _, v, _ in top][::-1],
+                               text=[f"{v:+.2f} (n={n})" for _, v, n in top][::-1], textposition="auto"))
+        fig.update_layout(title=i18n.tr("Cosa va insieme a") + f" «{fmt(tgt)}»", height=120 + 26 * len(top),
+                          margin=dict(l=10, r=10, t=40, b=10), xaxis_range=[-1, 1])
+        st.plotly_chart(fig, width="stretch")
+        return
+    c = st.columns(4)
+    ycol = c[0].selectbox("Asse Y", cols, index=cols.index(yd), format_func=fmt, key="pl_y")
+    if kind == "Dispersione":
+        xcol = c[1].selectbox("Asse X", cols, index=cols.index(xd), format_func=fmt, key="pl_x")
+    else:
+        xcol = "date"
+    fk = c[2].selectbox("Interpolazione", list(plots.FITS), format_func=lambda k: plots.FITS[k], index=1 if kind != "Istogramma" else 0,
+                        key="pl_fit", disabled=kind == "Istogramma")
+    span = c[3].slider("Ampiezza LOESS", 0.2, 1.0, 0.5, 0.05, key="pl_span", disabled=fk != "loess",
+                       help="frazione dei punti usata per ogni stima locale: più alta = curva più liscia")
+    pts = [r for r in rows if isinstance(r.get(ycol), (int, float)) and (kind == "Istogramma" or isinstance(r.get(xcol), (int, float)))]
+    if not pts:
+        st.info("Nessun valore per questi parametri.")
+        return
+    fig = go.Figure()
+    if kind == "Istogramma":
+        for g in sorted({str(r.get(group)) for r in pts}):
+            fig.add_trace(go.Histogram(x=[r[ycol] for r in pts if str(r.get(group)) == g], name=g, opacity=0.75))
+        fig.update_layout(barmode="overlay", xaxis_title=fmt(ycol), yaxis_title=i18n.tr("Numero"))
+        vals = np.array([r[ycol] for r in pts])
+        st.caption(i18n.tr("Mediana") + f" {np.median(vals):.2f} · " + i18n.tr("media") + f" {vals.mean():.2f} · σ {vals.std():.2f} · n {len(vals)}")
+    else:
+        xv = lambda r: (r["utc"] if xcol == "date" else r[xcol])
+        for g in sorted({str(r.get(group)) for r in pts}):
+            sub = [r for r in pts if str(r.get(group)) == g]
+            fig.add_trace(go.Scatter(x=[xv(r) for r in sub], y=[r[ycol] for r in sub], mode="markers", name=g,
+                                     text=[f"{r.get('call') or r.get('kind') or ''} {r['utc']:%Y-%m-%d %H:%M}" if r.get("utc") else ""
+                                           for r in sub], hovertemplate="%{text}<br>x=%{x}<br>y=%{y}<extra></extra>",
+                                     marker=dict(size=8, opacity=0.8)))
+        if fk != "none":
+            x = np.array([r[xcol] for r in pts], float)
+            y = np.array([r[ycol] for r in pts], float)
+            f = plots.fit(x, y, fk, span)
+            if "xs" in f:
+                xs = f["xs"]
+                xs_plot = pd.to_datetime(xs * 86400, unit="s") if xcol == "date" else xs
+                if fk == "bins":
+                    fig.add_trace(go.Scatter(x=xs_plot, y=f["ys"], mode="lines+markers", name=i18n.tr("Mediana per classe"),
+                                             line=dict(color="black", width=3),
+                                             error_y=dict(type="data", symmetric=False, array=f["hi"] - f["ys"], arrayminus=f["ys"] - f["lo"])))
+                else:
+                    fig.add_trace(go.Scatter(x=xs_plot, y=f["ys"], mode="lines", name=i18n.tr(plots.FITS[fk]),
+                                             line=dict(color="black", width=3)))
+                m = st.columns(4)
+                m[0].metric("Punti", f["n"])
+                m[1].metric("R²", f"{f['r2']:.3f}" if math.isfinite(f.get("r2", float("nan"))) else "–")
+                m[2].metric("Scarto quadratico medio", f"{f['rmse']:.2f}")
+                if f.get("equation"):
+                    per = " (" + i18n.tr("x in giorni") + ")" if xcol == "date" else ""
+                    m[3].metric("Pendenza", f"{f['coef'][-2]:+.3g}" + (f" ± {f['slope_err']:.2g}" if f.get("slope_err") else ""),
+                                help=i18n.tr("variazione di Y per unità di X") + per)
+                    st.caption(f["equation"] + per)
+                with st.expander("Residui (misura − interpolazione)"):
+                    rf = go.Figure(go.Scatter(x=pd.to_datetime(f["x"] * 86400, unit="s") if xcol == "date" else f["x"],
+                                              y=f["residuals"], mode="markers"))
+                    rf.add_hline(y=0, line_color="gray")
+                    rf.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title=fmt(xcol), yaxis_title="Δ")
+                    st.plotly_chart(rf, width="stretch")
+        fig.update_layout(xaxis_title=fmt(xcol) if xcol != "date" else "UTC", yaxis_title=fmt(ycol))
+    fig.update_layout(height=460, margin=dict(l=10, r=10, t=30, b=10), legend_title_text="")
+    st.plotly_chart(fig, width="stretch")
+    df = pd.DataFrame([{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in r.items()} for r in pts])
+    st.download_button("⬇️ Dati del grafico (CSV)", df.to_csv(index=False).encode(), file_name="emelab_grafico.csv", key="pl_csv")
+
+
+# ------------------------------------------------------------------ chain sections
+def _setup_pick(D, key):
+    sets = D.setups()
+    if not sets:
+        return None
+    sid = st.selectbox("Configurazione", [s["id"] for s in sets], key=key,
+                       format_func=lambda i: next(f"{s['name']} ({s['band_ghz']:g} GHz)" for s in sets if s["id"] == i))
+    return next(s for s in sets if s["id"] == sid)
+
+
+def _pointing_tab(D):
+    from emelab import chain, sunscan
+    st.subheader("Puntamento")
+    st.caption("Bilancio degli errori di puntamento: ogni causa indipendente si somma in quadratura (RSS). La perdita su un "
+               "fascio gaussiano è −12·(θ/HPBW)² dB in una direzione; le eco proprie e il rumore solare la vedono due volte.")
+    s = _setup_pick(D, "pt_setup")
+    c = st.columns(3)
+    f = c[0].number_input("Frequenza (GHz)", 10.0, 140.0, float(s["band_ghz"]) if s else 24.048, key="pt_f")
+    Dm = c[1].number_input("Diametro parabola (m)", 0.3, 10.0, float(s["D_m"]) if s else 1.2, 0.1, key="pt_D")
+    taper = c[2].number_input("Taper al bordo (dB)", 0.0, 25.0, float((s or {}).get("edge_taper_db") or 12.0), key="pt_tp")
+    hp = sunscan.hpbw_deg(f, Dm, sunscan.k_from_taper(taper))
+    st.markdown(f"**HPBW {hp:.3f}°** · " + i18n.tr("diametro apparente della Luna") + " ≈ 0.49–0.56° · " +
+                i18n.tr("obiettivo: errore totale sotto") + f" **{hp / 10:.3f}°** (HPBW/10 → −0.12 dB)")
+    c = st.columns(5)
+    bits = c[0].number_input("Bit dell'encoder", 8, 24, 18, key="pt_bits")
+    back = c[1].number_input("Gioco meccanico (°)", 0.0, 1.0, 0.02, 0.005, format="%.3f", key="pt_back")
+    model = c[2].number_input("Residuo del modello di puntamento (°)", 0.0, 1.0, 0.03, 0.005, format="%.3f", key="pt_mod",
+                              help="dalla scheda Analisi: RMS dopo la correzione con le misure di sole")
+    wind = c[3].number_input("Flessione con il vento (°)", 0.0, 1.0, 0.02, 0.005, format="%.3f", key="pt_wind")
+    track = c[4].number_input("Passo di inseguimento (°)", 0.0, 1.0, 0.02, 0.005, format="%.3f", key="pt_trk",
+                              help="di quanto si sposta la Luna prima che il rotore corregga (metà del passo come errore medio)")
+    b = chain.pointing_budget(hp, {"Encoder (½ passo)": chain.encoder_step_deg(int(bits)) / 2, "Gioco": back,
+                                   "Modello": model, "Vento": wind, "Inseguimento (½ passo)": track / 2})
+    m = st.columns(4)
+    m[0].metric("Errore totale (RSS)", f"{b['rss_deg']:.3f}°", f"{b['fraction_hpbw']:.2f} HPBW", delta_color="off")
+    m[1].metric("Perdita in una direzione", f"{b['loss_one_way_db']:.2f} dB")
+    m[2].metric("Perdita sulle eco proprie", f"{b['loss_echo_db']:.2f} dB")
+    m[3].metric("Moto della Luna", "≈ 0.25°/min", help=i18n.tr("in cielo la Luna si sposta di circa 15° all'ora"))
+    st.dataframe([{"Causa": k, "Errore (°)": round(v, 4), "Perdita da sola (dB)": round(l, 3)} for k, (v, l) in b["terms"].items()],
+                 hide_index=True, width="stretch")
+    import numpy as _np
+    th = _np.linspace(0, hp, 60)
+    fig = go.Figure(go.Scatter(x=th, y=-12 * (th / hp) ** 2, name="una direzione"))
+    fig.add_trace(go.Scatter(x=th, y=-24 * (th / hp) ** 2, name="eco proprie"))
+    fig.add_vline(x=b["rss_deg"], line_dash="dot")
+    fig.update_layout(title="Perdita contro errore di puntamento", xaxis_title="°", yaxis_title="dB", height=320,
+                      margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, width="stretch")
+    with st.expander("💡 Strategie per puntare meglio"):
+        st.markdown("\n".join("- " + i18n.tr(x) for x in [
+            "Misura il sole in molti punti di azimut ed elevazione: il modello di puntamento (zero AZ/EL, inclinazione dell'asse, flessione) si stima solo con dati ben distribuiti.",
+            "Fai scansioni a croce o a 5 punti sul sole: l'offset del massimo è l'errore di puntamento in quel punto.",
+            "A 24 e 47 GHz controlla il fuoco prima del puntamento: un feed fuori fuoco sposta e allarga il fascio.",
+            "Usa la rifrazione radio, non quella ottica: sotto i 10° di elevazione la differenza supera il decimo di grado.",
+            "Insegui con passi piccoli (meno di HPBW/10) e con il gioco sempre recuperato nello stesso verso.",
+            "Con vento forte la flessione cresce con il quadrato della velocità: pianifica le prove nelle ore calme (vedi Pianificatore).",
+            "Verifica sulla Luna: il massimo del rumore lunare deve coincidere con la posizione calcolata."]))
+
+
+def _lna_tab(D):
+    from emelab import chain
+    st.subheader("LNA e ricezione")
+    st.caption("Ogni decimo di dB perso prima dell'LNA aggiunge circa 7 K: le perdite tra feed e LNA contano quanto la NF. "
+               "Qui vedi quanto pesa ogni elemento e quanto G/T guadagni migliorandolo.")
+    s = _setup_pick(D, "ln_setup")
+    c = st.columns(4)
+    gain = c[0].number_input("Guadagno antenna (dBi)", 20.0, 80.0, float((s or {}).get("gain_dbi") or 46.0), 0.1, key="ln_g")
+    t_ant = c[1].number_input("Temperatura d'antenna (K)", 3.0, 400.0, 40.0, 1.0, key="ln_ta",
+                              help="cielo + spillover verso terra, verso il cielo freddo")
+    tphys = c[2].number_input("Temperatura fisica delle perdite (K)", 200.0, 340.0, 290.0, 1.0, key="ln_tp")
+    c = st.columns(4)
+    l_pre = c[0].number_input("Perdita prima dell'LNA (dB)", 0.0, 3.0, float((s or {}).get("line_loss_db") or 0.2), 0.05, key="ln_lp",
+                              help="relè, guida, transizioni, finestra")
+    nf1 = c[1].number_input("NF LNA (dB)", 0.1, 10.0, float((s or {}).get("nf_db") or 1.3), 0.05, key="ln_nf")
+    g1 = c[2].number_input("Guadagno LNA (dB)", 5.0, 50.0, 25.0, 0.5, key="ln_g1")
+    nf2 = c[3].number_input("NF dello stadio dopo (transverter, cavo…) (dB)", 0.5, 20.0, 8.0, 0.5, key="ln_nf2")
+    stages = [chain.passive("Perdite prima dell'LNA", l_pre, tphys), {"name": "LNA", "gain_db": g1, "nf_db": nf1},
+              {"name": "Stadio successivo", "gain_db": 10.0, "nf_db": nf2}]
+    r = chain.rx_chain(stages, t_ant)
+    gt = gain - 10 * math.log10(r["tsys_K"])
+    m = st.columns(4)
+    m[0].metric("NF del sistema", f"{r['nf_db']:.2f} dB")
+    m[1].metric("Tsys", f"{r['tsys_K']:.0f} K")
+    m[2].metric("G/T", f"{gt:.2f} dB/K")
+    m[3].metric("Contributo dell'LNA", f"{r['stages'][1]['share_pct']:.0f} %")
+
+    def gt_with(**kw):
+        p = dict(l_pre=l_pre, nf1=nf1, g1=g1, nf2=nf2)
+        p.update(kw)
+        rr = chain.rx_chain([chain.passive("a", p["l_pre"], tphys), {"name": "b", "gain_db": p["g1"], "nf_db": p["nf1"]},
+                             {"name": "c", "gain_db": 10.0, "nf_db": p["nf2"]}], t_ant)
+        return gain - 10 * math.log10(rr["tsys_K"])
+    st.dataframe([{"Miglioramento": i18n.tr(n), "ΔG/T (dB)": round(gt_with(**kw) - gt, 2)} for n, kw in [
+        ("Perdita prima dell'LNA −0.1 dB", {"l_pre": max(l_pre - 0.1, 0)}),
+        ("LNA direttamente sul feed (perdita 0.05 dB)", {"l_pre": 0.05}),
+        ("NF LNA −0.3 dB", {"nf1": max(nf1 - 0.3, 0.1)}),
+        ("Guadagno LNA +10 dB", {"g1": g1 + 10}),
+        ("Secondo LNA (stadio dopo con NF 2 dB)", {"nf2": 2.0})]], hide_index=True, width="stretch")
+    st.caption("Confronta la NF del datasheet con quella che risulta dal rumore solare (scheda Analisi): la differenza "
+               "racconta le perdite nascoste e il fuoco.")
+    st.divider()
+    _catalog_box(D, ("LNA", "SW"), "ln")
+
+
+def _sspa_tab(D):
+    import numpy as _np
+    from emelab import chain
+    st.subheader("SSPA")
+    st.caption("Amplificatori a stato solido: compressione con il modello di Rapp, combinazione di più moduli, perdite fino "
+               "al feed, consumo e dissipatore. In Q65 si trasmette un periodo sì e uno no (50 %).")
+    c = st.columns(4)
+    psat = c[0].number_input("Psat di un modulo (dBm)", 10.0, 60.0, 43.0, 0.5, key="sp_psat")
+    g = c[1].number_input("Guadagno (dB)", 5.0, 60.0, 30.0, 0.5, key="sp_g")
+    s_r = c[2].number_input("Morbidezza di Rapp s", 0.5, 10.0, 2.0, 0.5, key="sp_s", help="2 tipico GaAs/GaN; alto = limitatore netto")
+    pin = c[3].number_input("Potenza di pilotaggio (dBm)", -20.0, 40.0, 10.0, 0.5, key="sp_pin")
+    c = st.columns(4)
+    n = c[0].number_input("Moduli combinati", 1, 16, 1, key="sp_n")
+    lc = c[1].number_input("Perdita del combinatore (dB)", 0.0, 3.0, 0.3, 0.05, key="sp_lc", disabled=n == 1)
+    lout = c[2].number_input("Perdita fino al feed (dB)", 0.0, 6.0, 0.5, 0.05, key="sp_lo", help="guida, relè, isolatore")
+    eff = c[3].number_input("Efficienza (PAE, %)", 5.0, 70.0, 25.0, 1.0, key="sp_eff")
+    one = chain.rapp_dbm(pin + g, psat, s_r)
+    tot = chain.combine(one, int(n), lc) - lout
+    pw = 10 ** ((tot - 30) / 10)
+    pdc = int(n) * 10 ** ((one - 30) / 10) / (eff / 100)
+    heat = pdc - 10 ** ((chain.combine(one, int(n), lc) - 30) / 10)
+    m = st.columns(4)
+    m[0].metric("Potenza al feed", f"{pw:.1f} W", f"{tot:.1f} dBm", delta_color="off")
+    m[1].metric("Compressione", f"{(pin + g) - one:.1f} dB")
+    m[2].metric("Consumo DC", f"{pdc:.0f} W")
+    m[3].metric("Dissipatore", f"≤ {chain.heatsink_rth(heat):.2f} K/W",
+                help=i18n.tr("resistenza termica massima per restare sotto 70 °C con 35 °C d'aria e il 50 % di trasmissione"))
+    x = _np.linspace(pin - 25, pin + 10, 80)
+    y = [chain.rapp_dbm(v + g, psat, s_r) for v in x]
+    fig = go.Figure(go.Scatter(x=x, y=y, name="Rapp"))
+    fig.add_trace(go.Scatter(x=x, y=x + g, name="lineare", line=dict(dash="dot")))
+    fig.add_vline(x=pin, line_dash="dot")
+    fig.update_layout(title="Uscita di un modulo contro pilotaggio", xaxis_title="Pin (dBm)", yaxis_title="Pout (dBm)",
+                      height=320, margin=dict(l=10, r=10, t=40, b=10), yaxis_range=[min(y) - 3, psat + 3])
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Lavora 1–2 dB sotto la saturazione: Q65 è a inviluppo costante, ma un margine protegge i transistor e "
+               "riduce il calore.")
+    st.divider()
+    dev = _catalog_box(D, ("PA",), "sp")
+    _heatsink_box(dev, 10 ** ((tot + lout - 30) / 10) / max(int(n), 1), eff, "sp")
+
+
+def _twt_tab(D):
+    import numpy as _np
+    from emelab import chain
+    st.subheader("TWT")
+    st.caption("Tubo a onda progressiva: caratteristica AM/AM e AM/PM con il modello di Saleh, alimentazioni, efficienza e "
+               "perdite fino al feed. Il tubo va pilotato vicino alla saturazione, non oltre: oltre il picco la potenza cala.")
+    c = st.columns(4)
+    psat = c[0].number_input("Potenza di saturazione (W)", 1.0, 500.0, 20.0, 1.0, key="tw_ps")
+    g0 = c[1].number_input("Guadagno di piccolo segnale (dB)", 20.0, 60.0, 35.0, 0.5, key="tw_g")
+    pin = c[2].number_input("Pilotaggio (dBm)", -20.0, 30.0, 10.0, 0.5, key="tw_pin")
+    lout = c[3].number_input("Perdita fino al feed (dB)", 0.0, 6.0, 0.4, 0.05, key="tw_lo")
+    c = st.columns(4)
+    vh = c[0].number_input("Tensione d'elica (V)", 0.0, 20000.0, 4000.0, 50.0, key="tw_vh")
+    ih = c[1].number_input("Corrente di catodo (mA)", 0.0, 2000.0, 60.0, 1.0, key="tw_ih")
+    pf = c[2].number_input("Filamento (W)", 0.0, 50.0, 6.0, 0.5, key="tw_pf")
+    pa = c[3].number_input("Ausiliari (ventole, controllo) (W)", 0.0, 500.0, 20.0, 1.0, key="tw_pa")
+    ps_dbm = 10 * math.log10(psat * 1000)
+    out, ph = chain.saleh(pin, ps_dbm, g0)
+    at_feed = out - lout
+    pdc = vh * ih / 1000 * 0.6 + pf + pa            # collector depression returns ~40 % (typical single-stage)
+    m = st.columns(4)
+    m[0].metric("Potenza al feed", f"{10 ** ((at_feed - 30) / 10):.1f} W", f"{at_feed:.1f} dBm", delta_color="off")
+    m[1].metric("Pilotaggio per la saturazione", f"{chain.saleh_drive_for_sat(ps_dbm, g0):.1f} dBm")
+    m[2].metric("Spostamento di fase AM/PM", f"{ph:.1f}°")
+    m[3].metric("Consumo stimato", f"{pdc:.0f} W", help=i18n.tr("con collettore depresso che recupera circa il 40 % della potenza del fascio"))
+    x = _np.linspace(pin - 25, chain.saleh_drive_for_sat(ps_dbm, g0) + 8, 90)
+    y = [chain.saleh(v, ps_dbm, g0) for v in x]
+    fig = go.Figure(go.Scatter(x=x, y=[a for a, _ in y], name="AM/AM"))
+    fig.add_trace(go.Scatter(x=x, y=[p for _, p in y], name="AM/PM (°)", yaxis="y2"))
+    fig.add_vline(x=pin, line_dash="dot")
+    fig.update_layout(title="Caratteristica del tubo (Saleh)", xaxis_title="Pin (dBm)", yaxis_title="Pout (dBm)",
+                      yaxis2=dict(overlaying="y", side="right", title="°"), height=340, margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, width="stretch")
+    _catalog_box(D, ("TWT",), "tw")
+    with st.expander("🔧 Buone pratiche con i TWT"):
+        st.markdown("\n".join("- " + i18n.tr(x) for x in [
+            "Scalda il filamento per il tempo indicato dal costruttore prima di dare l'alta tensione.",
+            "Il relè o lo switch d'antenna deve commutare prima della trasmissione: sequencer con ritardi adeguati.",
+            "Non superare la saturazione: oltre il picco la potenza cala e la corrente d'elica cresce.",
+            "Controlla la corrente d'elica: se aumenta, il fascio non è ben focalizzato o il carico è disadattato.",
+            "Annota le ore di catodo nel diario: l'emissione cala con l'uso e la potenza di saturazione con lei."]))
+
+
+# ------------------------------------------------------------------ signal of a station, who can I work
+def _my_model(setup: dict, band: str) -> dict:
+    from emelab import dx
+    tsys = analysis.tsys_cold(setup, 0.0)["sys"]
+    return dx.station(band, float(setup["D_m"]), float(setup.get("tx_w") or 0) or None, "offset",
+                      tsys_K=tsys, eta=float(setup.get("eta_ap") or 0.6), line_loss_db=0.0)
+
+
+def _band_of_setup(setup):
+    from emelab import dx
+    return min(dx.BAND_GHZ, key=lambda b: abs(dx.BAND_GHZ[b] - float(setup["band_ghz"])))
+
+
+def _dx_models(D, band):
+    from emelab import dx
+    out = []
+    for r in D.stations():
+        e = (r.get("data", {}).get("directory") or {}).get(band)
+        if not e or not r.get("locator"):
+            continue
+        m = dx.from_directory(e, band)
+        try:
+            loc = astro.locator_to_latlon(r["locator"])
+        except Exception:
+            continue
+        if m:
+            out.append({"call": r["call"], "locator": r["locator"], "loc": loc, "model": m, "antenna": e.get("antenna"),
+                        "power_w": e.get("power_w"), "heard": (r.get("data", {}).get("heard") or {}).get("n")})
+    return out
+
+
+def _learned_offset(D, band, me, my_loc, models):
+    """Median of (reported − predicted) on the QSOs of this band: what EMELab has learned about your station."""
+    from emelab import dx
+    key = ("em_offset", band, len(D.qsos(band=band)))
+    if _st.session_state.get("em_off_key") == key:
+        return _st.session_state["em_off"]
+    by = {m["call"]: m for m in models}
+    pairs = []
+    for q in D.qsos(band=band)[-150:]:
+        m = by.get(q["call"])
+        v = _num_rst(q.get("rst_sent"))
+        if not m or v is None:
+            continue
+        t = edb.parse_utc(q["utc"]) if isinstance(q["utc"], str) else q["utc"]
+        r = dx.link_at(t, me, my_loc, m["model"], m["loc"], band)
+        if r:
+            pairs.append((v, r["snr_a_hears_b"]))
+    res = dx.learn_offset(pairs)
+    _st.session_state["em_off_key"], _st.session_state["em_off"] = key, res
+    return res
+
+
+def _num_rst(v):
+    try:
+        return float(str(v).replace("+", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _signal_tab(D):
+    from emelab import dx
+    st.subheader("Segnale atteso e chi posso collegare")
+    st.caption("Equazione radar bistatica con la distanza reale della Luna da entrambe le stazioni, la parte di Luna "
+               "illuminata da entrambi i fasci, l'atmosfera ai due capi e il rumore di chi riceve puntato sulla Luna. "
+               "Soglie Q65 di G3WDG contro il mutual spread. Dati delle altre stazioni dalla EME Directory; dove mancano, "
+               "valori tipici della banda (indicati come ipotesi). EMELab corregge il modello con i rapporti dei tuoi QSO.")
+    stn = D.station()
+    s = _setup_pick(D, "sg_setup")
+    if not s or not stn.get("lat"):
+        st.info("Servono stazione e configurazione.")
+        return
+    band = _band_of_setup(s)
+    me = _my_model(s, band)
+    my_loc = (stn["lat"], stn["lon"])
+    models = _dx_models(D, band)
+    if not models:
+        st.info("Importa la EME Directory (scheda Stazioni EME) per avere antenna e potenza delle altre stazioni.")
+        return
+    off = _learned_offset(D, band, me, my_loc, models)
+    m = st.columns(4)
+    m[0].metric("La tua stazione", f"{me['D_m']:.2f} m · {me['power_w']:.0f} W")
+    m[1].metric("Tsys senza Luna", f"{me['tsys_K']:.0f} K")
+    m[2].metric("Correzione appresa dai QSO", f"{off['offset_db']:+.1f} dB" if off["n"] else "–",
+                f"n={off['n']}" + (f", ±{off['mad_db']:.1f} dB" if off.get("mad_db") else ""), delta_color="off")
+    m[3].metric("Stazioni con dati", len(models))
+    t1, t2 = st.tabs(["🏆 Chi posso collegare", "📶 Segnale di una stazione"])
+    with t1:
+        c = st.columns(3)
+        hours = c[0].number_input("Prossime ore", 6, 336, 48, 6, key="sg_h")
+        min_el = c[1].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="sg_el")
+        if c[2].button("🏆 Calcola la classifica", type="primary", key="sg_go"):
+            with st.spinner("Calcolo delle finestre comuni…"):
+                _st.session_state["sg_rank"] = dx.rank(me, my_loc, models, band, datetime.now(timezone.utc), float(hours),
+                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0)
+        rk = _st.session_state.get("sg_rank")
+        if rk:
+            st.dataframe([{"Nominativo": r["call"], "Locator": r["locator"], "Antenna": r.get("antenna"), "Potenza (W)": r.get("power_w"),
+                           "Probabilità": f"{100 * r['probability']:.0f} %",
+                           "Momento migliore (UTC)": r["best"]["utc"].strftime("%Y-%m-%d %H:%M") if r["best"] else "–",
+                           "Ore in comune": round(r["hours_common"], 1),
+                           "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1) if r["best"] else None,
+                           "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
+                           "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
+                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None, "Sentito (ALL.TXT)": r.get("heard")}
+                          for r in rk], hide_index=True, width="stretch")
+            st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
+                       "«Sentito» = quante decodifiche hai di quella stazione nel tuo ALL.TXT.")
+    with t2:
+        calls = [x["call"] for x in models]
+        call = st.selectbox("Stazione", calls, key="sg_call")
+        o = next(x for x in models if x["call"] == call)
+        c = st.columns(3)
+        d0 = c[0].date_input("Giorno (UTC)", datetime.now(timezone.utc).date(), key="sg_day")
+        pw = c[1].number_input("Sua potenza (W)", 0.1, 2000.0, float(o["model"]["power_w"]), key="sg_pw")
+        dd = c[2].number_input("Sua parabola (m)", 0.3, 20.0, float(o["model"]["D_m"]), 0.1, key="sg_dd")
+        other = dx.station(band, dd, pw, o["model"]["kind"])
+        rows = []
+        t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
+        for i in range(0, 24 * 4):
+            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band)
+            if r:
+                rows.append(r)
+        if not rows:
+            st.info("La Luna non è visibile da entrambi in quel giorno.")
+        else:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_a_hears_b"] + off["offset_db"] * (off["n"] >= 5) for r in rows], name="lo ricevi"))
+            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_b_hears_a"] for r in rows], name="ti riceve"))
+            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name="soglia Q65", line=dict(dash="dot")))
+            fig.update_layout(title=f"{call} — " + i18n.tr("SNR atteso in 2500 Hz"), yaxis_title="dB", height=360,
+                              margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig, width="stretch")
+            b = max(rows, key=lambda r: r["margin_db"])
+            hb = b["detail"][0]
+            st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
+                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · " + i18n.tr("perdita di tratta") +
+                        f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
+            if other["assumed"]:
+                st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
+
+
+# ------------------------------------------------------------------ device catalogue and heat sink
+def _catalog_box(D, kinds, key):
+    """Devices for the band from EMELab's catalogue and the user's library, datasheet search and reading."""
+    import pandas as pd
+    from emelab import catalog, parts
+    st.subheader("📚 Catalogo dispositivi")
+    c = st.columns(3)
+    band = c[0].selectbox("Banda", [10.368, 24.048, 47.088, 76.032, 122.25, 134.928], key=f"{key}_cb",
+                          format_func=lambda f: f"{f:g} GHz")
+    kind_lbl = {k: catalog.TYPES[k] for k in kinds}
+    kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
+    rows = [dict(d, origine="catalogo EMELab") for d in catalog.for_band(band, kind)]
+    pk = {"PA": "pa", "LNA": "lna", "SW": "passive", "TWT": "pa", "TRV": "mixer"}[kind]
+    for p in parts.all_parts(D, band, pk):
+        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "f_lo": p["f_lo_ghz"], "f_hi": p["f_hi_ghz"],
+                     "gain_db": p["gain_db"], "nf_db": p["nf_db"], "p1db_dbm": p.get("p1db_dbm"), "psat_dbm": p.get("psat_dbm"),
+                     "vdc": p.get("vdc"), "notes": p.get("notes"), "source": p.get("datasheet"), "origine": "la tua libreria"})
+    if not rows:
+        st.info("Nessun dispositivo per questa banda: cercalo e aggiungilo dal datasheet qui sotto.")
+        sel = None
+    else:
+        tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": r["maker"], "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
+                             "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
+                             "Note": r.get("notes"),
+                             "Fonte": r.get("source") if r["origine"] == "catalogo EMELab" else f"{r['origine']}: {r.get('source') or ''}",
+                             "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
+        tab.columns = [i18n.tr(x) for x in tab.columns]
+        st.dataframe(tab, hide_index=True, width="stretch")
+        st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. Le celle vuote vanno lette "
+                   "dal datasheet: EMELab non inventa i numeri.")
+        sel = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"{key}_cs",
+                             format_func=lambda i: f"{rows[i]['part']} — {rows[i]['maker']}")
+        sel = rows[sel]
+        links = catalog.search_links(sel["part"], sel["maker"] if sel["maker"] != "—" else "")
+        lc = st.columns(len(links))
+        for col, (k, u) in zip(lc, links.items()):
+            col.link_button("🔎 " + k, u)
+    with st.expander("📄 Leggi i valori da un datasheet (PDF) e salvali nella tua libreria"):
+        up = st.file_uploader("Datasheet PDF", type=["pdf"], key=f"{key}_ds")
+        if up is not None:
+            from emelab import stations as stn
+            try:
+                found = catalog.read_datasheet(stn.pdf_text(up.getvalue()))
+            except Exception as e:
+                found = {}
+                st.error(f"PDF: {e}")
+            st.caption("Valori trovati automaticamente: controllali sul datasheet prima di salvare.")
+            c = st.columns(4)
+            part = c[0].text_input("Sigla", up.name.rsplit(".", 1)[0], key=f"{key}_dp")
+            maker = c[1].text_input("Produttore", "", key=f"{key}_dm")
+            vals = {}
+            fields = [("f_lo_ghz", "Da GHz", found.get("f_lo")), ("f_hi_ghz", "A GHz", found.get("f_hi")),
+                      ("gain_db", "Guadagno dB", found.get("gain_db")), ("nf_db", "NF dB", found.get("nf_db")),
+                      ("p1db_dbm", "P1dB dBm", found.get("p1db_dbm")), ("psat_dbm", "Psat dBm", found.get("psat_dbm")),
+                      ("vdc", "V", found.get("vdc")), ("idc_a", "A", found.get("idc_a"))]
+            cc = st.columns(8)
+            for col, (k, lab, v) in zip(cc, fields):
+                vals[k] = col.number_input(lab, value=v, key=f"{key}_dv_{k}")
+            extra = {k: found[k] for k in ("rth_jc", "tj_max", "pae_pct") if k in found}
+            if extra:
+                st.markdown(" · ".join(f"**{k}** = {v:g}" for k, v in extra.items()))
+            if st.button("💾 Salva nella libreria", key=f"{key}_dsave", disabled=not part.strip()):
+                notes = "; ".join(f"{k}={v:g}" for k, v in extra.items())
+                parts.save(D, part=part.strip(), maker=maker.strip() or "—", type=pk, datasheet=up.name, notes=notes or None, **vals)
+                st.success("Salvato nella libreria componenti (solo su questo PC).")
+    return sel
+
+
+def _heatsink_box(dev, p_out_w, pae_default, key):
+    from emelab import catalog
+    st.subheader("🌡️ Dissipatore del dispositivo di potenza")
+    st.caption("La giunzione segue il periodo di trasmissione in millisecondi, il dissipatore fa la media su minuti: "
+               "con Q65 (50 % in trasmissione) il dissipatore vede metà potenza, la giunzione la vede tutta. "
+               "Resistenza termica giunzione–case dal datasheet del dispositivo.")
+    tech = (dev or {}).get("tech") or "GaN"
+    c = st.columns(4)
+    pw = c[0].number_input("Potenza d'uscita del dispositivo (W)", 0.1, 500.0, float(round(p_out_w, 1)), 0.5, key=f"{key}_hp")
+    pae = c[1].number_input("Efficienza (PAE, %)", 5.0, 80.0, float(pae_default), 1.0, key=f"{key}_he")
+    rjc = c[2].number_input("R giunzione–case (K/W)", 0.05, 50.0, 1.5, 0.05, key=f"{key}_hj",
+                            help="«thermal resistance, channel to case» nel datasheet")
+    rcs = c[3].number_input("R case–dissipatore (K/W)", 0.0, 5.0, 0.2, 0.05, key=f"{key}_hc",
+                            help="pasta termica o indio: 0.1–0.3 K/W; con isolante di più")
+    c = st.columns(4)
+    tamb = c[0].number_input("Temperatura dell'aria (°C)", -20.0, 60.0, 35.0, 1.0, key=f"{key}_ha",
+                             help="al fuoco d'estate, al sole, la scatola si scalda: meglio abbondare")
+    tjmax = catalog.TJ_MAX.get(tech, 175.0)
+    tjt = c[1].number_input("Temperatura di giunzione obiettivo (°C)", 60.0, 250.0, min(150.0, tjmax - 25), 5.0, key=f"{key}_ht",
+                            help=i18n.tr("massimo assoluto tipico") + f" {tech}: {tjmax:.0f} °C; " +
+                                 i18n.tr("ogni 10 °C in meno raddoppia circa la vita del dispositivo"))
+    duty = c[2].number_input("Frazione in trasmissione", 0.05, 1.0, 0.5, 0.05, key=f"{key}_hd",
+                             help="Q65: 0.5; prove e beacon continui: 1")
+    h = catalog.heatsink(pw, pae, rjc, rcs, tamb, tjt, duty)
+    m = st.columns(4)
+    m[0].metric("Potenza dissipata", f"{h['p_diss_w']:.0f} W", f"DC {h['p_dc_w']:.0f} W", delta_color="off")
+    if not h["ok"]:
+        m[1].metric("Dissipatore", "impossibile")
+        st.error("Anche con un dissipatore ideale la giunzione supera l'obiettivo: riduci la potenza, migliora il contatto "
+                 "termico (R case–dissipatore) o usa un dispositivo con resistenza termica più bassa.")
+        return
+    m[1].metric("R dissipatore–aria massima", f"{h['rsa_max']:.2f} K/W")
+    m[2].metric("Temperatura del dissipatore", f"{h['t_sink_c']:.0f} °C")
+    m[3].metric("Giunzione in trasmissione continua", f"{h['tj_continuous_c']:.0f} °C",
+                help=i18n.tr("se trasmetti senza pause (prove, beacon) con lo stesso dissipatore"))
+    st.dataframe([{"Raffreddamento": i18n.tr(k), "Superficie alettata (cm²)": round(a * 1e4) if a == a else None,
+                   "Ordine di grandezza": i18n.tr("piastra alettata") + f" ≈ {math.sqrt(a * 1e4 / 6):.0f} × {math.sqrt(a * 1e4 / 6):.0f} cm"
+                   if a == a else ""} for k, a in h["area_m2"].items()], hide_index=True, width="stretch")
+    st.caption("Superficie stimata con un coefficiente di scambio efficace (alette comprese): naturale ≈ 7, ventola ≈ 35, "
+               "ventola forte ≈ 70 W/(m²·K). Per la scelta finale usa la curva K/W del produttore del dissipatore.")
+
+
+# ------------------------------------------------------------------ guided start
+def _horizon_editor(key="wz_hz"):
+    import pandas as pd
+    from emelab import wizard
+    hz = openems_local.load_settings().get("horizon") or wizard.default_horizon(10.0)
+    with st.expander("🏔️ Il tuo orizzonte libero (dove vedi la Luna senza ostacoli)"):
+        st.caption("Settori di azimut con l'elevazione minima libera da case, alberi, colline. Fuori dai settori la Luna "
+                   "si considera nascosta. Resta salvato solo su questo PC.")
+        ed = st.data_editor(pd.DataFrame(hz), num_rows="dynamic", hide_index=True, key=key, width="stretch",
+                            column_config={"az_da": st.column_config.NumberColumn(i18n.tr("Azimut da (°)"), min_value=0, max_value=360),
+                                           "az_a": st.column_config.NumberColumn(i18n.tr("Azimut a (°)"), min_value=0, max_value=360),
+                                           "el_min": st.column_config.NumberColumn(i18n.tr("Elevazione minima (°)"), min_value=0, max_value=90)})
+        rows = [r for r in ed.to_dict("records") if None not in (r.get("az_da"), r.get("az_a"), r.get("el_min"))
+                and not any(isinstance(v, float) and v != v for v in r.values())]
+        if st.button("💾 Salva orizzonte", key=key + "_save"):
+            openems_local.save_settings(horizon=rows)
+            st.success("Orizzonte salvato.")
+        import numpy as _np
+        az = _np.arange(0, 361, 2)
+        fig = go.Figure(go.Barpolar(r=[wizard.el_min(rows, a) for a in az], theta=az, marker_color="#8d6e63", opacity=0.7))
+        fig.update_layout(polar=dict(angularaxis=dict(direction="clockwise", rotation=90), radialaxis=dict(range=[0, 40])),
+                          height=300, margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
+        st.plotly_chart(fig, width="stretch")
+    return rows or hz
+
+
+def _wizard(D):
+    from emelab import dx, weather, wizard
+    S = _st.session_state
+    stn = D.station()
+    if not stn.get("lat"):
+        st.info("Benvenuto in EMELab! Per cominciare inserisci nominativo e locator nella scheda Stazione.")
+        return
+    hz = _horizon_editor()
+    now = wizard.sky_now_text(stn["lat"], stn["lon"], stn.get("height_m") or 0.0, hz)
+    st.markdown(f"### 🧭 {i18n.tr('Oggi è')} {i18n.tr(wizard.date_it(now['now']))}, " + i18n.tr("sono le") +
+                f" {now['now']:%H:%M} UTC")
+    if "wz_fc" not in S:
+        try:
+            S["wz_fc"] = weather.open_meteo_series(stn["lat"], stn["lon"], now["now"], 16)
+        except Exception as e:
+            S["wz_fc"] = []
+            S["wz_fc_err"] = str(e)
+    fc = S["wz_fc"]
+    nowh = now["now"].replace(minute=0, second=0, microsecond=0)
+    cur = next((x for x in fc if x["utc"] == nowh), None)
+    nxt = [x for x in fc if nowh <= x["utc"] <= nowh + timedelta(hours=24)]
+    c = st.columns(2)
+    with c[0]:
+        if cur:
+            st.markdown(f"**{i18n.tr('Meteo da te adesso')}:** {cur['t_c']:.0f} °C, " + i18n.tr("umidità") + f" {cur['rh']:.0f} %, " +
+                        i18n.tr("nuvole") + f" {cur['cloud_pct']:.0f} %, " + i18n.tr("vento") + f" {cur.get('wind_ms') or 0:.0f} m/s")
+            if nxt:
+                st.markdown(f"**{i18n.tr('Prossime 24 ore')}:** " + i18n.tr("pioggia fino al") +
+                            f" {max((x.get('rain_prob') or 0) for x in nxt):.0f} %, " + i18n.tr("raffiche fino a") +
+                            f" {max((x.get('gust_ms') or 0) for x in nxt):.0f} m/s, " + i18n.tr("umidità") +
+                            f" {min(x['rh'] for x in nxt):.0f}–{max(x['rh'] for x in nxt):.0f} %")
+        else:
+            st.caption(i18n.tr("Previsioni meteo non disponibili") + (f": {S.get('wz_fc_err')}" if S.get("wz_fc_err") else ""))
+    with c[1]:
+        vis = i18n.tr("visibile dal tuo orizzonte") if now["visible"] else i18n.tr("non visibile adesso")
+        st.markdown(f"**{i18n.tr('Luna')}:** AZ {now['moon_az']:.0f}° EL {now['moon_el']:.0f}° — {vis}; " +
+                    f"{now['dist_km']:,.0f} km ({now['perigee_db']:+.1f} dB " + i18n.tr("rispetto al perigeo") + "), " +
+                    i18n.tr("illuminata al") + f" {100 * now['illum']:.0f} %")
+        st.markdown(f"**{i18n.tr('Spread delle eco proprie')}:** " +
+                    " · ".join(f"{f:.0f} GHz {v:.0f} Hz" for f, v in now["spread"].items()) +
+                    f" · **{i18n.tr('Sole–Luna')}** {now['sun_moon']:.0f}°")
+    st.divider()
+    goals = {"plan": "📡 Pianificare un QSO", "chain": "🔧 Migliorare la catena (LNA, SSPA, TWT)",
+             "setup": "🎯 Migliorare il setup (puntamento, fuoco, misure)", "analyse": "📊 Capire i miei risultati"}
+    goal = st.radio("Cosa vuoi fare oggi?", list(goals), format_func=lambda k: goals[k], horizontal=True, key="wz_goal",
+                    index=None)
+    if goal == "plan":
+        _wz_plan(D, stn, hz, fc)
+    elif goal == "chain":
+        st.markdown("\n".join("- " + i18n.tr(s["text"]) for s in coach.suggestions(D) if s.get("area") in (None, "chain"))[:3000]
+                    or i18n.tr("Nessun suggerimento al momento."))
+        st.info("Apri le schede 🔊 LNA, 🔥 SSPA e 💡 TWT: per ogni stadio vedi quanto pesa e quanto guadagni migliorandolo. "
+                "Nella scheda 📶 Segnale e stazioni la «correzione appresa dai QSO» ti dice quanto la tua stazione rende "
+                "rispetto alla teoria: se ricevi peggio di come ti ricevono, il margine è in ricezione (LNA, perdite, Tsys).")
+    elif goal == "setup":
+        for sgg in coach.suggestions(D)[:8]:
+            st.markdown("- " + i18n.tr(sgg["text"]))
+        st.info("Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
+                "Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.")
+    elif goal == "analyse":
+        st.info("Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, "
+                "umidità…; «Correlazioni» ti mostra cosa va insieme ai tuoi risultati. In 📉 Statistiche QSO trovi le "
+                "distribuzioni e la mappa.")
+
+
+def _wz_plan(D, stn, hz, fc):
+    from emelab import dx, wizard
+    S = _st.session_state
+    sets = D.setups()
+    if not sets:
+        st.info("Crea prima una configurazione (scheda Configurazioni) per la banda che vuoi usare.")
+        return
+    c = st.columns(3)
+    sid = c[0].selectbox("Con quale configurazione?", [s["id"] for s in sets], key="wz_setup",
+                         format_func=lambda i: next(f"{s['name']} ({s['band_ghz']:g} GHz)" for s in sets if s["id"] == i))
+    setup = next(s for s in sets if s["id"] == sid)
+    days = c[1].slider("Quanti giorni guardare avanti?", 1, 16, 7, key="wz_days",
+                       help="le previsioni meteo arrivano a 16 giorni")
+    band = _band_of_setup(setup)
+    f = float(setup["band_ghz"])
+    if c[2].button("🌙 Cerca le finestre di Luna", type="primary", key="wz_go"):
+        with st.spinner("Calcolo delle finestre…"):
+            ws = wizard.moon_windows(stn["lat"], stn["lon"], stn.get("height_m") or 0.0, hz, datetime.now(timezone.utc), int(days))
+            for w in ws:
+                w["wx"] = wizard.window_weather(fc, w, f)
+                w["score"], w["quality"] = wizard.window_score(w, f, w["wx"])
+        S["wz_windows"] = ws
+        S.pop("wz_rank", None)
+    ws = S.get("wz_windows")
+    if not ws:
+        return
+    st.markdown("#### " + i18n.tr("Le tue finestre di Luna"))
+    st.dataframe([{"Dal (UTC)": wizard.short_it(w["start"]), "Al (UTC)": w["end"].strftime("%d/%m %H:%M"),
+                   "Ore": round(w["hours"], 1), "Culmine": f"{w['best_utc']:%H:%M} EL {w['best_el']:.0f}°",
+                   "Distanza (km)": f"{w['dist_km']:,.0f}", "Rispetto al perigeo (dB)": round(w["perigee_db"], 2),
+                   "Spread (Hz)": "{:.0f}–{:.0f}".format(*w["spread"].get(f, w["spread"][min(w["spread"], key=lambda k: abs(k - f))])),
+                   "Sole–Luna min (°)": round(w["sun_moon_min"]),
+                   "Meteo": i18n.tr(w["wx"]["label"]) if w.get("wx") else "—",
+                   "Pioggia (%)": w["wx"]["rain_prob"] if w.get("wx") else "—",
+                   "Raffiche (m/s)": round(w["wx"]["gust_ms"]) if w.get("wx") else "—",
+                   "Umidità (%)": round(w["wx"]["rh"]) if w.get("wx") else "—",
+                   "Condizioni": f"{w['score']} · {i18n.tr(w['quality'])}"} for w in ws], hide_index=True, width="stretch")
+    best = max(range(len(ws)), key=lambda i: ws[i]["score"])
+    st.caption(i18n.tr("La finestra migliore è") + f" {ws[best]['start']:%d/%m} " + i18n.tr("dalle") + f" {ws[best]['start']:%H:%M} " +
+               i18n.tr("alle") + f" {ws[best]['end']:%H:%M} UTC. " +
+               i18n.tr("Il punteggio tiene conto di altezza della Luna, distanza, spread, distanza dal Sole e meteo."))
+    wi = st.selectbox("Quale finestra vuoi usare?", range(len(ws)), index=best, key="wz_wi",
+                      format_func=lambda i: f"{wizard.short_it(ws[i]['start'])} → {ws[i]['end']:%H:%M} UTC · {ws[i]['score']}")
+    w = ws[wi]
+    models = _dx_models(D, band)
+    if not models:
+        st.info("Importa la EME Directory (scheda Stazioni EME) per sapere chi è attivo e con quale stazione.")
+        return
+    me = _my_model(setup, band)
+    off = _learned_offset(D, band, me, (stn["lat"], stn["lon"]), models)
+    if st.button("👥 Con chi posso fare QSO in questa finestra?", key="wz_rank_go"):
+        hours = (w["end"] - w["start"]).total_seconds() / 3600
+        ok = lambda times: [wizard.visible(hz, *(lambda s: (s.moon.az, s.moon.el))(astro.sky(t, stn["lat"], stn["lon"], stn.get("height_m") or 0)))
+                            for t in times]
+        with st.spinner("Calcolo per ogni stazione…"):
+            S["wz_rank"] = dx.rank(me, (stn["lat"], stn["lon"]), models, band, w["start"], hours, 20.0, 5.0,
+                                   off["offset_db"] if off["n"] >= 5 else 0.0, my_ok=ok)
+    rk = [r for r in (S.get("wz_rank") or []) if r.get("best")]
+    if not rk:
+        return
+    worked = {q["call"] for q in D.qsos(band=band)}
+    st.markdown("#### " + i18n.tr("Chi puoi collegare"))
+    st.dataframe([{"Nominativo": r["call"], "Già collegato": "✓" if r["call"] in worked else "",
+                   "Probabilità tecnica": f"{min(100 * r['probability'], 99):.0f} %",
+                   "Momento migliore (UTC)": f"{r['best']['utc']:%d/%m %H:%M}", "Ore in comune": round(r["hours_common"], 1),
+                   "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1),
+                   "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo consigliato": r["best"]["mode"],
+                   "Mutual spread (Hz)": round(r["best"]["spread_hz"]), "Margine (dB)": round(r["best"]["margin_db"], 1),
+                   "Stazione": f"{r.get('antenna') or ''} {r.get('power_w') or ''} W"} for r in rk[:40]], hide_index=True, width="stretch")
+    st.caption("Probabilità tecnica: margine del segnale atteso sulla soglia Q65 (con la correzione appresa dai tuoi QSO e "
+               "±2 dB di incertezza). Non sa se l'altra stazione è attiva: per questo conviene uno sked.")
+    new = [r for r in rk if r["call"] not in worked and r["probability"] >= 0.5]
+    if new:
+        st.success(i18n.tr("Stazioni nuove per te con buone probabilità") + ": " + ", ".join(r["call"] for r in new[:12]))
+    st.markdown("#### " + i18n.tr("Proponi uno sked"))
+    pick = st.selectbox("Stazione", [r["call"] for r in rk], key="wz_pick")
+    r = next(x for x in rk if x["call"] == pick)
+    info = D.station_of(pick) or {}
+    web = ((info.get("data", {}).get("directory") or {}).get(band) or {}).get("web")
+    c = st.columns(3)
+    c[0].link_button("🔎 QRZ.com", f"https://www.qrz.com/db/{pick}")
+    if web:
+        c[1].link_button("🌐 " + i18n.tr("Sito della stazione"), web if web.startswith("http") else "https://" + web)
+    lang = c[2].radio("Lingua del messaggio", ["en", "it"], index=1 if pick.startswith("I") else 0, horizontal=True,
+                      format_func=lambda k: {"en": "English", "it": "Italiano"}[k], key="wz_lang")
+    t0 = r["best"]["utc"] - timedelta(minutes=30)
+    t1 = r["best"]["utc"] + timedelta(minutes=30)
+    st.code(wizard.sked_text(lang, stn.get("callsign") or "", stn.get("locator") or "", pick, info.get("name"), band, t0, t1,
+                             r["best"]["mode"], (stn.get("callsign") or "") < pick, r["best"]["snr_a_hears_b"], r["best"]["snr_b_hears_a"]),
+            language=None)
+    st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EMELab non conserva le email: "
+               "l'indirizzo lo trovi su QRZ.com o sul sito della stazione.")

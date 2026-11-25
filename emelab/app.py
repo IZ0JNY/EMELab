@@ -60,36 +60,42 @@ with st.sidebar:
     st.link_button("🐞 Segnala un problema", "https://github.com/IZ0JNY/EMELab/issues")
     st.caption("Tutti i dati restano su questo PC. Orari in UTC.")
 
-tabs = st.tabs(["🏠 Stazione", "🛰️ Configurazioni", "🔧 Progettazione", "➕ Nuova misura", "📒 Diario misure",
-                "📡 Log QSO", "👥 Stazioni EME", "📊 Analisi", "📈 Statistiche QSO", "🗓️ Pianificatore",
-                "🖨️ Stampa PDF", "🗄️ Database", "📖 Guida alle misure"])
-with tabs[0]:
-    ui._station(D)
-    st.divider()
-    st.subheader("🧪 Cosa misurare o provare adesso")
-    for sgg in coach.suggestions(D)[:8]:
-        st.markdown("- " + i18n.tr(sgg["text"]))
-with tabs[1]:
-    ui._setups(D)
-with tabs[2]:
-    ui._design_tab(D)
-with tabs[3]:
-    ui._new(D)
-with tabs[4]:
-    ui._log(D)
-with tabs[5]:
-    ui._logbook_tab(D)
-with tabs[6]:
-    ui._stations_tab(D)
-with tabs[7]:
-    ui._analysis(D)
-with tabs[8]:
-    ui._qso_stats_tab(D)
-with tabs[9]:
-    ui._planner(D)
-with tabs[10]:
-    ui._prints_tab(D)
-with tabs[11]:
-    ui._database_tab(D)
-with tabs[12]:
-    ui._guide()
+TABS = [  # key, label, function — "wizard" and "station" are always shown
+    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("setups", "🛰️ Configurazioni", ui._setups), ("signal", "📶 Segnale e stazioni", ui._signal_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner), ("log", "📡 Log QSO", ui._logbook_tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
+    ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
+    ("pointing", "🎯 Puntamento", ui._pointing_tab), ("lna", "🔊 LNA", ui._lna_tab), ("sspa", "🔥 SSPA", ui._sspa_tab),
+    ("twt", "💡 TWT", ui._twt_tab), ("design", "🔧 Progettazione", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
+    ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
+_saved = openems_local.load_settings().get("tabs")
+if "tabs_on" not in S:
+    S["tabs_on"] = [k for k, _, _ in TABS[2:] if _saved is None or k in _saved]
+
+
+def _save_tabs():
+    try:
+        openems_local.save_settings(tabs=S["tabs_on"])
+    except Exception:
+        pass
+
+
+with st.sidebar:
+    with st.expander("⚙️ Schede da mostrare"):
+        st.multiselect("Schede", [k for k, _, _ in TABS[2:]], key="tabs_on", on_change=_save_tabs,
+                       format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
+                       help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
+shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
+tabs = st.tabs([l for _, l, _ in shown])
+for tab, (k, _, fn) in zip(tabs, shown):
+    with tab:
+        if k == "station":
+            ui._station(D)
+            st.divider()
+            st.subheader("🧪 Cosa misurare o provare adesso")
+            for sgg in coach.suggestions(D)[:8]:
+                st.markdown("- " + i18n.tr(sgg["text"]))
+        elif k == "guide":
+            ui._guide()
+        else:
+            fn(D)

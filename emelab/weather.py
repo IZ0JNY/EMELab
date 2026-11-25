@@ -69,14 +69,17 @@ def open_meteo(lat: float, lon: float, dt: datetime, timeout: float = 10.0) -> d
 def open_meteo_series(lat: float, lon: float, start: datetime, days: int, timeout: float = 10.0) -> list[dict]:
     """Hourly forecast (or recent past) for the planner: humidity at 24 GHz matters a lot."""
     start = _utc(start)
-    q = {"latitude": f"{lat:.3f}", "longitude": f"{lon:.3f}", "hourly": ",".join(HOURLY[:4] + ["cloud_cover",
-         "precipitation"]), "timezone": "UTC", "start_date": str(start.date()),
-         "end_date": str((start + timedelta(days=days)).date())}
+    q = {"latitude": f"{lat:.2f}", "longitude": f"{lon:.2f}", "hourly": ",".join(HOURLY[:4] + ["cloud_cover",
+         "precipitation", "precipitation_probability", "wind_speed_10m", "wind_gusts_10m"]), "timezone": "UTC",
+         "wind_speed_unit": "ms", "start_date": str(start.date()),
+         "end_date": str((start + timedelta(days=max(min(days, 16) - 1, 0))).date())}   # the forecast covers 16 days
     js = json.loads(_get("https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(q), timeout))
     h = js["hourly"]
+    g = lambda k, i: (h.get(k) or [None] * len(h["time"]))[i]
     return [{"utc": datetime.fromisoformat(t).replace(tzinfo=timezone.utc), "t_c": h["temperature_2m"][i],
              "rh": h["relative_humidity_2m"][i], "p_hpa": h["surface_pressure"][i],
-             "cloud_pct": h["cloud_cover"][i], "rain_mmh": h["precipitation"][i]} for i, t in enumerate(h["time"])]
+             "cloud_pct": h["cloud_cover"][i], "rain_mmh": h["precipitation"][i], "rain_prob": g("precipitation_probability", i),
+             "wind_ms": g("wind_speed_10m", i), "gust_ms": g("wind_gusts_10m", i)} for i, t in enumerate(h["time"])]
 
 
 # ------------------------------------------------------------------ personal station

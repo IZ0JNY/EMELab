@@ -17,6 +17,13 @@ SOURCES = [
     ("Charlie Suckling G3WDG", "librazione e spread in EME, DUBUS 3/2010", ""),
     ("J.V. Evans", "Radar Studies of the Moon, J. Res. NBS 69D (1965): riflettività lunare",
      "https://nvlpubs.nist.gov/nistpubs/jres/69D/jresv69Dn12p1637_A1b.pdf"),
+    ("Charlie Suckling G3WDG / DL3WDG", "soglie di decodifica Q65 (60D, 60E, 120E) in funzione del mutual spread, "
+     "dalle curve usate nel calcolatore di OE2IGL/DF3GJ", ""),
+    ("Carsten Groen OZ9AAR", "SimpleCalc, SkyScanner, WSJT Log Viewer e il calcolatore online del rumore solare: idee per il "
+     "flusso RSTN del giorno con controllo dei brillamenti GOES e per l'analisi delle decodifiche", "https://moonbounce.dk/"),
+    ("A.A.M. Saleh", "modello AM/AM e AM/PM dei tubi a onda progressiva, IEEE Trans. Commun. COM-29 (1981)", ""),
+    ("C. Rapp", "modello di compressione degli amplificatori a stato solido (1991)", ""),
+    ("432 and Above EME News (EME.RADIO)", "notizie e risultati delle stazioni EME, campagne a 47 e 76 GHz", "https://eme.radio/"),
     ("Henk PA0PLY", "EME Directory: stazioni EME per banda", "https://www.pa0ply.nl/eme-directory/"),
     ("Joe Taylor K1JT e il gruppo WSJT-X", "WSJT-X, CALL3.TXT, ALL.TXT, modi Q65/JT65", "https://wsjt.sourceforge.io/"),
     ("Ivan De Cesaris IZ0JNY", "scansione del Sole: disco solare ⊗ fascio gaussiano (modello erf, fattori G per banda)", ""),
