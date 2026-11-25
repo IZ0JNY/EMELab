@@ -18,9 +18,11 @@ TARGETS = {
     "wsjtx": [LIVE, "wsjtx"],
     "gpsdo": [LIVE, "gpsdo", "wsjtx"],
     "clock": [LIVE, "wsjtx"],
+    "watchdog": [LIVE],                     # the watchdog checks everything: only the Live tab sums it up
 }
 # toasts that become clickable: start of the (Italian) text → alert kind
-TOASTS = {"🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola.": "camera"}
+TOASTS = {"🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola.": "camera",
+          "🚨 Watchdog:": "watchdog"}
 
 
 def register(labels: dict[str, str]):

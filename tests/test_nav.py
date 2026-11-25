@@ -21,3 +21,8 @@ def test_wsjtx_popup_kind():
     assert _kind([{"key": "gpsdo"}]) == "gpsdo"
     assert _kind([{"key": "bktsync"}, {"key": "clock"}]) == "clock"
     assert _kind([{"key": "gpsdo"}, {"key": "mode@24GHz"}]) == "wsjtx"
+
+
+def test_watchdog_opens_only_live():
+    assert nav.target("watchdog", LABELS, ["wizard"]) is None
+    assert nav.target("watchdog", {**LABELS, "live": "🔴 Live"}, ["live"]) == "live"
