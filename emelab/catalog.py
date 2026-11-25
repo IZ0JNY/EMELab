@@ -60,14 +60,18 @@ DEVICES = [
 ]
 
 
+def in_band(d: dict, f_ghz: float, margin: float = 0.5) -> bool:
+    """a device with no frequency range is shown on every band"""
+    lo, hi = d.get("f_lo"), d.get("f_hi")
+    if lo is None and hi is None:
+        return True
+    lo = hi if lo is None else lo
+    hi = lo if hi is None else hi
+    return lo - margin <= f_ghz <= hi + margin
+
+
 def for_band(f_ghz: float, kind: str | None = None) -> list[dict]:
-    out = []
-    for d in DEVICES:
-        if kind and d["type"] != kind:
-            continue
-        if d.get("f_lo") is None or (d["f_lo"] - 0.5 <= f_ghz <= (d.get("f_hi") or d["f_lo"]) + 0.5):
-            out.append(d)
-    return out
+    return [d for d in DEVICES if (not kind or d["type"] == kind) and in_band(d, f_ghz)]
 
 
 def search_links(part: str, maker: str = "") -> dict[str, str]:
@@ -95,21 +99,44 @@ PATTERNS = {
 }
 
 
+_NUMS = rf"((?:-?\d+(?:[.,]\d+)?\s+){{0,2}}-?\d+(?:[.,]\d+)?)"     # 1 to 3 numbers: a value or min / typ / max columns
+
+
+_MAX_COLUMN = ("nf_db", "idc_a", "rth_jc")     # with two columns these are "typ max", the others "min typ"
+
+
+def _typ(nums: str, k: str) -> float:
+    v = [float(x.replace(",", ".")) for x in nums.split()]
+    if len(v) == 3:
+        return v[1]
+    return v[0] if len(v) == 1 or k in _MAX_COLUMN else v[1]
+
+
 def read_datasheet(text: str) -> dict:
-    """Candidate values found in a datasheet's text (first match of each), for the user to confirm."""
+    """Candidate values found in a datasheet's text, for the user to confirm.
+
+    A value written alone ("Gain 21 dB") is taken as it is; in a table row with min / typ / max columns
+    ("Noise Figure 1.8 2.2 2.6 dB") the middle (typical) one is taken when there are three numbers; with two, the
+    first for noise figure, current and thermal resistance ("typ max"), the second for the others ("min typ"). The PDF line each value comes from is returned in out["_lines"], so the user can check it."""
     t = re.sub(r"[ \t]+", " ", text)
-    out = {}
+    out, lines = {}, {}
     for k, rx in PATTERNS.items():
+        if k != "f_range":
+            rx = rx.replace(_NUM, _NUMS, 1)
         m = re.search(rx, t, re.I)
         if not m:
             continue
+        a, b = t.rfind("\n", 0, m.start()) + 1, t.find("\n", m.end())
+        lines[k] = t[a:b if b >= 0 else len(t)].strip()[:160]
         if k == "f_range":
             out["f_lo"], out["f_hi"] = float(m.group(1)), float(m.group(2))
         elif k == "idc_a":
-            v = float(m.group(1).replace(",", "."))
+            v = _typ(m.group(1), k)
             out[k] = v / 1000 if m.group(2) == "mA" else v
         else:
-            out[k] = float(m.group(1).replace(",", "."))
+            out[k] = _typ(m.group(1), k)
+    if lines:
+        out["_lines"] = lines
     return out
 
 
