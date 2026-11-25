@@ -761,3 +761,105 @@ def _database_tab(D):
 def _credits_tab():
     from emelab import credits
     credits.render(st)
+
+
+# ------------------------------------------------------------------ chain design
+_RX_DEFAULT = [{"Stadio": "Relè + guida", "Tipo": "passivo", "Guadagno (dB)": -0.3, "NF (dB)": 0.3},
+               {"Stadio": "LNA", "Tipo": "attivo", "Guadagno (dB)": 20.0, "NF (dB)": 1.5},
+               {"Stadio": "Cavo", "Tipo": "passivo", "Guadagno (dB)": -3.0, "NF (dB)": 3.0},
+               {"Stadio": "Transverter", "Tipo": "attivo", "Guadagno (dB)": 15.0, "NF (dB)": 8.0}]
+_TX_DEFAULT = [{"Stadio": "Driver", "Tipo": "attivo", "Guadagno (dB)": 20.0, "Psat (dBm)": 33.0, "P1dB (dBm)": 31.0, "V": 6.0, "A": 0.8},
+               {"Stadio": "SSPA", "Tipo": "attivo", "Guadagno (dB)": 15.0, "Psat (dBm)": 43.0, "P1dB (dBm)": 41.0, "V": 24.0, "A": 4.0},
+               {"Stadio": "Guida + relè", "Tipo": "passivo", "Guadagno (dB)": -0.5, "Psat (dBm)": None, "P1dB (dBm)": None, "V": None, "A": None}]
+
+
+def _design_tab(D):
+    import pandas as pd
+    from emelab import chain, parts
+    st.subheader("Progettazione della catena")
+    st.caption("Ricezione: cifra di rumore e Tsys con la formula di Friis e il contributo di ogni stadio. Trasmissione: "
+               "potenza al feed con la compressione degli amplificatori (modello di Rapp), consumo e calore.")
+    c = st.columns(2)
+    with c[0]:
+        st.markdown("**Ricezione (dal feed al transverter)**")
+        rx = st.data_editor(pd.DataFrame(_st.session_state.get("rx_tab", _RX_DEFAULT)), num_rows="dynamic", key="rx_ed",
+                            hide_index=True, width="stretch")
+        t_ant = st.number_input("Temperatura d'antenna (K)", 3.0, 500.0, 40.0, 1.0, key="ch_tant",
+                                help="dal progetto FeedLab o dalla misura; cielo freddo + spillover")
+        stages = [chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])) if r["Tipo"] == "passivo" else
+                  {"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "nf_db": float(r["NF (dB)"])}
+                  for r in rx.to_dict("records") if r.get("Stadio") and r.get("Guadagno (dB)") is not None]
+        if stages:
+            res = chain.rx_chain(stages, t_ant)
+            m = st.columns(3)
+            m[0].metric("NF del sistema", f"{res['nf_db']:.2f} dB")
+            m[1].metric("Tsys", f"{res['tsys_K']:.0f} K")
+            m[2].metric("Guadagno", f"{res['gain_db']:.1f} dB")
+            fig = go.Figure(go.Bar(x=[s["name"] for s in res["stages"]], y=[s["added_K"] for s in res["stages"]],
+                                   text=[f"{s['share_pct']:.0f} %" for s in res["stages"]], textposition="outside"))
+            fig.update_layout(title="Kelvin aggiunti da ogni stadio (riferiti al feed)", height=300,
+                              margin=dict(l=10, r=10, t=40, b=10))
+            st.plotly_chart(fig, width="stretch")
+    with c[1]:
+        st.markdown("**Trasmissione (dal transverter al feed)**")
+        tx = st.data_editor(pd.DataFrame(_st.session_state.get("tx_tab", _TX_DEFAULT)), num_rows="dynamic", key="tx_ed",
+                            hide_index=True, width="stretch")
+        pin = st.number_input("Potenza in ingresso (dBm)", -30.0, 40.0, 10.0, 0.5, key="ch_pin")
+        st_tx = []
+        for r in tx.to_dict("records"):
+            if not r.get("Stadio") or r.get("Guadagno (dB)") is None:
+                continue
+            if r["Tipo"] == "passivo":
+                st_tx.append(chain.passive(r["Stadio"], -float(r["Guadagno (dB)"])))
+            else:
+                f = lambda k: None if r.get(k) is None or pd.isna(r.get(k)) else float(r[k])
+                st_tx.append({"name": r["Stadio"], "gain_db": float(r["Guadagno (dB)"]), "psat_dbm": f("Psat (dBm)"),
+                              "p1db_dbm": f("P1dB (dBm)"), "vdc": f("V"), "idc_a": f("A")})
+        if st_tx:
+            res = chain.tx_chain(pin, st_tx)
+            m = st.columns(3)
+            m[0].metric("Potenza al feed", f"{res['p_out_w']:.1f} W", help=f"{res['p_out_dbm']:.2f} dBm")
+            m[1].metric("Consumo DC", f"{res['dc_w']:.0f} W")
+            m[2].metric("Calore da dissipare", f"{res['heat_w']:.0f} W")
+            st.dataframe(pd.DataFrame([{i18n.tr("Stadio"): s["name"], i18n.tr("Ingresso (dBm)"): round(s["p_in_dbm"], 2),
+                                        i18n.tr("Uscita (dBm)"): round(s["p_out_dbm"], 2),
+                                        i18n.tr("Margine dal P1dB (dB)"): None if s["p1db_margin_db"] is None else round(s["p1db_margin_db"], 1)}
+                                       for s in res["stages"]]), hide_index=True, width="stretch")
+    st.divider()
+    st.subheader("Libreria dei componenti")
+    st.caption("Componenti con i valori dei datasheet dei produttori (inseriti da te o trovati nel catalogo Mouser) e il "
+               "link al datasheet. EMELab non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
+    rows = parts.all_parts(D)
+    if rows:
+        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
+    with st.expander("➕ Aggiungi un componente dal datasheet"):
+        c = st.columns(4)
+        p_part = c[0].text_input("Sigla", key="pt_part")
+        p_maker = c[1].text_input("Produttore", key="pt_maker")
+        p_type = c[2].selectbox("Tipo", list(parts.TYPES), format_func=lambda k: parts.TYPES[k], key="pt_type")
+        p_ds = c[3].text_input("Link al datasheet", key="pt_ds")
+        c = st.columns(8)
+        vals = {k: c[i].number_input(lab, value=None, key=f"pt_{k}") for i, (k, lab) in enumerate(
+            [("f_lo_ghz", "Da GHz"), ("f_hi_ghz", "A GHz"), ("gain_db", "Guadagno dB"), ("nf_db", "NF dB"),
+             ("p1db_dbm", "P1dB dBm"), ("psat_dbm", "Psat dBm"), ("vdc", "V"), ("idc_a", "A")])}
+        if st.button("💾 Salva componente", key="pt_save", disabled=not (p_part and p_maker)):
+            parts.save(D, part=p_part, maker=p_maker, type=p_type, datasheet=p_ds or None, **vals)
+            st.rerun()
+    with st.expander("🔎 Cerca nel catalogo Mouser (chiave API personale)"):
+        sets = openems_local.load_settings()
+        c = st.columns(3)
+        key = c[0].text_input("Chiave API Mouser (Search API)", sets.get("mouser_key", ""), type="password", key="ms_key",
+                              help="gratuita su mouser.com (API Hub); resta salvata solo su questo PC")
+        if c[0].button("💾 Salva chiave", key="ms_save"):
+            openems_local.save_settings(mouser_key=key)
+        kw = c[1].text_input("Cerca (es. «LNA 24 GHz», «GaN amplifier 10 GHz»)", key="ms_kw")
+        if c[2].button("🔎 Cerca", key="ms_go", disabled=not (key and kw)):
+            try:
+                _st.session_state["ms_res"] = parts.mouser_search(key, kw)
+            except Exception as e:
+                st.error(f"Mouser: {e}")
+        if _st.session_state.get("ms_res"):
+            st.dataframe(pd.DataFrame(_st.session_state["ms_res"]), hide_index=True, width="stretch",
+                         column_config={"datasheet": st.column_config.LinkColumn("Datasheet"),
+                                        "mouser": st.column_config.LinkColumn("Mouser")})
+            st.caption("Apri il datasheet, leggi i valori alla tua frequenza e aggiungi il componente alla libreria.")
