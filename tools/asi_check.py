@@ -4,9 +4,13 @@
 
 Finds the ZWO library, lists the cameras, grabs a few video frames (5 ms, gain 0, bin 2), detects the Moon (or the
 brightest object) and saves asi_check.png with the grid next to this script's working folder."""
+import os
 import sys
 import time
+from pathlib import Path
 
+# the embedded Python of EMELab ignores PYTHONPATH (._pth file): put this repository first, plus EMELAB_EXTRA_PATH
+sys.path[:0] = [str(Path(__file__).resolve().parents[1])] + [p for p in os.environ.get("EMELAB_EXTRA_PATH", "").split(os.pathsep) if p]
 from emelab import moontrack as mt
 
 dll = sys.argv[1] if len(sys.argv) > 1 else ""
