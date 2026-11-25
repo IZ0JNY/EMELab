@@ -1215,8 +1215,10 @@ def _twt_tab(D):
 def _my_model(setup: dict, band: str) -> dict:
     from emelab import dx
     tsys = analysis.tsys_cold(setup, 0.0)["sys"]
-    return dx.station(band, float(setup["D_m"]), float(setup.get("tx_w") or 0) or None, "offset",
-                      tsys_K=tsys, eta=float(setup.get("eta_ap") or 0.6), line_loss_db=0.0)
+    m = dx.station(band, float(setup["D_m"]), float(setup.get("tx_w") or 0) or None, "offset",
+                   tsys_K=tsys, eta=float(setup.get("eta_ap") or 0.6), line_loss_db=0.0)
+    m["pol"] = setup.get("pol") or openems_local.load_settings().get("my_pol")
+    return m
 
 
 def _band_of_setup(setup):
@@ -1237,6 +1239,7 @@ def _dx_models(D, band):
         except Exception:
             continue
         if m:
+            m["pol"] = (r.get("data", {}).get("pol") or {}).get(band)
             out.append({"call": r["call"], "locator": r["locator"], "loc": loc, "model": m, "antenna": e.get("antenna"),
                         "power_w": e.get("power_w"), "heard": (r.get("data", {}).get("heard") or {}).get("n")})
     return out
@@ -1328,7 +1331,24 @@ def _signal_tab(D):
         d0 = c[0].date_input("Giorno (UTC)", datetime.now(timezone.utc).date(), key="sg_day")
         pw = c[1].number_input("Sua potenza (W)", 0.1, 2000.0, float(o["model"]["power_w"]), key="sg_pw")
         dd = c[2].number_input("Sua parabola (m)", 0.3, 20.0, float(o["model"]["D_m"]), 0.1, key="sg_dd")
+        POLS = {"V": "Verticale", "H": "Orizzontale", "HV": "Commutabile H/V"}
+        c = st.columns(2)
+        my_def = me.get("pol") or dx.default_pol(*my_loc)
+        my_pol = c[0].selectbox("La tua polarizzazione", list(POLS), index=list(POLS).index(my_def), key="sg_mypol",
+                                format_func=lambda k: POLS[k], help="lineare: in Europa e nel resto del mondo di solito "
+                                "verticale, in Nord America orizzontale")
+        dx_def = o["model"].get("pol") or dx.default_pol(*o["loc"])
+        dx_pol = c[1].selectbox("Sua polarizzazione", list(POLS), index=list(POLS).index(dx_def), key="sg_dxpol",
+                                format_func=lambda k: POLS[k])
+        if my_pol != my_def or dx_pol != dx_def:
+            if c[0].button("💾 Ricorda le polarizzazioni", key="sg_polsave"):
+                openems_local.save_settings(my_pol=my_pol)
+                data = (D.station_of(call) or {}).get("data", {})
+                D.upsert_station(call, data={"pol": {**(data.get("pol") or {}), band: dx_pol}})
+                D.commit()
+        me = dict(me, pol=my_pol)
         other = dx.station(band, dd, pw, o["model"]["kind"])
+        other["pol"] = dx_pol
         rows = []
         t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
         for i in range(0, 24 * 4):
@@ -1348,8 +1368,8 @@ def _signal_tab(D):
             b = max(rows, key=lambda r: r["margin_db"])
             hb = b["detail"][0]
             st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
-                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° (" +
-                        i18n.tr("polarizzazione lineare") + f" −{b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
+                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
+                        i18n.tr("perdita di polarizzazione") + f" {b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
                         f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
             if other["assumed"]:
                 st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
@@ -1624,7 +1644,8 @@ def _wz_plan(D, stn, hz, fc):
                    "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1),
                    "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo consigliato": r["best"]["mode"],
                    "Mutual spread (Hz)": round(r["best"]["spread_hz"]),
-                   "Dpol (°)": round(r["best"]["dpol_deg"]), "Perdita di polarizzazione (dB)": round(r["best"]["pol_loss_db"], 1),
+                   "Polarizzazioni": f"{r['best']['pol_a']}/{r['best']['pol_b']}", "Dpol (°)": round(r["best"]["dpol_deg"]),
+                   "Perdita di polarizzazione (dB)": round(r["best"]["pol_loss_db"], 1),
                    "Margine (dB)": round(r["best"]["margin_db"], 1),
                    "Stazione": f"{r.get('antenna') or ''} {r.get('power_w') or ''} W"} for r in rk[:40]], hide_index=True, width="stretch")
     st.caption("Probabilità tecnica: margine del segnale atteso sulla soglia Q65 (con la correzione appresa dai tuoi QSO e "

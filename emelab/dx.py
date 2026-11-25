@@ -120,6 +120,22 @@ def spatial_pol_offset(p_a: float, p_b: float) -> float:
     return d - 180.0 if d > 90.0 else d
 
 
+def default_pol(lat: float, lon: float) -> str:
+    """Usual linear polarisation on the microwave EME bands: horizontal in North America, vertical in Europe and the
+    rest of the world (the user can change it for any station)."""
+    return "H" if (-170.0 <= lon <= -50.0 and lat >= 12.0) else "V"
+
+
+def pol_mismatch_deg(dpol_deg: float, pol_a: str = "V", pol_b: str = "V") -> float:
+    """Angle between the two E fields after the Moon: the spatial offset plus 90° when one is H and the other V.
+    A station that can switch H/V («HV») takes the better of the two."""
+    def ang(pa, pb):
+        return abs(dpol_deg + (90.0 if pa != pb else 0.0))
+    opts = [ang(x, y) for x in (("H", "V") if pol_a == "HV" else (pol_a,)) for y in (("H", "V") if pol_b == "HV" else (pol_b,))]
+    best = min(opts, key=lambda a: abs(math.cos(math.radians(a))) * -1)
+    return best % 180.0
+
+
 def pol_loss_db(dpol_deg: float) -> float:
     """Loss between two linearly polarised antennas rotated by Dpol (cross-polar floor about −30 dB)."""
     return -10 * math.log10(max(math.cos(math.radians(dpol_deg)) ** 2, 1e-3))
@@ -150,12 +166,15 @@ def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str
     hear_b = snr_2500(b, a, f, sb.moon.dist_km, sa.moon.dist_km, diam, ab, aa, tska)     # at a
     hear_a = snr_2500(a, b, f, sa.moon.dist_km, sb.moon.dist_km, diam, aa, ab, tskb)     # at b
     dpol = spatial_pol_offset(pol_angle(a_loc[0], sa.moon.az, sa.moon.el), pol_angle(b_loc[0], sb.moon.az, sb.moon.el))
-    lpol = pol_loss_db(dpol) if linear else 0.0
+    pa = a.get("pol") or default_pol(*a_loc)
+    pb = b.get("pol") or default_pol(*b_loc)
+    mis = pol_mismatch_deg(dpol, pa, pb)
+    lpol = pol_loss_db(mis) if linear else 0.0
     hear_b["snr_db"] -= lpol
     hear_a["snr_db"] -= lpol
     return {"utc": t, "el_a": sa.moon.el, "el_b": sb.moon.el, "spread_hz": spread,
             "doppler_hz": mut["doppler_hz_per_ghz"] * f, "mode": mode, "threshold_db": thr,
-            "dpol_deg": dpol, "pol_loss_db": lpol,
+            "dpol_deg": dpol, "pol_loss_db": lpol, "pol_a": pa, "pol_b": pb, "pol_mismatch_deg": mis,
             "snr_a_hears_b": hear_b["snr_db"], "snr_b_hears_a": hear_a["snr_db"],
             "margin_db": min(hear_b["snr_db"], hear_a["snr_db"]) - thr, "detail": (hear_b, hear_a)}
 
