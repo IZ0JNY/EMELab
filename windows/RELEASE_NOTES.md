@@ -9,7 +9,7 @@
   - posizione esatta da Google Maps: clic destro sulla parabola, copia le coordinate e incollale (va bene anche il link); il programma calcola il locator preciso a 10 caratteri;
   - piccola mappa del mondo con la tua stazione e le stazioni EME dell'elenco, con zoom;
   - pulsante «🌡️ Prova la stazione meteo» per controllare subito l'indirizzo della tua stazione meteo personale.
-- **⚡ Potenza:** SSPA e TWT riuniti in una sola scheda.
+- **⚡ Potenza:** per ogni banda scegli se hai un SSPA o un TWT e quale dispositivo (catalogo con i più comuni, per esempio Qorvo QPA1010 a 10 GHz e Siemens RW1136 modificato a 24 GHz); i suoi dati riempiono il calcolo e la scelta resta salvata.
 - **Import ADIF:** entrano solo i QSO EME da 10 GHz in su; gli altri vengono contati e lasciati fuori.
 
 ### 🇬🇧 What's new
@@ -19,7 +19,7 @@
   - exact position from Google Maps: right-click on the dish, copy the coordinates and paste them (the link works too); the program works out the precise 10-character locator;
   - small world map with your station and the EME stations of the directory, with zoom;
   - «🌡️ Test the weather station» button to check the address of your personal weather station at once.
-- **⚡ Power:** SSPA and TWT in a single tab.
+- **⚡ Power:** for each band choose whether you have an SSPA or a TWT and which device (catalogue of the common ones, e.g. Qorvo QPA1010 at 10 GHz and a modified Siemens RW1136 at 24 GHz); its data fill the calculation and the choice is saved.
 - **ADIF import:** only EME QSOs from 10 GHz up are taken; the others are counted and left out.
 
 ## EMELab 0.1.1 BETA TEST per Windows / for Windows

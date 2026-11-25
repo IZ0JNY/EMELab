@@ -1328,12 +1328,106 @@ def _lna_tab(D):
     _catalog_box(D, ("LNA", "SW"), "ln")
 
 
+POWER_BANDS = [10.368, 24.048, 47.088, 76.032, 122.25, 134.928]
+
+
+def _power_devices() -> dict:
+    """per band: {"kind": "PA"/"TWT"/"", "part": name, "maker": maker} — saved only on this PC"""
+    return dict(openems_local.load_settings().get("power_devices") or {})
+
+
+def _power_rows(D, band, kind):
+    from emelab import catalog, parts
+    rows = [dict(d) for d in catalog.for_band(band, kind)]
+    for p in parts.all_parts(D, band, "pa"):
+        rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "psat_dbm": p.get("psat_dbm"),
+                     "gain_db": p.get("gain_db"), "notes": p.get("notes"), "source": p.get("datasheet"), "mine": True})
+    return rows
+
+
+def _power_apply(dev, kind):
+    """the chosen device fills the numbers of its tab (they stay editable)"""
+    ss = _st.session_state
+    if not dev:
+        return
+    if kind == "PA":
+        if dev.get("psat_dbm"):
+            ss["sp_psat"] = float(dev["psat_dbm"])
+        if dev.get("gain_db"):
+            ss["sp_g"] = float(dev["gain_db"])
+    elif kind == "TWT" and dev.get("psat_dbm"):
+        ss["tw_ps"] = round(10 ** ((float(dev["psat_dbm"]) - 30) / 10), 1)
+
+
+def _power_save_cb(D, band):
+    ss = _st.session_state
+    kind = ss.get("pw_kind")
+    kind = {"SSPA": "PA", "TWT": "TWT"}.get(kind, "")
+    rows = _power_rows(D, band, kind) if kind else []
+    i = ss.get(f"pw_dev_{kind}")
+    if not isinstance(i, int) or i >= len(rows):      # the selector was not on screen: saved device, else the first one
+        old = _power_devices().get(f"{band:g}", {})
+        i = next((j for j, r in enumerate(rows) if r["part"] == old.get("part")), 0)
+    dev = rows[i] if rows else None
+    allp = _power_devices()
+    allp[f"{band:g}"] = {"kind": kind, "part": dev["part"] if dev else "", "maker": dev["maker"] if dev else ""}
+    openems_local.save_settings(power_devices=allp)
+    _power_apply(dev, kind)
+
+
 def _power_tab(D):
-    """Power amplifiers: solid state or travelling-wave tube, whichever the station uses on that band."""
-    a, b = st.tabs(["🔥 SSPA", "💡 TWT"])
-    with a:
+    """Power amplifier of each band: the user says whether it is an SSPA or a TWT and which device; only that model shows."""
+    st.subheader("⚡ Amplificatore di potenza per banda")
+    st.caption("Per ogni banda scegli se usi un SSPA (stato solido) o un TWT e quale dispositivo: i suoi dati dal catalogo "
+               "riempiono il calcolo qui sotto. La scelta resta salvata su questo PC.")
+    allp = _power_devices()
+    ss = _st.session_state
+    c = st.columns([1, 1, 2])
+    band = c[0].selectbox("Banda", POWER_BANDS, key="pw_band", format_func=lambda f: f"{f:g} GHz")
+    cur = allp.get(f"{band:g}", {})
+    if ss.get("pw_band_prev") != band:                   # new band: show what was saved for it
+        ss["pw_band_prev"] = band
+        ss["pw_kind"] = {"PA": "SSPA", "TWT": "TWT"}.get(cur.get("kind"), "SSPA" if band < 20 else "TWT" if band < 30 else "SSPA")
+        for k in ("PA", "TWT"):
+            rows = _power_rows(D, band, k)
+            idx = next((i for i, r in enumerate(rows) if r["part"] == cur.get("part")), 0)
+            ss[f"pw_dev_{k}"] = idx
+            if cur.get("kind") == k and rows:
+                _power_apply(rows[idx], k)
+    kind_l = c[1].radio("Tipo di amplificatore", ["SSPA", "TWT"], key="pw_kind", horizontal=True,
+                        on_change=_power_save_cb, args=(D, band))
+    kind = "PA" if kind_l == "SSPA" else "TWT"
+    rows = _power_rows(D, band, kind)
+    if rows:
+        if ss.get(f"pw_dev_{kind}", 0) >= len(rows):
+            ss[f"pw_dev_{kind}"] = 0
+        i = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"pw_dev_{kind}",
+                           format_func=lambda i: f"{rows[i]['part']} — {i18n.tr(rows[i]['maker'])}" +
+                                                 (" ⚠️" if rows[i].get("check") else ""),
+                           on_change=_power_save_cb, args=(D, band))
+        dev = rows[i]
+        if ("sp_psat" if kind == "PA" else "tw_ps") not in ss:     # numbers not on screen yet: from the device
+            _power_apply(dev, kind)
+        info = [f"Psat {dev['psat_dbm']:.1f} dBm ({10 ** ((dev['psat_dbm'] - 30) / 10):.1f} W)" if dev.get("psat_dbm") else None,
+                f"{i18n.tr('guadagno')} {dev['gain_db']:.0f} dB" if dev.get("gain_db") else None,
+                i18n.tr(dev.get("notes")) if dev.get("notes") else None,
+                i18n.tr("fonte") + ": " + i18n.tr(dev.get("source")) if dev.get("source") else None]
+        st.info(" · ".join(x for x in info if x) + ("  \n⚠️ " + i18n.tr("valori tipici da confermare sul datasheet") if dev.get("check") else ""))
+        if not cur or cur.get("part") != dev["part"] or cur.get("kind") != kind:
+            if st.button("💾 Usa questo dispositivo su questa banda", key="pw_save", type="primary"):
+                _power_save_cb(D, band)
+                st.rerun()
+    else:
+        c[2].info("Nessun dispositivo in catalogo per questa banda: aggiungilo dal datasheet nel catalogo qui sotto.")
+    done = {k: v for k, v in _power_devices().items() if v.get("kind")}
+    if done:
+        st.markdown(i18n.tr("La tua stazione") + ": " + " · ".join(
+            f"**{float(b):g} GHz** {'SSPA' if v['kind'] == 'PA' else 'TWT'} {v.get('part') or ''}" for b, v in
+            sorted(done.items(), key=lambda x: float(x[0]))))
+    st.divider()
+    if kind == "PA":
         _sspa_tab(D)
-    with b:
+    else:
         _twt_tab(D)
 
 
@@ -1344,8 +1438,10 @@ def _sspa_tab(D):
     st.caption("Amplificatori a stato solido: compressione con il modello di Rapp, combinazione di più moduli, perdite fino "
                "al feed, consumo e dissipatore. In Q65 si trasmette un periodo sì e uno no (50 %).")
     c = st.columns(4)
-    psat = c[0].number_input("Psat di un modulo (dBm)", 10.0, 60.0, 43.0, 0.5, key="sp_psat")
-    g = c[1].number_input("Guadagno (dB)", 5.0, 60.0, 30.0, 0.5, key="sp_g")
+    _st.session_state.setdefault("sp_psat", 43.0)          # set by the device chosen in ⚡ Potenza
+    psat = c[0].number_input("Psat di un modulo (dBm)", 10.0, 60.0, step=0.5, key="sp_psat")
+    _st.session_state.setdefault("sp_g", 30.0)          # set by the device chosen in ⚡ Potenza
+    g = c[1].number_input("Guadagno (dB)", 5.0, 60.0, step=0.5, key="sp_g")
     s_r = c[2].number_input("Morbidezza di Rapp s", 0.5, 10.0, 2.0, 0.5, key="sp_s", help="2 tipico GaAs/GaN; alto = limitatore netto")
     pin = c[3].number_input("Potenza di pilotaggio (dBm)", -20.0, 40.0, 10.0, 0.5, key="sp_pin")
     c = st.columns(4)
@@ -1386,7 +1482,8 @@ def _twt_tab(D):
     st.caption("Tubo a onda progressiva: caratteristica AM/AM e AM/PM con il modello di Saleh, alimentazioni, efficienza e "
                "perdite fino al feed. Il tubo va pilotato vicino alla saturazione, non oltre: oltre il picco la potenza cala.")
     c = st.columns(4)
-    psat = c[0].number_input("Potenza di saturazione (W)", 1.0, 500.0, 20.0, 1.0, key="tw_ps")
+    _st.session_state.setdefault("tw_ps", 20.0)          # set by the device chosen in ⚡ Potenza
+    psat = c[0].number_input("Potenza di saturazione (W)", 1.0, 500.0, step=1.0, key="tw_ps")
     g0 = c[1].number_input("Guadagno di piccolo segnale (dB)", 20.0, 60.0, 35.0, 0.5, key="tw_g")
     pin = c[2].number_input("Pilotaggio (dBm)", -20.0, 30.0, 10.0, 0.5, key="tw_pin")
     lout = c[3].number_input("Perdita fino al feed (dB)", 0.0, 6.0, 0.4, 0.05, key="tw_lo")

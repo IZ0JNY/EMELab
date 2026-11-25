@@ -35,6 +35,8 @@ DEVICES = [
     dict(part="HMC565", maker="Analog Devices", type="LNA", f_lo=6.0, f_hi=20.0, gain_db=21.0, nf_db=2.5, tech="GaAs",
          notes="MMIC LNA 6–20 GHz (secondo stadio a 10 GHz)", source="datasheet", check=True),
     # power ----------------------------------------------------------------------------------------------------
+    dict(part="QPA1010", maker="Qorvo", type="PA", f_lo=7.9, f_hi=11.0, psat_dbm=41.8, tech="GaN",
+         notes="MMIC GaN su SiC, circa 15 W in banda X; usato a 10 GHz da IZ0JNY", source="datasheet Qorvo", check=True),
     dict(part="QPA1022", maker="Qorvo", type="PA", f_lo=8.5, f_hi=11.0, psat_dbm=36.0, tech="GaN",
          notes="MMIC GaN su SiC, circa 4 W in banda X", source="datasheet", check=True),
     dict(part="SSPA 10 GHz 7 W", maker="IK3GHY (autocostruito)", type="PA", f_lo=10.3, f_hi=10.5, psat_dbm=38.5,
