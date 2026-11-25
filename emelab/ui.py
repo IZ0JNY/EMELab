@@ -1062,10 +1062,7 @@ def _qrz_box(D, calls):
             try:
                 q = qrz.QRZ(user, pw)
                 for call in pick:
-                    r = q.lookup(call)
-                    D.upsert_station(call, name=r.get("name"), address=r.get("address"), qth=r.get("qth"),
-                                     country=r.get("country"), locator=r.get("locator"),
-                                     data={"qrz": {k: r.get(k) for k in ("qsl_via", "lotw", "eqsl", "lat", "lon")}})
+                    qrz.store(D, {**q.lookup(call), "call": call})
                 D.commit()
                 D.log_station_import("qrz", ", ".join(pick)[:200], len(pick))
                 st.success(i18n.tr("Aggiornati da QRZ.com") + f": {len(pick)}")
@@ -1175,17 +1172,23 @@ def _logbook_tab(D):
                        + (f" · " + i18n.tr("non EME o sotto i 10 GHz, lasciati fuori") + f": {skipped}" if skipped else ""))
             D.log_qso_import(", ".join(f.name for f in ups), id0)
     lb.fill_locators(D, my_loc, stn.get("height_m") or 0)
+    lb.fill_moon_az(D, my_loc, stn.get("height_m") or 0)
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
         return
+    from emelab import qrz
+    _qso_qrz_fill(D, [q["call"] for q in qs])
+    ppl = qrz.qso_people(D, {q["call"] for q in qs})
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
                         "Banda": _bl(q.get("band")), "Modo": lb.mode_label(q)[0],
                         "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
+                        "QTH": ppl[q["call"]]["qth"], "Nome": ppl[q["call"]]["fname"], "Cognome": ppl[q["call"]]["lname"],
                         "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
                         "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
-                        "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
+                        "AZ Luna": _blank(_r(q["calc"].get("moon_az"), 1)), "EL Luna": _blank(_r(q["calc"].get("moon_el"), 1)),
+                        "AZ DX": _blank(_r(q["calc"].get("dx_moon_az"), 1)), "EL DX": _blank(_r(q["calc"].get("dx_moon_el"), 1)),
                         "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
                        for q in qs])
     raw_cols = list(df.columns)
@@ -1214,6 +1217,44 @@ def _logbook_tab(D):
         D.delete_qso(dl)
         st.rerun()
     _qsos_manage(D, len(qs))
+
+
+def _qso_qrz_fill(D, calls):
+    """QTH, first and last name of the QSO partners from QRZ.com: only the callsigns not looked up yet, on request."""
+    from emelab import qrz
+    todo = qrz.missing(D, calls)
+    sets = openems_local.load_settings()
+    user, pw = sets.get("qrz_user", ""), sets.get("qrz_pw", "")
+    with st.expander("🔎 QTH, nome e cognome da QRZ.com" + (f" ({len(todo)} " + i18n.tr("da cercare") + ")" if todo else "")):
+        if not (user and pw):
+            st.caption("Salva prima utente e password di QRZ.com nella scheda Stazioni EME (riquadro «🔎 QRZ.com»).")
+            return
+        st.caption("Cerca su QRZ.com solo i nominativi del log non ancora cercati; i dati restano nel database delle "
+                   "stazioni EME. Nome, cognome e QTH arrivano anche senza abbonamento XML di QRZ.com.")
+        c = st.columns(2)
+        go = c[0].button("🔎 Cerca i mancanti su QRZ.com", key="q_qrz_go", disabled=not todo)
+        again = c[1].button("🔄 Aggiorna tutti da QRZ.com", key="q_qrz_all")
+        if not (go or again):
+            return
+        pick = todo if go else list(dict.fromkeys(calls))
+        q, ok, bad = qrz.QRZ(user, pw), 0, []
+        bar = st.progress(0.0)
+        for k, call in enumerate(pick):
+            try:
+                qrz.store(D, {**q.lookup(call), "call": call}, locator=False)
+                ok += 1
+            except Exception as e:
+                if not q.key:                                    # login refused: no point trying the others
+                    st.error(f"QRZ.com: {e}")
+                    break
+                bad.append(call)
+            bar.progress((k + 1) / len(pick))
+        D.commit()
+        if ok:
+            D.log_station_import("qrz", ", ".join(pick)[:200], ok)
+            st.success(i18n.tr("Aggiornati da QRZ.com") + f": {ok}")
+        if bad:
+            st.warning(i18n.tr("Non trovati su QRZ.com") + ": " + ", ".join(bad))
 
 
 def _qsos_manage(D, n_qsos):

@@ -58,6 +58,34 @@ class QRZ:
         g = lambda k: (c.findtext(k) or "").strip() or None
         name = " ".join(x for x in (g("fname"), g("name")) if x) or None
         addr = ", ".join(x for x in (g("addr1"), " ".join(y for y in (g("zip"), g("addr2")) if y), g("state")) if x) or None
-        return {"call": g("call") or call.upper(), "name": name, "address": addr, "qth": g("addr2"), "country": g("country"),
+        return {"call": g("call") or call.upper(), "name": name, "fname": g("fname"), "lname": g("name"), "address": addr, "qth": g("addr2"), "country": g("country"),
                 "locator": g("grid"), "lat": g("lat"), "lon": g("lon"), "qsl_via": g("qslmgr"),
                 "lotw": g("lotw"), "eqsl": g("eqsl"), "mqsl": g("mqsl")}
+
+
+def qso_people(D, calls) -> dict[str, dict]:
+    """QTH, first name and last name of each callsign of the QSO log, from the EME stations database (filled by
+    QRZ.com): {call: {"qth", "fname", "lname"}}; empty strings where it is not known yet."""
+    out = {}
+    for call in calls:
+        s = D.station_of(call) or {}
+        q = (s.get("data") or {}).get("qrz") or {}
+        out[call] = {"qth": s.get("qth") or "", "fname": q.get("fname") or "", "lname": q.get("lname") or ""}
+    return out
+
+
+def missing(D, calls) -> list[str]:
+    """Callsigns never looked up on QRZ.com with the first/last name split (only these are asked again)."""
+    out = []
+    for call in dict.fromkeys(calls):
+        q = ((D.station_of(call) or {}).get("data") or {}).get("qrz") or {}
+        if "fname" not in q:
+            out.append(call)
+    return out
+
+
+def store(D, r: dict, locator: bool = True):
+    """Save one QRZ.com answer in the EME stations database."""
+    D.upsert_station(r["call"], name=r.get("name"), address=r.get("address"), qth=r.get("qth"),
+                     country=r.get("country"), locator=r.get("locator") if locator else None,
+                     data={"qrz": {k: r.get(k) for k in ("qsl_via", "lotw", "eqsl", "lat", "lon", "fname", "lname")}})

@@ -200,6 +200,25 @@ def fill_locators(D, my_locator: str, my_h: float = 0.0) -> int:
     return n
 
 
+def fill_moon_az(D, my_locator: str, my_h: float = 0.0) -> int:
+    """Moon azimuth (own and DX) for QSOs logged before EMELab stored it: only the two azimuths are added,
+    the rest of the conditions stays as it was computed at import. Returns how many QSOs were completed."""
+    n = 0
+    for q in D.qsos():
+        c = q.get("calc") or {}
+        my = latlon(q.get("my_locator") or my_locator)
+        dx = latlon(q.get("locator"))
+        add = {}
+        if my and c.get("moon_az") is None:
+            add["moon_az"] = astro.sky(q["utc"], my[0], my[1], my_h).moon.az
+        if dx and c.get("dx_moon_az") is None:
+            add["dx_moon_az"] = astro.sky(q["utc"], dx[0], dx[1], 0.0).moon.az
+        if add:
+            D.update_qso(q["id"], calc={**c, **add})
+            n += 1
+    return n
+
+
 # ------------------------------------------------------------------ statistics
 def statistics(qsos: list[dict]) -> dict:
     """Distributions of the conditions over the logged QSOs: what the successful ones had in common."""
