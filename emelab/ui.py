@@ -895,16 +895,21 @@ def _logbook_tab(D):
         return
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
-                        "Banda": q.get("band"), "Modo": _mode_cell(q),
-                        "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
+                        "Banda": q.get("band"), "Modo": lb.mode_label(q)[0],
+                        "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                         "Distanza (km)": _r(q["calc"].get("ground_km"), 0), "Percorso EME (km)": _r(q["calc"].get("eme_path_km"), 0),
                         "EL Luna": _r(q["calc"].get("moon_el"), 1), "EL DX": _r(q["calc"].get("dx_moon_el"), 1),
                         "Spread (Hz)": _r(q["calc"].get("mutual_spread_hz"), 0), "Note": q.get("comment") or ""} for q in qs])
     df.columns = [i18n.tr(c) for c in df.columns]
-    st.dataframe(df, hide_index=True, width="stretch")
-    if any(lb.mode_label(q)[1] for q in qs):
-        st.caption("* sottomodo Q65 non scritto nel log (WSJT-X non lo mette nell'ADIF): è il modo standard della banda, "
-                   "60D a 10 GHz e 60E da 24 GHz in su, o quello scelto nella scheda Segnale e stazioni.")
+    assumed = [lb.mode_label(q)[1] for q in qs]
+    mcol = i18n.tr("Modo")
+    sty = df.style.format(precision=1, na_rep="").apply(
+        lambda col: [f"color: {ASSUMED_COLOR}" if a else "" for a in assumed], subset=[mcol])
+    st.dataframe(sty, hide_index=True, width="stretch")
+    if any(assumed):
+        st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
+            "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
+            "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
     cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {q.get('band') or ''}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
@@ -1605,11 +1610,7 @@ def _learned_offset(D, band, me, my_loc, models):
     return res
 
 
-def _mode_cell(q):
-    """«Q65-60D», with * when the submode is the band's standard because the log does not say."""
-    from emelab import logbook as lb
-    label, assumed = lb.mode_label(q)
-    return label + (" *" if assumed else "")
+ASSUMED_COLOR = "#e8590c"        # assumed values (e.g. a Q65 submode the log does not say): orange
 
 
 def _num_rst(v):
@@ -2150,7 +2151,7 @@ def _wsjtx_tab(D):
     if svc.logged:
         st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
         st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q["band"],
-                       "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
+                       "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                        "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
                        "Stato": i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")} for q in svc.logged],
                      hide_index=True, width="stretch")

@@ -57,7 +57,7 @@ def _fmt(v, n=1):
 def _mode(q: dict) -> str:
     from .logbook import mode_label
     label, assumed = mode_label(q)
-    return label + (" *" if assumed else "")
+    return label + (" (presunto)" if assumed else "")
 
 
 def log_pdf(qsos: list[dict], station: str = "") -> bytes:
