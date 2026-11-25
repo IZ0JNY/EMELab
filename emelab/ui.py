@@ -431,7 +431,104 @@ def _wx_fetch(src, stn, dt):
         st.error(i18n.tr("Meteo non disponibile") + f": {e}")
 
 
-def _new(D):
+def _autofill_cb(D):
+    """⚡ Read DriverDish, weather, WSJT-X and GPSDO now and put the values in the form (they stay editable)."""
+    from emelab import autofill, gpsdo
+    stn, sets = D.station(), D.setups()
+    cfg = openems_local.load_settings()
+    mon = None
+    if cfg.get("dd_live") and _st.session_state.get("ea_mon_key"):
+        from emelab import ui_tracking
+        mon = ui_tracking._monitor(*_st.session_state["ea_mon_key"])
+    svc = _wsjtx_service()
+    use_hid = cfg.get("gpsdo_use", True) and cfg.get("gpsdo_autoread", True)
+    now = datetime.now(timezone.utc)
+    r = autofill.collect(stn, cfg, now, dd_monitor=mon, wsjtx_status=dict(svc.status or {}), wsjtx_seen=svc.last_seen,
+                         gpsdo_reader=(lambda: gpsdo.read_leo_bodnar(1.5, satellites=False)) if use_hid else None, now=now)
+    ss = _st.session_state
+    ss["em_n_date"], ss["em_n_time"] = now.date(), now.time().replace(second=0, microsecond=0)
+    for k, v in r["fields"].items():
+        if k.startswith("wx_") and k not in ("wx_source", "wx_utc"):
+            ss["em_" + k] = v
+    if r["fields"].get("wx_source"):
+        ss["em_wx_src"], ss["em_wx_utc"] = r["fields"]["wx_source"], r["fields"].get("wx_utc")
+    wj = r["extra"].get("wsjtx")
+    if wj:
+        sid = autofill.setup_for_band(sets, wj["freq_mhz"], ss.get("em_n_setup"))
+        if sid is not None:
+            ss["em_n_setup"] = sid
+    dd = r["extra"].get("driverdish")
+    if dd:
+        sky = astro.sky(now, stn["lat"], stn["lon"], stn.get("height_m") or 0.0)
+        k = autofill.target_kind(dd.get("target")) or ss.get("em_n_kind")
+        src = {"sun": sky.sun, "moon": sky.moon}.get(k)
+        d = autofill.from_driverdish(dd, {"az": src.az, "el": src.el, "el_radio": src.el_radio} if src else None)
+        lim = {"az_read": (0.0, 360.0), "el_read": (-5.0, 95.0), "az_off": (-10.0, 10.0), "el_off": (-10.0, 10.0)}
+        names = {"az_read": "em_n_azr", "el_read": "em_n_elr", "az_off": "em_n_azo", "el_off": "em_n_elo"}
+        for f, (lo, hi) in lim.items():
+            v = d["fields"].get(f)
+            if v is not None and lo <= v <= hi:
+                ss[names[f]] = float(v)
+        if d["fields"].get("kind"):
+            ss["em_n_kind"] = d["fields"]["kind"]
+        r["extra"]["driverdish"] = dict(dd, **d["extra"])
+    ss["em_af"] = r
+
+
+def _autofill_box(D, dt, setup):
+    """Controls and summary of the automatic reading."""
+    from emelab import autofill
+    cfg = openems_local.load_settings()
+    c = st.columns([1.6, 2.4])
+    c[0].button("⚡ Leggi tutto adesso", key="em_af_btn", on_click=_autofill_cb, args=(D,), type="primary",
+                help="Ora UTC, posizione della parabola da DriverDish (EA3HMJ, solo lettura), meteo, frequenza di WSJT-X "
+                     "e stato del GPSDO. I valori restano modificabili prima di registrare.")
+    auto = c[1].checkbox("Leggi in automatico quando apro la scheda", bool(cfg.get("em_autofill", True)), key="em_af_auto")
+    if auto != bool(cfg.get("em_autofill", True)):
+        openems_local.save_settings(em_autofill=bool(auto))
+    r = _st.session_state.get("em_af")
+    if not r:
+        st.caption("Solo lettura: a DriverDish EMELab chiede soltanto «status», mai comandi che muovono la parabola.")
+        return None
+    ok = {"DriverDish": "🛰️", "meteo": "🌡️", "WSJT-X": "📻", "GPSDO": "⏱️"}
+    st.caption(" · ".join(f"{ok.get(s, '')} {i18n.tr(s)} {'✅' if good else '⚠️'} {i18n.tr(txt)}" for s, good, txt in r["report"])
+               + f" — {r['utc'].replace('T', ' ').replace('Z', '')} UTC")
+    x = r["extra"]
+    dd, wj, gp = x.get("driverdish"), x.get("wsjtx"), x.get("gpsdo")
+    cols = st.columns(4)
+    if dd:
+        cols[0].metric("Parabola AZ / EL (DriverDish)", f"{_fmt(dd.get('dish_az'), '{:.2f}')}° / {_fmt(dd.get('dish_el'), '{:.2f}')}°",
+                       help=i18n.tr("Bersaglio") + f": {dd.get('target') or '—'} · "
+                            + ("TRACKING ON" if dd.get("tracking") else "TRACKING OFF" if dd.get("tracking") is False else ""))
+        cols[1].metric("Errore di puntamento", _fmt(dd.get("err_deg"), "{:.3f}°"),
+                       help=f"AZ {_fmt(dd.get('err_az'), '{:+.3f}')}° · EL {_fmt(dd.get('err_el'), '{:+.3f}')}°")
+        if dd.get("dish_minus_calc_az") is not None:
+            cols[2].metric("Parabola − posizione EMELab", f"{dd['dish_minus_calc_az']:+.3f}° / {dd['dish_minus_calc_el']:+.3f}°",
+                           help="AZ / EL: differenza tra la posizione letta da DriverDish e quella calcolata da EMELab "
+                                "(con rifrazione radio) per la sorgente misurata")
+    if wj:
+        cols[3].metric("Frequenza WSJT-X", f"{wj['freq_mhz']:.3f} MHz", help=f"{wj.get('band_label') or ''} {wj.get('mode') or ''}")
+        if wj.get("band") and stations_band(setup) != wj["band"]:
+            st.warning(i18n.tr("WSJT-X è su un'altra banda rispetto alla configurazione scelta") +
+                       f": {wj.get('band_label')} ≠ {_bl(setup['band_ghz'])}")
+    if gp:
+        if gp.get("locked") is False:
+            st.warning(i18n.tr("GPSDO non agganciato o non confermato nelle ultime 12 ore: la frequenza potrebbe non essere precisa."))
+        elif gp.get("locked") is None:
+            st.caption("GPSDO: stato sconosciuto (conferma l'aggancio nella scheda GPSDO).")
+    a = autofill.age_s(r["utc"], dt)
+    if a is not None and a > 300:
+        st.warning(i18n.tr("I dati automatici sono stati letti a un'ora diversa da quella della misura") +
+                   f" ({a / 60:.0f} min): " + i18n.tr("premi di nuovo ⚡ Leggi tutto adesso."))
+    return dict(x, age_s=round(a, 1) if a is not None else None)
+
+
+def stations_band(setup) -> str | None:
+    from emelab import stations
+    return stations.band_of(float(setup["band_ghz"]) * 1000.0)
+
+
+def _new(D, tab_open: bool | None = None):
     stn = D.station()
     sets = D.setups()
     if not stn.get("lat") and not stn.get("lon"):
@@ -440,19 +537,30 @@ def _new(D):
     if not sets:
         st.info("Crea prima una configurazione per la banda (sezione Stazione e configurazioni).")
         return
+    # automatic reading each time the tab is opened (once per session when Streamlit does not tell the active tab)
+    was = _st.session_state.get("em_af_was_open")
+    _st.session_state["em_af_was_open"] = tab_open
+    opened = (tab_open is True and was is not True) or (tab_open is None and was is None and "em_af" not in _st.session_state)
+    if opened:
+        if openems_local.load_settings().get("em_autofill", True):
+            with st.spinner("Lettura di DriverDish, meteo, WSJT-X e GPSDO…"):
+                _autofill_cb(D)
     now = datetime.now(timezone.utc)
     c = st.columns(4)
     sid = c[0].selectbox("Configurazione", [s["id"] for s in sets], key="em_n_setup",
                          format_func=lambda i: next(s["name"] for s in sets if s["id"] == i))
     setup = next(s for s in sets if s["id"] == sid)
-    d0 = c[1].date_input("Data (UTC)", now.date(), key="em_n_date")
-    t0 = c[2].time_input("Ora (UTC)", now.time().replace(second=0, microsecond=0), key="em_n_time", step=60)
+    _st.session_state.setdefault("em_n_date", now.date())          # set by ⚡ too: no default value on the widgets
+    _st.session_state.setdefault("em_n_time", now.time().replace(second=0, microsecond=0))
+    d0 = c[1].date_input("Data (UTC)", key="em_n_date")
+    t0 = c[2].time_input("Ora (UTC)", key="em_n_time", step=60)
     if "em_n_kind" not in _st.session_state:          # by night the Moon is the natural default
         _now = astro.sky(now, stn["lat"], stn["lon"], stn.get("height_m") or 0.0)
         _st.session_state["em_n_kind"] = "sun" if _now.sun.el > 3 else "moon" if _now.moon.el > 3 else "cold_sky"
     kind = c[3].selectbox("Tipo di misura", list(edb.KINDS), key="em_n_kind", format_func=lambda k: edb.KINDS[k])
     dt = datetime.combine(d0, t0).replace(tzinfo=timezone.utc)
     st.caption(f"⏱️ {edb.iso_utc(dt)} UTC")
+    auto_x = _autofill_box(D, dt, setup)
     c = st.columns(4)
     y = c[0].number_input("Y misurato (dB)", -5.0, 40.0, None, 0.05, key="em_n_y",
                           help="sole/luna/terra: rapporto tra rumore sulla sorgente e cielo freddo")
@@ -490,7 +598,7 @@ def _new(D):
               az_read=azr, el_read=elr, az_off=azo, el_off=elo, partner=partner or None, notes=notes or None,
               t_c=t_c, rh=rh, p_hpa=p, wind_ms=wind, rain_mmh=rain, cloud_pct=cloud,
               wx_utc=_st.session_state.get("em_wx_utc"), wx_source=_st.session_state.get("em_wx_src") or "manuale",
-              calc=_clean(calc))
+              calc=_clean(calc), extra=_clean(auto_x) if auto_x else None)
         st.success("Misura registrata.")
 
 
@@ -533,6 +641,12 @@ def _show_snapshot(c, kind):
 
 
 # ------------------------------------------------------------------ log
+def _gp_cell(g) -> str:
+    if not g:
+        return ""
+    return "✅" if g.get("locked") else "⚠️" if g.get("locked") is False else "?"
+
+
 def _log(D):
     sets = {s["id"]: s for s in D.setups()}
     c = st.columns(2)
@@ -548,10 +662,14 @@ def _log(D):
             ev = analysis.evaluate_measurement(r, sets[r["setup_id"]]) if r.get("setup_id") in sets else {}
             c = r.get("calc") or {}
             src = c.get("moon" if r["kind"] in ("moon", "echo", "qso") else "sun") or {}
+            x = r.get("extra") or {}
             tab.append({"ID": r["id"], "UTC": r["utc"].replace("T", " ").replace("Z", ""), "Banda": _bl(r["band_ghz"]), "Tipo": edb.KINDS.get(r["kind"], r["kind"]),
                         "Y (dB)": r["y_db"], "Y atteso": _r(ev.get("y_expected")), "ΔY": _r(ev.get("y_delta")),
                         "G/T misurato": _r(ev.get("gt_measured")), "ΔG/T": _r(ev.get("gt_delta")), "SNR": r["snr_db"],
                         "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
+                        "AZ letto": r["az_read"], "EL letto": r["el_read"],
+                        "Errore punt. (°)": _r((x.get("driverdish") or {}).get("err_deg"), 3),
+                        "MHz": (x.get("wsjtx") or {}).get("freq_mhz"), "GPSDO": _gp_cell(x.get("gpsdo")),
                         "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"] or ""})
         import pandas as pd
         tr = i18n.tr                                   # pandas tables are not translated by the streamlit proxy

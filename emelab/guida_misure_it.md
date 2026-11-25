@@ -2,6 +2,8 @@
 
 Ogni misura va registrata **in UTC** (sincronizza il PC con NTP o GPS), con la **configurazione** usata e il **meteo** dello stesso momento. Usa sempre le stesse impostazioni del ricevitore (banda, tempo di integrazione, AGC spento) e fai **3 letture**, poi la media.
 
+Nella scheda **➕ Nuova misura** il pulsante **⚡ Leggi tutto adesso** (e l'apertura della scheda) compila da solo ora UTC, AZ/EL e offset della parabola da DriverDish (solo lettura, «status»), errore di puntamento, meteo (la tua stazione, altrimenti Open-Meteo), frequenza di WSJT-X e stato del GPSDO. Premilo quando sei sul picco, poi scrivi Y e registra: i valori restano modificabili.
+
 #### 1. Rumore solare (Y sole / cielo freddo) — la misura principale
 - **Cosa misura:** il G/T reale della stazione. EMELab lo confronta con quello atteso dal tuo feed e dalla tua parabola.
 - **Come:** punta il Sole e cerca il massimo in AZ ed EL. Annota la **correzione che hai dovuto dare** (correzione AZ/EL al picco). Poi spostati in AZ alla stessa elevazione di **almeno 5 fasci** (circa 4° a 10 GHz, 2° a 24 GHz, 1° a 47 GHz) sul cielo freddo. Y = potenza sul Sole / potenza sul cielo.

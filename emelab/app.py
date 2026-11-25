@@ -169,6 +169,8 @@ for tab, (k, _, fn) in zip(tabs, shown):
                 st.markdown("- " + i18n.tr(sgg["text"]))
         elif k == "guide":
             ui._guide()
+        elif k == "new":
+            fn(D, getattr(tab, "open", None))   # True/False when Streamlit tracks the active tab, None otherwise
         else:
             fn(D)
 

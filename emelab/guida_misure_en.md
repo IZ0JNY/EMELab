@@ -2,6 +2,8 @@
 
 Log every measurement **in UTC** (keep the PC synchronised with NTP or GPS), with the **setup** used and the **weather** at that moment. Always use the same receiver settings (bandwidth, integration time, AGC off) and take **3 readings**, then the average.
 
+In the **➕ New measurement** tab the **⚡ Read everything now** button (and opening the tab) fills in by itself the UTC time, the dish AZ/EL and offsets from DriverDish (read only, «status»), the pointing error, the weather (your station, otherwise Open-Meteo), the WSJT-X frequency and the GPSDO state. Press it when you are on the peak, then type Y and record: the values stay editable.
+
 #### 1. Sun noise (Y sun / cold sky) — the main measurement
 - **What it measures:** the real G/T of the station. EMELab compares it with what your feed and dish should give.
 - **How:** point at the Sun and peak it in AZ and EL. Note the **correction you had to apply** (AZ/EL offset at the peak). Then move in AZ, at the same elevation, by **at least 5 beamwidths** (about 4° at 10 GHz, 2° at 24 GHz, 1° at 47 GHz) onto cold sky. Y = power on the Sun / power on the sky.
