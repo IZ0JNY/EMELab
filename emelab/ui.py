@@ -1153,11 +1153,34 @@ def _qsos_manage(D, n_qsos):
             st.rerun()
 
 
+def _qso_band_filter(qs, lb):
+    """One switch per band found in the log (10 GHz, 24 GHz, 47 GHz…): the statistics follow the bands left on."""
+    order = list(lb.BAND_F)
+    count = {}
+    for q in qs:
+        count[q.get("band") or "?"] = count.get(q.get("band") or "?", 0) + 1
+    bands = sorted(count, key=lambda b: (order.index(b) if b in order else len(order), b))
+    if len(bands) < 2:
+        return qs
+    st.caption("Bande da includere")
+    c = st.columns(6)
+    on = set()
+    for i, b in enumerate(bands):
+        name = f"{b[:-1]} GHz" if b.endswith("G") and b[:-1].isdigit() else b
+        if c[i % len(c)].toggle(f"{name} ({count[b]})", value=True, key=f"qs_band_{b}"):
+            on.add(b)
+    return [q for q in qs if (q.get("band") or "?") in on]
+
+
 def _qso_stats_tab(D):
     from emelab import logbook as lb
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
+        return
+    qs = _qso_band_filter(qs, lb)
+    if not qs:
+        st.info("Nessuna banda selezionata.")
         return
     s = lb.statistics(qs)
     c = st.columns(4)

@@ -435,6 +435,8 @@ ENTRIES = [
     ('Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.', 'In the 🎯 Pointing tab you find the error budget and the strategies; in ➕ New measurement you log sun, Moon, ground and focus; in 📊 Analysis EMELab estimates G/T, efficiency, NF and the pointing model.'),
     ('Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, umidità…; «Correlazioni» ti mostra cosa va insieme ai tuoi risultati. In 📉 Statistiche QSO trovi le distribuzioni e la mappa.', 'In the 📈 Charts tab you can relate the QSO reports to elevation, spread, distance, humidity…; «Correlations» shows you what goes with your results. In 📉 QSO statistics you find the distributions and the map.'),
     ('Nessun QSO nel log.', 'No QSOs in the log.'),
+    ('Nessuna banda selezionata.', 'No band selected.'),
+    ('Bande da includere', 'Bands to include'),
     ('Nessun dispositivo per questa banda: cercalo e aggiungilo dal datasheet qui sotto.', 'No device for this band: look it up and add it from the datasheet below.'),
     ('Nessun parametro numerico nel periodo scelto.', 'No numeric parameter in the chosen period.'),
     ('Nessun progetto da FeedLab: apri FeedLab e completa banda, parabola, feed e materiale.', 'No project from FeedLab: open FeedLab and complete band, dish, feed and material.'),
