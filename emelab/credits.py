@@ -19,6 +19,10 @@ SOURCES = [
      "https://nvlpubs.nist.gov/nistpubs/jres/69D/jresv69Dn12p1637_A1b.pdf"),
     ("Charlie Suckling G3WDG / DL3WDG", "soglie di decodifica Q65 (60D, 60E, 120E) in funzione del mutual spread, "
      "dalle curve usate nel calcolatore di OE2IGL/DF3GJ", ""),
+    ("Costantino IC8TEM", "YAEC – Yet Another EME Calc: idee per il rischio di polarizzazione (Dpol), l'orizzonte libero e "
+     "gli ostacoli, la pianificazione dei giorni migliori, la prova della stazione su Sole, Luna e terreno e il controllo dei "
+     "calcoli passo passo", "https://github.com/ic8tem/YAEC"),
+    ("Joe Taylor K1JT", "WSJT-X lib/astro.f90: sfasamento spaziale della polarizzazione (Dpol)", "https://wsjt.sourceforge.io/"),
     ("Carsten Groen OZ9AAR", "SimpleCalc, SkyScanner, WSJT Log Viewer e il calcolatore online del rumore solare: idee per il "
      "flusso RSTN del giorno con controllo dei brillamenti GOES e per l'analisi delle decodifiche", "https://moonbounce.dk/"),
     ("A.A.M. Saleh", "modello AM/AM e AM/PM dei tubi a onda progressiva, IEEE Trans. Commun. COM-29 (1981)", ""),

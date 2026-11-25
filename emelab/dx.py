@@ -104,8 +104,29 @@ def snr_2500(tx: dict, rx: dict, f_ghz: float, r_tx_km: float, r_rx_km: float, m
     return {"p_rx_dbw": p, "path_loss_db": pl, "bwf_db": bwf, "tsys_K": tsys, "t_moon_K": t_moon, "snr_db": p - n}
 
 
+def pol_angle(lat_deg: float, az_deg: float, el_deg: float) -> float:
+    """Position angle (°) of a horizontally polarised antenna's E field as seen on the sky (parallactic form,
+    as in WSJT-X lib/astro.f90 by K1JT)."""
+    la, az, el = (math.radians(v) for v in (lat_deg, az_deg, el_deg))
+    xx = math.sin(la) * math.cos(el) - math.cos(la) * math.cos(az) * math.sin(el)
+    yy = math.cos(la) * math.sin(az)
+    return math.degrees(math.atan2(yy, xx))
+
+
+def spatial_pol_offset(p_a: float, p_b: float) -> float:
+    """Spatial polarisation offset Dpol between two stations, −90…+90° (linear polarisation, no Faraday:
+    negligible at 10 GHz and above)."""
+    d = (p_b - p_a + 720.0) % 180.0
+    return d - 180.0 if d > 90.0 else d
+
+
+def pol_loss_db(dpol_deg: float) -> float:
+    """Loss between two linearly polarised antennas rotated by Dpol (cross-polar floor about −30 dB)."""
+    return -10 * math.log10(max(math.cos(math.radians(dpol_deg)) ** 2, 1e-3))
+
+
 def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str, wx_a: dict | None = None,
-            wx_b: dict | None = None, h_a: float = 0.0, h_b: float = 0.0) -> dict | None:
+            wx_b: dict | None = None, h_a: float = 0.0, h_b: float = 0.0, linear: bool = True) -> dict | None:
     """Both directions at time t: a hears b and b hears a, with margins over the best Q65 mode."""
     f = BAND_GHZ[band]
     sa = astro.sky(t, a_loc[0], a_loc[1], h_a)
@@ -128,8 +149,13 @@ def link_at(t: datetime, a: dict, a_loc: tuple, b: dict, b_loc: tuple, band: str
     diam = (sa.moon.diam_deg + sb.moon.diam_deg) / 2
     hear_b = snr_2500(b, a, f, sb.moon.dist_km, sa.moon.dist_km, diam, ab, aa, tska)     # at a
     hear_a = snr_2500(a, b, f, sa.moon.dist_km, sb.moon.dist_km, diam, aa, ab, tskb)     # at b
+    dpol = spatial_pol_offset(pol_angle(a_loc[0], sa.moon.az, sa.moon.el), pol_angle(b_loc[0], sb.moon.az, sb.moon.el))
+    lpol = pol_loss_db(dpol) if linear else 0.0
+    hear_b["snr_db"] -= lpol
+    hear_a["snr_db"] -= lpol
     return {"utc": t, "el_a": sa.moon.el, "el_b": sb.moon.el, "spread_hz": spread,
             "doppler_hz": mut["doppler_hz_per_ghz"] * f, "mode": mode, "threshold_db": thr,
+            "dpol_deg": dpol, "pol_loss_db": lpol,
             "snr_a_hears_b": hear_b["snr_db"], "snr_b_hears_a": hear_a["snr_db"],
             "margin_db": min(hear_b["snr_db"], hear_a["snr_db"]) - thr, "detail": (hear_b, hear_a)}
 

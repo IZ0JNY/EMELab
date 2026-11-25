@@ -1315,6 +1315,7 @@ def _signal_tab(D):
                            "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1) if r["best"] else None,
                            "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
                            "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
+                           "Dpol (°)": round(r["best"]["dpol_deg"]) if r["best"] else None,
                            "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None, "Sentito (ALL.TXT)": r.get("heard")}
                           for r in rk], hide_index=True, width="stretch")
             st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
@@ -1347,7 +1348,8 @@ def _signal_tab(D):
             b = max(rows, key=lambda r: r["margin_db"])
             hb = b["detail"][0]
             st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
-                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · " + i18n.tr("perdita di tratta") +
+                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° (" +
+                        i18n.tr("polarizzazione lineare") + f" −{b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
                         f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
             if other["assumed"]:
                 st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
@@ -1621,7 +1623,9 @@ def _wz_plan(D, stn, hz, fc):
                    "Momento migliore (UTC)": f"{r['best']['utc']:%d/%m %H:%M}", "Ore in comune": round(r["hours_common"], 1),
                    "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1),
                    "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo consigliato": r["best"]["mode"],
-                   "Mutual spread (Hz)": round(r["best"]["spread_hz"]), "Margine (dB)": round(r["best"]["margin_db"], 1),
+                   "Mutual spread (Hz)": round(r["best"]["spread_hz"]),
+                   "Dpol (°)": round(r["best"]["dpol_deg"]), "Perdita di polarizzazione (dB)": round(r["best"]["pol_loss_db"], 1),
+                   "Margine (dB)": round(r["best"]["margin_db"], 1),
                    "Stazione": f"{r.get('antenna') or ''} {r.get('power_w') or ''} W"} for r in rk[:40]], hide_index=True, width="stretch")
     st.caption("Probabilità tecnica: margine del segnale atteso sulla soglia Q65 (con la correzione appresa dai tuoi QSO e "
                "±2 dB di incertezza). Non sa se l'altra stazione è attiva: per questo conviene uno sked.")

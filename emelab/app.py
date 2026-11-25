@@ -4,6 +4,8 @@
 Run with  streamlit run emelab_main.py.  Same look as FeedLab: sidebar with title, author, language, Credits."""
 from __future__ import annotations
 
+import os
+
 import streamlit as _st
 
 import emelab
@@ -12,8 +14,7 @@ from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
 S = st.session_state
-if "lang" not in S:
-    S.lang = i18n.default_lang()
+S.lang = "it"                      # 0.1: Italian only (English when every text is translated)
 i18n.set_lang(S.lang)
 st.set_page_config(page_title="EMELab — Laboratorio di misure e pianificazione EME", page_icon="🌕", layout="wide")
 
@@ -54,7 +55,11 @@ with st.sidebar:
     c[1].metric("QSO", len(D.qsos()))
     st.divider()
     st.caption(f"Versione {emelab.__version__} · © Ivan De Cesaris IZ0JNY")
-    st.selectbox("Lingua / Language", list(i18n.LANGS), key="lang", format_func=lambda k: i18n.LANGS[k], on_change=_set_lang)
+    st.caption("Versione di prova in italiano: l'inglese arriva in una delle prossime versioni.")
+    if os.environ.get("EMELAB_DESKTOP") == "browser":
+        if st.button("⏻ Chiudi EMELab", help="ferma il programma"):
+            st.write("EMELab chiuso: puoi chiudere questa scheda del browser.")
+            os._exit(0)
     if st.button("ℹ️ Credits", key="credits_btn", help="Autore, versione e tutte le fonti"):
         _credits_dialog()
     st.link_button("🐞 Segnala un problema", "https://github.com/IZ0JNY/EMELab/issues")

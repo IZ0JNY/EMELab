@@ -1,0 +1,5 @@
+# EMELab for Windows (desktop program): the app's dependencies plus the native window and the system
+# certificate store for HTTPS (weather, NOAA, EME Directory). Used by windows/build.ps1.
+-r requirements.txt
+pywebview>=5.0
+truststore>=0.9
