@@ -176,7 +176,7 @@ class Service:
              "dial_mhz": (self.status.get("dial_hz") or 0) / 1e6 or None, "client": m["id"]}
         self.recent.appendleft(d)
         self.db().add_decode(**d)
-        if call:
+        if call and d["band"]:                           # only the EME bands (10 GHz and up) fill the station list
             data = (self.db().station_of(call) or {}).get("data", {})
             heard = data.get("heard", {})
             band = d["band"]

@@ -819,32 +819,36 @@ def _stations_tab(D):
             _pa0ply_update(D)
         upp = st.file_uploader("…oppure carica i PDF", type=["pdf"], accept_multiple_files=True, key="st_pa0ply_up")
     if up3 is not None and st.button("📥 Importa CALL3.TXT", key="st_call3_go"):
-        rows = stn.parse_call3(up3.getvalue().decode("utf-8", "replace"))
-        for r in rows:
-            D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
-        D.commit()
-        D.log_station_import("call3", up3.name, len(rows))
-        st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
+        allrows = stn.parse_call3(up3.getvalue().decode("utf-8", "replace"))
+        known = {r["call"] for r in D.stations() if r.get("eme")} | {q["call"] for q in D.qsos()}
+        rows = stn.eme_only(allrows, known)
+        st.info(i18n.tr("Righe in CALL3.TXT") + f": {len(allrows)} · " + i18n.tr("stazioni EME tenute") + f": {len(rows)}")
+        _import_or_ask(D, "call3", (rows, up3.name), {r["call"] for r in rows})
     if upa is not None and st.button("📥 Importa ALL.TXT", key="st_all_go"):
-        dec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
+        alldec = stn.parse_all(upa.getvalue().decode("utf-8", "replace"))
+        dec = stn.eme_decodes(alldec, {r["call"] for r in D.stations() if (r.get("data") or {}).get("directory")})
+        if len(dec) < len(alldec):
+            st.info(i18n.tr("Decodifiche sotto i 10 GHz lasciate fuori") + f": {len(alldec) - len(dec)}")
         summ = stn.heard_summary(dec)
-        for call, s in summ.items():
-            old = (D.station_of(call) or {}).get("data", {}).get("heard", {})
-            heard = {"n": old.get("n", 0) + s["n"], "first": min(str(s["first"]), old.get("first", "9999")),
-                     "last": max(str(s["last"]), old.get("last", "")), "snr_best": max(s["snr_best"], old.get("snr_best", -99)),
-                     "snr_median": s["snr_median"], "bands": sorted(set(old.get("bands", [])) | s["bands"]),
-                     "modes": sorted(set(old.get("modes", [])) | s["modes"])}
-            D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
-        D.commit()
-        D.log_station_import("heard", upa.name, len(summ))
-        st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
+        _import_or_ask(D, "heard", (dec, summ, upa.name), set(summ))
     if upp and st.button("📥 Importa i PDF", key="st_pa0ply_go"):
         _pa0ply_import(D, [(f.name, f.getvalue()) for f in upp])
+    _import_confirm(D)
+    _stations_quick_clear(D)
     rows = D.stations()
     if rows:
         import pandas as pd
         tab = []
-        for r in rows:
+        shown = rows
+        if len(rows) > TABLE_MAX:
+            q = st.text_input("🔎 Cerca nominativo o locator", "", key="st_find").strip().upper()
+            if q:
+                shown = [r for r in rows if q in r["call"] or q in (r.get("locator") or "").upper()]
+            if len(shown) > TABLE_MAX:
+                st.caption(i18n.tr("Mostro le prime") + f" {TABLE_MAX} " + i18n.tr("stazioni su") + f" {len(shown)}" + ". " +
+                           i18n.tr("Scrivi un nominativo per trovare le altre."))
+                shown = shown[:TABLE_MAX]
+        for r in shown:
             d = r.get("data", {})
             h = d.get("heard", {})
             dirb = D.directory_of(d)
@@ -871,6 +875,9 @@ def _stations_tab(D):
         _qrz_box(D, [r["call"] for r in rows])
     if rows or D.station_imports():
         _stations_manage(D, [r["call"] for r in rows])
+
+
+TABLE_MAX = 500                # rows shown at once in the EME stations table (it stays fast with any database)
 
 
 def _station_text(dirb: dict) -> str:
@@ -1025,24 +1032,104 @@ def _pa0ply_update(D):
 
 def _pa0ply_import(D, files):
     from emelab import stations as stn
-    n = 0
+    parsed = []
     for name, data in files:
-        nb = 0
         nl = name.lower()
         band = "10G" if nl.startswith(("10368", "10g")) else "24G" if nl.startswith(("24048", "24g")) else \
             "47G" if nl.startswith("47") else "76G" if nl.startswith("76") else None
-        if band is None:
-            continue
-        for r in stn.parse_pa0ply(stn.pdf_text(data), band):
-            old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
-            old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
-            D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
-            n += 1
-            nb += 1
+        if band is not None:
+            parsed.append((name, band, stn.parse_pa0ply(stn.pdf_text(data), band)))
+    _import_or_ask(D, "directory", parsed, {r["call"] for _, _, rows in parsed for r in rows})
+
+
+IMPORT_ASK_OVER = 300          # above this many stations in one import EMELab asks before going on
+
+
+def _import_or_ask(D, kind, payload, calls: set):
+    """Import at once, or — with more than IMPORT_ASK_OVER stations — keep it waiting for an OK."""
+    if len(calls) > IMPORT_ASK_OVER:
+        have = {r["call"] for r in D.stations()}
+        st.session_state["st_import_pending"] = {"kind": kind, "payload": payload, "n": len(calls),
+                                                 "new": len(calls - have)}
+    else:
+        st.session_state.pop("st_import_pending", None)
+        _import_apply(D, kind, payload)
+
+
+def _import_confirm(D):
+    p = st.session_state.get("st_import_pending")
+    if not p:
+        return
+    st.warning(i18n.tr("Questa importazione contiene") + f" {p['n']} " + i18n.tr("stazioni") + f" ({p['new']} " +
+               i18n.tr("nuove") + "), " + i18n.tr("più di") + f" {IMPORT_ASK_OVER}. " + i18n.tr("Continuo?"))
+    c = st.columns(2)
+    if c[0].button("✅ OK, continua l'importazione", key="st_import_yes"):
+        st.session_state.pop("st_import_pending", None)
+        _import_apply(D, p["kind"], p["payload"])
+    if c[1].button("✖️ Annulla l'importazione", key="st_import_no"):
+        st.session_state.pop("st_import_pending", None)
+        st.rerun()
+
+
+def _import_apply(D, kind, payload):
+    if kind == "call3":
+        rows, name = payload
+        for r in rows:
+            D.upsert_station(r["call"], locator=r["locator"], eme=1 if r["eme"] else None, data={"call3": True})
         D.commit()
-        D.log_station_import(f"directory:{band}", name, nb)
-    D.commit()
-    st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
+        D.log_station_import("call3", name, len(rows))
+        st.success(i18n.tr("Stazioni importate") + f": {len(rows)}")
+    elif kind == "heard":
+        dec, summ, name = payload
+        for call, s in summ.items():
+            old = (D.station_of(call) or {}).get("data", {}).get("heard", {})
+            heard = {"n": old.get("n", 0) + s["n"], "first": min(str(s["first"]), old.get("first", "9999")),
+                     "last": max(str(s["last"]), old.get("last", "")), "snr_best": max(s["snr_best"], old.get("snr_best", -99)),
+                     "snr_median": s["snr_median"], "bands": sorted(set(old.get("bands", [])) | s["bands"]),
+                     "modes": sorted(set(old.get("modes", [])) | s["modes"])}
+            D.upsert_station(call, locator=s["locator"], eme=1, data={"heard": heard})
+        D.commit()
+        D.log_station_import("heard", name, len(summ))
+        st.success(i18n.tr("Decodifiche lette") + f": {len(dec)} · " + i18n.tr("stazioni") + f": {len(summ)}")
+    elif kind == "directory":
+        n = 0
+        for name, band, rows in payload:
+            for r in rows:
+                old = (D.station_of(r["call"]) or {}).get("data", {}).get("directory", {})
+                old[band] = {"antenna": r["antenna"], "power_w": r["power_w"], "web": r["web"], "name": r["name"] or None}
+                D.upsert_station(r["call"], locator=r["locator"], name=r["name"] or None, eme=1, data={"directory": old})
+            n += len(rows)
+            D.commit()
+            D.log_station_import(f"directory:{band}", name, len(rows))
+        st.success(i18n.tr("Righe della EME Directory importate") + f": {n}")
+
+
+def _stations_quick_clear(D):
+    """Empty the station database and start again: right under the import buttons, so it is easy to find."""
+    n = len(D.stations())
+    if not n:                                    # just emptied: the message, then nothing else to show
+        for kind, msg in st.session_state.pop("st_flash", None) or []:
+            getattr(st, kind)(msg)
+        if not D.station_imports():
+            return
+    c = st.columns([3, 2])
+    c[0].markdown(f"**{n}** " + i18n.tr("stazioni nel database") + " · " +
+                  i18n.tr("per cancellare solo una fonte o singole stazioni apri «🗑️ Cancella i dati importati» in fondo alla pagina"))
+    if c[1].button("🗑️ Svuota tutto e re-importa", key="st_quick_clear"):
+        st.session_state["st_quick_clear_ask"] = True
+    if st.session_state.get("st_quick_clear_ask"):
+        st.warning(i18n.tr("Cancellare tutte le") + f" {n} " + i18n.tr("stazioni e l'elenco dei file importati? "
+                                                                       "Poi potrai importare di nuovo i file da capo."))
+        c = st.columns(2)
+        if c[0].button("✅ Sì, svuota", key="st_quick_clear_yes"):
+            D.clear_stations()
+            st.session_state.pop("st_quick_clear_ask", None)
+            st.session_state.pop("st_table" + _lang_key(), None)
+            st.session_state["st_flash"] = [("success", i18n.tr("Database delle stazioni svuotato: ora puoi re-importare i file."))]
+            st.rerun()
+        if c[1].button("Annulla", key="st_quick_clear_no"):
+            st.session_state.pop("st_quick_clear_ask", None)
+            st.rerun()
 
 
 def _qrz_box(D, calls):
