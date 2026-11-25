@@ -638,24 +638,68 @@ def _analysis(D):
 
 
 # ------------------------------------------------------------------ planner
-def _planner(D):
+def _planner_tab(D):
+    """One Planner: configuration, Q65 mode, other station and weather chosen once at the top; below, the signal
+    of the day (default), the Moon windows of the next days and who you can work."""
+    from emelab import dx
+    st.subheader("Pianificatore")
+    st.caption("Equazione radar bistatica con la distanza reale della Luna da entrambe le stazioni, la parte di Luna "
+               "illuminata da entrambi i fasci, l'atmosfera ai due capi e il rumore di chi riceve puntato sulla Luna. "
+               "Soglie Q65 di G3WDG contro il mutual spread. Dati delle altre stazioni dalla EME Directory; dove mancano, "
+               "valori tipici della banda (indicati come ipotesi). EMELab corregge il modello con i rapporti dei tuoi QSO.")
     stn = D.station()
     sets = D.setups()
-    if not sets or (not stn.get("lat") and not stn.get("lon")):
+    if not sets or not stn.get("lat"):
         st.info("Servono stazione e configurazione.")
         return
-    c = st.columns(5)
+    c = st.columns([3, 2, 3, 2])
     sid = c[0].selectbox("Configurazione", [s["id"] for s in sets], key="em_p_setup",
-                         format_func=lambda i: next(s["name"] for s in sets if s["id"] == i))
+                         format_func=lambda i: next(f"{s['name']} ({_bl(s['band_ghz'])})" for s in sets if s["id"] == i))
     setup = next(s for s in sets if s["id"] == sid)
-    days = c[1].number_input("Giorni", 1, 60, 14, key="em_p_days")
-    min_el = c[2].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="em_p_minel",
-                               help="sotto i 10–15° a 24/47 GHz l'atmosfera e il rumore di terra pesano molto")
-    with c[3]:
+    band = _band_of_setup(setup)
+    sets_l = openems_local.load_settings()
+    std = dx.Q65_STANDARD.get(band, "60E")
+    cur = dx.band_mode(band, sets_l)
+    q65 = c[1].selectbox(f"Modo Q65 su {_bl(band)}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur),
+                         key=f"sg_q65_{band}",
+                         format_func=lambda k: f"Q65-{k}" + (" (" + i18n.tr("standard della banda") + ")" if k == std else ""),
+                         help="Soglie e margini sono calcolati per questo sottomodo. Di solito 60D a 10 GHz e 60E da 24 GHz in "
+                              "su. La scelta viene ricordata per la banda.")
+    if q65 != cur:
+        openems_local.save_settings(q65_modes={**(sets_l.get("q65_modes") or {}), band: q65})
+    with c[2]:
         pcall, ploc = _planner_partner(D)
-    use_fc = c[4].checkbox("Usa le previsioni meteo", False, key="em_p_fc",
-                           help="umidità prevista da Open-Meteo (16 giorni): a 24 GHz cambia l'attenuazione")
-    run_now = st.button("🗓️ Calcola", type="primary", key="em_p_go")
+    use_fc = c[3].checkbox("Usa le previsioni meteo", True, key="em_p_fc",
+                           help="previsioni Open-Meteo (16 giorni) da te e, dal suo locator, dalla stazione corrispondente: "
+                                "umidità e pioggia cambiano l'attenuazione a 10/24 GHz, il vento il puntamento")
+    dxs = None
+    if ploc and stn_loc_ok(ploc):
+        dxs = {"call": pcall, "locator": ploc.upper(), "loc": astro.locator_to_latlon(ploc)}
+    sub = ["📶 Segnale", "🗓️ Finestre", "🏆 Chi posso collegare"]
+    try:
+        tabs = st.tabs(sub, key="pl_sub", on_change="rerun", default=i18n.tr(sub[0]))
+    except TypeError:
+        tabs = st.tabs(sub)
+    with tabs[0]:
+        _signal_view(D, stn, setup, band, q65, dxs, use_fc)
+    with tabs[1]:
+        _planner(D, stn, setup, pcall, ploc, use_fc)
+    with tabs[2]:
+        _rank_view(D, stn, setup, band, q65)
+
+
+def stn_loc_ok(loc: str) -> bool:
+    from emelab import stations as stns
+    return bool(stns.LOC_RX.match((loc or "").strip()))
+
+
+def _planner(D, stn, setup, pcall, ploc, use_fc):
+    """The Moon windows of the next days, with the other station chosen at the top."""
+    c = st.columns(3)
+    days = c[0].number_input("Giorni", 1, 60, 14, key="em_p_days")
+    min_el = c[1].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="em_p_minel",
+                               help="sotto i 10–15° a 24/47 GHz l'atmosfera e il rumore di terra pesano molto")
+    run_now = c[2].button("🗓️ Calcola", type="primary", key="em_p_go")
     if _st.session_state.pop("em_p_auto", False):        # opened from «Chi posso collegare»: compute straight away
         run_now = True
     if run_now:
@@ -930,6 +974,7 @@ def _open_in_planner_cb(key, rk, setup, min_el):
     if "planner" not in (S.get("tabs_on") or []):
         S["tabs_on"] = list(S.get("tabs_on") or []) + ["planner"]
     S["main_tab"] = i18n.tr(PLANNER_TAB_LABEL)
+    S["pl_sub"] = i18n.tr("🗓️ Finestre")
 
 
 def _planner_dx_model(D, band, call, loc):
@@ -1576,7 +1621,7 @@ def _logbook_tab(D):
     if any(assumed):
         st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
             "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
-            "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
+            "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nel Pianificatore."), unsafe_allow_html=True)
     cols = lb.BAND_COLORS
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {_bl(q.get('band'))}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
@@ -2469,41 +2514,27 @@ def _num_rst(v):
         return None
 
 
-def _signal_tab(D):
-    from emelab import dx
-    st.subheader("Segnale atteso e chi posso collegare")
-    st.caption("Equazione radar bistatica con la distanza reale della Luna da entrambe le stazioni, la parte di Luna "
-               "illuminata da entrambi i fasci, l'atmosfera ai due capi e il rumore di chi riceve puntato sulla Luna. "
-               "Soglie Q65 di G3WDG contro il mutual spread. Dati delle altre stazioni dalla EME Directory; dove mancano, "
-               "valori tipici della banda (indicati come ipotesi). EMELab corregge il modello con i rapporti dei tuoi QSO.")
-    stn = D.station()
-    s = _setup_pick(D, "sg_setup")
-    if not s or not stn.get("lat"):
-        st.info("Servono stazione e configurazione.")
-        return
-    band = _band_of_setup(s)
-    me = _my_model(s, band)
+def _model_header(D, stn, setup, band):
+    """Your station in the model and what EMELab learned from your QSOs (shared by the sub-tabs)."""
+    me = _my_model(setup, band)
     my_loc = (stn["lat"], stn["lon"])
     models = _dx_models(D, band)
+    off = _learned_offset(D, band, me, my_loc, models)
+    return me, my_loc, models, off
+
+
+def _rank_view(D, stn, s, band, q65):
+    from emelab import dx
+    me, my_loc, models, off = _model_header(D, stn, s, band)
     if not models:
         st.info("Importa la EME Directory (scheda Stazioni EME) per avere antenna e potenza delle altre stazioni.")
         return
-    off = _learned_offset(D, band, me, my_loc, models)
     m = st.columns(4)
     m[0].metric("La tua stazione", f"{me['D_m']:.2f} m · {me['power_w']:.0f} W")
     m[1].metric("Tsys senza Luna", f"{me['tsys_K']:.0f} K")
     m[2].metric("Correzione appresa dai QSO", f"{off['offset_db']:+.1f} dB" if off["n"] else "–",
                 f"n={off['n']}" + (f", ±{off['mad_db']:.1f} dB" if off.get("mad_db") else ""), delta_color="off")
     m[3].metric("Stazioni con dati", len(models))
-    sets = openems_local.load_settings()
-    std = dx.Q65_STANDARD.get(band, "60E")
-    cur = dx.band_mode(band, sets)
-    q65 = st.selectbox(f"Modo Q65 su {_bl(band)}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur), key=f"sg_q65_{band}",
-                       format_func=lambda k: f"Q65-{k}" + (" (" + i18n.tr("standard della banda") + ")" if k == std else ""),
-                       help="Soglie e margini sono calcolati per questo sottomodo. Di solito 60D a 10 GHz e 60E da 24 GHz in "
-                            "su. La scelta viene ricordata per la banda.")
-    if q65 != cur:
-        openems_local.save_settings(q65_modes={**(sets.get("q65_modes") or {}), band: q65})
     if len(off.get("epochs", {})) > 1 or (off.get("epochs") and "configurazione attuale" not in off["epochs"]):
         with st.expander("📜 Correzione per periodo (storico della stazione)"):
             st.dataframe([{"Dal": i18n.tr(k), "QSO": v["n"], "Misura − teoria (dB)": round(v["offset_db"], 1),
@@ -2511,91 +2542,192 @@ def _signal_tab(D):
                           for k, v in off["epochs"].items()], hide_index=True, width="stretch")
             st.caption("Quanto i rapporti che hai dato (come ricevevi l'altra stazione) si scostano dal modello in ogni "
                        "periodo: un valore molto negativo indica perdite, puntamento o Tsys peggiori del previsto.")
-    t1, t2 = st.tabs(["🏆 Chi posso collegare", "📶 Segnale di una stazione"])
-    with t1:
-        c = st.columns(3)
-        hours = c[0].number_input("Prossime ore", 6, 336, 48, 6, key="sg_h")
-        min_el = c[1].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="sg_el")
-        if c[2].button("🏆 Calcola la classifica", type="primary", key="sg_go"):
-            with st.spinner("Calcolo delle finestre comuni…"):
-                _st.session_state["sg_rank"] = dx.rank(me, my_loc, models, band, datetime.now(timezone.utc), float(hours),
-                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0,
-                                                       mode=q65, my_ok=_my_moon_ok(stn))
-                _st.session_state["sg_rank_key"] = (band, q65)
-        rk = _st.session_state.get("sg_rank") if _st.session_state.get("sg_rank_key") == (band, q65) else None
-        if rk:
-            st.dataframe([{"Nominativo": r["call"], "Locator": r["locator"], "Antenna": r.get("antenna"), "Potenza (W)": r.get("power_w"),
-                           "Probabilità": f"{100 * r['probability']:.0f} %",
-                           "Momento migliore (UTC)": r["best"]["utc"].strftime("%Y-%m-%d %H:%M") if r["best"] else "–",
-                           "Ore in comune": round(r["hours_common"], 1),
-                           "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1) if r["best"] else None,
-                           "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
-                           "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
-                           "Dpol (°)": round(r["best"]["dpol_deg"]) if r["best"] else None,
-                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None,
-                           "Sentito (ALL.TXT)": str(r["heard"]) if r.get("heard") else "",
-                           "Nota": ("⚠️ " + i18n.tr("spread oltre la tolleranza")) if r["best"] and not r["best"]["spread_ok"] else ""}
-                          for r in rk], hide_index=True, width="stretch",
-                         **_open_in_planner_kw(rk, s, float(min_el)))
-            st.caption("👆 " + i18n.tr("Clicca una riga o un nominativo per aprire il Pianificatore con quella stazione."))
-            if any(r["best"] and not r["best"]["spread_ok"] for r in rk):
-                st.warning(f"Per alcune stazioni il mutual spread supera quello che Q65-{q65} tollera "
-                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
-            st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
-                       "«Sentito» = quante decodifiche hai di quella stazione nel tuo ALL.TXT.")
-    with t2:
-        calls = [x["call"] for x in models]
-        call = st.selectbox("Stazione", calls, key="sg_call")
-        o = next(x for x in models if x["call"] == call)
-        c = st.columns(3)
-        d0 = c[0].date_input("Giorno (UTC)", datetime.now(timezone.utc).date(), key="sg_day")
-        pw = c[1].number_input("Sua potenza (W)", 0.1, 2000.0, float(o["model"]["power_w"]), key="sg_pw")
-        dd = c[2].number_input("Sua parabola (m)", 0.3, 20.0, float(o["model"]["D_m"]), 0.1, key="sg_dd")
-        POLS = {"V": "Verticale", "H": "Orizzontale", "HV": "Commutabile H/V"}
-        c = st.columns(2)
-        my_def = me.get("pol") or dx.default_pol(*my_loc)
-        my_pol = c[0].selectbox("La tua polarizzazione", list(POLS), index=list(POLS).index(my_def), key="sg_mypol",
-                                format_func=lambda k: POLS[k], help="lineare: in Europa e nel resto del mondo di solito "
-                                "verticale, in Nord America orizzontale")
-        dx_def = o["model"].get("pol") or dx.default_pol(*o["loc"])
-        dx_pol = c[1].selectbox("Sua polarizzazione", list(POLS), index=list(POLS).index(dx_def), key="sg_dxpol",
-                                format_func=lambda k: POLS[k])
-        if my_pol != my_def or dx_pol != dx_def:
-            if c[0].button("💾 Ricorda le polarizzazioni", key="sg_polsave"):
-                openems_local.save_settings(my_pol=my_pol)
-                data = (D.station_of(call) or {}).get("data", {})
-                D.upsert_station(call, data={"pol": {**(data.get("pol") or {}), band: dx_pol}})
-                D.commit()
-        me = dict(me, pol=my_pol)
-        other = dx.station(band, dd, pw, o["model"]["kind"])
-        other["pol"] = dx_pol
-        rows = []
+    c = st.columns(3)
+    hours = c[0].number_input("Prossime ore", 6, 336, 48, 6, key="sg_h")
+    min_el = c[1].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="sg_el")
+    if c[2].button("🏆 Calcola la classifica", type="primary", key="sg_go"):
+        with st.spinner("Calcolo delle finestre comuni…"):
+            _st.session_state["sg_rank"] = dx.rank(me, my_loc, models, band, datetime.now(timezone.utc), float(hours),
+                                                   30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0,
+                                                   mode=q65, my_ok=_my_moon_ok(stn))
+            _st.session_state["sg_rank_key"] = (band, q65)
+    rk = _st.session_state.get("sg_rank") if _st.session_state.get("sg_rank_key") == (band, q65) else None
+    if rk:
+        st.dataframe([{"Nominativo": r["call"], "Locator": r["locator"], "Antenna": r.get("antenna"), "Potenza (W)": r.get("power_w"),
+                       "Probabilità": f"{100 * r['probability']:.0f} %",
+                       "Momento migliore (UTC)": r["best"]["utc"].strftime("%Y-%m-%d %H:%M") if r["best"] else "–",
+                       "Ore in comune": round(r["hours_common"], 1),
+                       "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1) if r["best"] else None,
+                       "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
+                       "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
+                       "Dpol (°)": round(r["best"]["dpol_deg"]) if r["best"] else None,
+                       "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None,
+                       "Sentito (ALL.TXT)": str(r["heard"]) if r.get("heard") else "",
+                       "Nota": ("⚠️ " + i18n.tr("spread oltre la tolleranza")) if r["best"] and not r["best"]["spread_ok"] else ""}
+                      for r in rk], hide_index=True, width="stretch",
+                     **_open_in_planner_kw(rk, s, float(min_el)))
+        st.caption("👆 " + i18n.tr("Clicca una riga o un nominativo: diventa la stazione in alto e si aprono le sue finestre."))
+        if any(r["best"] and not r["best"]["spread_ok"] for r in rk):
+            st.warning(f"Per alcune stazioni il mutual spread supera quello che Q65-{q65} tollera "
+                       f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
+        st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
+                   "«Sentito» = quante decodifiche hai di quella stazione nel tuo ALL.TXT.")
+
+
+def _wx_day(lat, lon, d0):
+    """Open-Meteo hourly forecast for one UTC day at a place, {hour datetime: values}; kept for the session."""
+    key = ("pl_wx", round(lat, 2), round(lon, 2), str(d0))
+    S = _st.session_state
+    if key not in S:
         t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
-        for i in range(0, 24 * 4):
-            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band, mode=q65)
-            if r:
-                rows.append(r)
-        if not rows:
-            st.info("La Luna non è visibile da entrambi in quel giorno.")
-        else:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_a_hears_b"] + off["offset_db"] * (off["n"] >= 5) for r in rows], name="lo ricevi"))
-            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_b_hears_a"] for r in rows], name="ti riceve"))
-            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name=f"soglia Q65-{q65}", line=dict(dash="dot")))
-            fig.update_layout(title=f"{call} — " + i18n.tr("SNR atteso in 2500 Hz"), yaxis_title="dB", height=360,
-                              margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig, width="stretch")
-            b = max(rows, key=lambda r: r["margin_db"])
-            hb = b["detail"][0]
-            st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
-                        f"spread {b['spread_hz']:.0f} Hz · **Q65-{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
-                        i18n.tr("perdita di polarizzazione") + f" {b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
-                        f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
-            if not b["spread_ok"]:
-                st.warning(f"Il mutual spread ({b['spread_hz']:.0f} Hz) supera quello che Q65-{q65} tollera "
-                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
-            if other["assumed"]:
-                st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
+        try:
+            S[key] = {w["utc"]: w for w in weather.open_meteo_series(lat, lon, t0, 1)}
+        except Exception as e:                     # remembered: no new wait at every click while offline
+            S[key] = e
+    if isinstance(S[key], Exception):
+        raise S[key]
+    return S[key]
+
+
+def _wx_cell(w) -> str:
+    if not w:
+        return ""
+    parts = [f"{w['t_c']:.0f}°C" if w.get("t_c") is not None else "", f"{w['rh']:.0f}%" if w.get("rh") is not None else ""]
+    if w.get("rain_prob") is not None:
+        parts.append(f"☔{w['rain_prob']:.0f}%")
+    if w.get("rain_mmh"):
+        parts.append(f"{w['rain_mmh']:.1f} mm/h")
+    if w.get("gust_ms") is not None:
+        parts.append(f"💨{w['gust_ms']:.0f} m/s")
+    return " ".join(p for p in parts if p)
+
+
+def _signal_view(D, stn, setup, band, q65, dxs, use_fc):
+    """The signal of one day with the station chosen at the top: SNR both ways, threshold, where the Moon is from
+    both stations, local times and the weather at both ends (Open-Meteo, from the locators)."""
+    from emelab import dx, tz, wizard
+    if not dxs:
+        st.info("Scegli la stazione corrispondente in alto (nominativo o locator) per vedere il segnale.")
+        return
+    me, my_loc, models, off = _model_header(D, stn, setup, band)
+    offset = off["offset_db"] if off["n"] >= 5 else 0.0
+    call = dxs["call"]
+    model, assumed = _planner_dx_model(D, band, call, dxs["locator"])
+    k = call or dxs["locator"]
+    c = st.columns(3)
+    d0 = c[0].date_input("Giorno (UTC)", datetime.now(timezone.utc).date(), key="sg_day")
+    pw = c[1].number_input("Sua potenza (W)", 0.1, 2000.0, float(model["power_w"]), key=f"sg_pw_{k}_{band}")
+    dd = c[2].number_input("Sua parabola (m)", 0.3, 20.0, float(model["D_m"]), 0.1, key=f"sg_dd_{k}_{band}")
+    POLS = {"V": "Verticale", "H": "Orizzontale", "HV": "Commutabile H/V"}
+    c = st.columns(2)
+    my_def = me.get("pol") or dx.default_pol(*my_loc)
+    my_pol = c[0].selectbox("La tua polarizzazione", list(POLS), index=list(POLS).index(my_def), key="sg_mypol",
+                            format_func=lambda k: POLS[k], help="lineare: in Europa e nel resto del mondo di solito "
+                            "verticale, in Nord America orizzontale")
+    dx_def = model.get("pol") or dx.default_pol(*dxs["loc"])
+    dx_pol = c[1].selectbox("Sua polarizzazione", list(POLS), index=list(POLS).index(dx_def), key=f"sg_dxpol_{k}",
+                            format_func=lambda k: POLS[k])
+    if (my_pol != my_def or dx_pol != dx_def) and call:
+        if c[0].button("💾 Ricorda le polarizzazioni", key="sg_polsave"):
+            openems_local.save_settings(my_pol=my_pol)
+            data = (D.station_of(call) or {}).get("data", {})
+            D.upsert_station(call, data={"pol": {**(data.get("pol") or {}), band: dx_pol}})
+            D.commit()
+    me = dict(me, pol=my_pol)
+    other = dx.station(band, dd, pw if pw != float(model["power_w"]) or "potenza" not in assumed else None,
+                       model.get("kind", "prime"), assumed=tuple(a for a in assumed if a not in ("potenza", "Tsys", "efficienza")))
+    other["pol"] = dx_pol
+    wx_me = wx_dx = {}
+    if use_fc and 0 <= (d0 - datetime.now(timezone.utc).date()).days < 16:
+        try:
+            wx_me = _wx_day(my_loc[0], my_loc[1], d0)
+            wx_dx = _wx_day(dxs["loc"][0], dxs["loc"][1], d0)
+        except Exception as e:
+            st.warning(i18n.tr("Previsioni non disponibili") + f": {e}")
+    elif use_fc:
+        st.caption("Previsioni meteo solo per i prossimi 16 giorni: per questo giorno valori tipici.")
+    hz = _my_horizon()
+    h_me = stn.get("height_m") or 0.0
+    rows, table = [], []
+    t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
+    for i in range(0, 24 * 4):
+        t = t0 + timedelta(minutes=15 * i)
+        hr = t.replace(minute=0)
+        mb = planner.moon_both(t, my_loc, dxs["loc"], h_me)
+        if hz and not wizard.visible(hz, mb["az_me"], mb["el_me"]):
+            continue                                   # Moon behind your obstacles
+        r = dx.link_at(t, me, my_loc, other, dxs["loc"], band, wx_a=wx_me.get(hr), wx_b=wx_dx.get(hr), h_a=h_me, mode=q65)
+        if not r:
+            continue
+        rows.append(r)
+        if t.minute % 30 == 0:
+            lt_me, lt_dx = tz.local_time(*my_loc, t), tz.local_time(*dxs["loc"], t)
+            row = {"UTC": t.strftime("%H:%M"), "Ora locale (te)": lt_me[0].strftime("%H:%M") + ("*" if lt_me[2] else ""),
+                   "Ora locale DX": lt_dx[0].strftime("%H:%M") + ("*" if lt_dx[2] else ""),
+                   "Luna da te AZ/EL (°)": f"{mb['az_me']:.0f} / {mb['el_me']:.0f}",
+                   "Luna dal DX AZ/EL (°)": f"{mb['az_dx']:.0f} / {mb['el_dx']:.0f}",
+                   "Probabilità QSO": f"{100 * dx.probability(r['margin_db'], offset):.0f} %",
+                   "Lo ricevi a (dB)": round(r["snr_a_hears_b"] + offset, 1), "Ti riceve a (dB)": round(r["snr_b_hears_a"], 1),
+                   "Margine (dB)": round(r["margin_db"] + offset, 1), "Spread (Hz)": round(r["spread_hz"]),
+                   "Dpol (°)": round(r["dpol_deg"])}
+            if wx_me or wx_dx:
+                row.update({"Meteo da te": _wx_cell(wx_me.get(hr)), "Meteo DX": _wx_cell(wx_dx.get(hr))})
+            table.append(row)
+    if not rows:
+        st.info("La Luna non è visibile da entrambi in quel giorno.")
+        return
+    xs, gap = [], []                     # a break in the lines where the Moon is not visible from both
+    for i, r in enumerate(rows):
+        if i and (r["utc"] - rows[i - 1]["utc"]).total_seconds() > 16 * 60:
+            xs.append(r["utc"] - timedelta(minutes=1))
+            gap.append(True)
+        xs.append(r["utc"])
+        gap.append(False)
+    it = iter(rows)
+    pts = [None if g else next(it) for g in gap]
+    yv = lambda f: [None if p is None else f(p) for p in pts]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=yv(lambda r: r["snr_a_hears_b"] + offset), name="lo ricevi"))
+    fig.add_trace(go.Scatter(x=xs, y=yv(lambda r: r["snr_b_hears_a"]), name="ti riceve"))
+    fig.add_trace(go.Scatter(x=xs, y=yv(lambda r: r["threshold_db"]), name=f"soglia Q65-{q65}", line=dict(dash="dot")))
+    fig.update_layout(title=f"{k} — " + i18n.tr("SNR atteso in 2500 Hz"), yaxis_title="dB", height=360,
+                      margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, width="stretch")
+    b = max(rows, key=lambda r: r["margin_db"])
+    hb = b["detail"][0]
+    st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
+                f"spread {b['spread_hz']:.0f} Hz · **Q65-{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
+                i18n.tr("perdita di polarizzazione") + f" {b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
+                f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
+    if not b["spread_ok"]:
+        st.warning(f"Il mutual spread ({b['spread_hz']:.0f} Hz) supera quello che Q65-{q65} tollera "
+                   f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
+    if other["assumed"]:
+        st.markdown(f"<span style='color:{ASSUMED_COLOR}'>" + i18n.tr("presunto") + "</span>: "
+                    + ", ".join(i18n.tr(a) for a in other["assumed"]), unsafe_allow_html=True)
+    if table:
+        import pandas as pd
+        st.markdown("#### 🔎 " + i18n.tr("La giornata ogni 30 minuti"))
+        df = pd.DataFrame(table)
+        df.columns = [i18n.tr(c) for c in df.columns]
+        bg = pd.DataFrame("", index=df.index, columns=df.columns)
+        top = max(t["Margine (dB)"] for t in table)
+        for i, t in enumerate(table):
+            if t["Margine (dB)"] >= top - 1.0:
+                bg.iloc[i, :] = BEST_ROW_CSS
+        _st.dataframe(df.style.apply(lambda _: bg, axis=None).format(lambda v: f"{v:g}" if isinstance(v, float) else v),
+                      hide_index=True, width="stretch", column_config={
+                          i18n.tr("Ora locale (te)"): _st.column_config.Column(help=i18n.tr("la tua ora locale (fuso orario dal locator)")),
+                          i18n.tr("Meteo da te"): _st.column_config.Column(help=i18n.tr(WX_HELP)),
+                          i18n.tr("Meteo DX"): _st.column_config.Column(help=i18n.tr(WX_HELP)),
+                          **_planner_help()})
+        st.caption("Solo i momenti con la Luna sopra il tuo orizzonte libero e visibile dalla stazione corrispondente. "
+                   "Righe verdi: entro 1 dB dal margine migliore della giornata. Il meteo (Open-Meteo, dal locator) entra "
+                   "nel calcolo: umidità e pressione cambiano l'attenuazione e il rumore di cielo ai due capi.")
+
+
+WX_HELP = ("previsione Open-Meteo per quell'ora: temperatura, umidità relativa, probabilità di pioggia (☔), pioggia "
+           "in mm/h, raffiche di vento (💨). Per la stazione corrispondente dalle coordinate del suo locator")
 
 
 # ------------------------------------------------------------------ device catalogue and heat sink
@@ -2854,7 +2986,7 @@ def _wizard(D):
         st.markdown("\n".join("- " + i18n.tr(s["text"]) for s in coach.suggestions(D) if s.get("area") in (None, "chain"))[:3000]
                     or i18n.tr("Nessun suggerimento al momento."))
         st.info("Apri le schede 🔊 LNA, 🔥 SSPA e 💡 TWT: per ogni stadio vedi quanto pesa e quanto guadagni migliorandolo. "
-                "Nella scheda 📶 Segnale e stazioni la «correzione appresa dai QSO» ti dice quanto la tua stazione rende "
+                "Nel 🗓️ Pianificatore («Chi posso collegare») la «correzione appresa dai QSO» ti dice quanto la tua stazione rende "
                 "rispetto alla teoria: se ricevi peggio di come ti ricevono, il margine è in ricezione (LNA, perdite, Tsys).")
     elif goal == "setup":
         for sgg in coach.suggestions(D)[:8]:
