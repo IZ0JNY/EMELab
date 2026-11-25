@@ -489,7 +489,7 @@ def _log(D):
                         "Y (dB)": r["y_db"], "Y atteso": _r(ev.get("y_expected")), "ΔY": _r(ev.get("y_delta")),
                         "G/T misurato": _r(ev.get("gt_measured")), "ΔG/T": _r(ev.get("gt_delta")), "SNR": r["snr_db"],
                         "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
-                        "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"]})
+                        "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"] or ""})
         import pandas as pd
         tr = i18n.tr                                   # pandas tables are not translated by the streamlit proxy
         df = pd.DataFrame([{tr(k): (tr(v) if k in ("Tipo", "Meteo") and isinstance(v, str) else v) for k, v in row.items()}
@@ -1002,7 +1002,13 @@ def _logbook_tab(D):
         band = c[0].selectbox("Banda", list(lb.BAND_F), key="q_band")
         freq = c[1].number_input("Frequenza (MHz)", 1000.0, 300000.0, lb.BAND_F[band] * 1000, 0.001, format="%.3f", key=f"q_f_{band}")
         mode = c[2].selectbox("Modo", ["Q65", "JT65", "JT4", "CW", "SSB", "FST4", "Altro"], key="q_mode")
-        sub = c[3].text_input("Sottomodo", "60D" if mode == "Q65" else "", key=f"q_sub_{mode}")
+        if mode == "Q65":
+            from emelab import dx
+            std = dx.band_mode(band)
+            sub = c[3].selectbox("Sottomodo", list(lb.Q65_SUBMODES), index=lb.Q65_SUBMODES.index(std), key=f"q_sub_q65_{band}",
+                                 format_func=lambda k: f"Q65-{k}", help="Periodo T/R (15–300 s) e spaziatura dei toni (A–E)")
+        else:
+            sub = c[3].text_input("Sottomodo", "", key=f"q_sub_{mode}")
         pwr = c[4].text_input("Potenza TX (W)", "", key="q_pwr")
         c = st.columns(4)
         rs = c[0].text_input("Rapporto inviato", "", key="q_rs")
@@ -1074,7 +1080,7 @@ def _logbook_tab(D):
         return
     import pandas as pd
     df = pd.DataFrame([{"ID": q["id"], "Data UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"],
-                        "Banda": q.get("band"), "Modo": " ".join(x for x in (q.get("mode"), q.get("submode")) if x),
+                        "Banda": q.get("band"), "Modo": lb.mode_label(q)[0],
                         "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                         "Distanza (km)": _blank(_r(q["calc"].get("ground_km"), 0)),
                         "Percorso EME (km)": _blank(_r(q["calc"].get("eme_path_km"), 0)),
@@ -1082,7 +1088,15 @@ def _logbook_tab(D):
                         "Spread (Hz)": _blank(_r(q["calc"].get("mutual_spread_hz"), 0)), "Note": q.get("comment") or ""}
                        for q in qs])
     df.columns = [i18n.tr(c) for c in df.columns]
-    st.dataframe(df, hide_index=True, width="stretch")
+    assumed = [lb.mode_label(q)[1] for q in qs]
+    mcol = i18n.tr("Modo")
+    sty = df.style.format(precision=1, na_rep="").apply(
+        lambda col: [f"color: {ASSUMED_COLOR}" if a else "" for a in assumed], subset=[mcol])
+    st.dataframe(sty, hide_index=True, width="stretch")
+    if any(assumed):
+        st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
+            "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
+            "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nella scheda Segnale e stazioni."), unsafe_allow_html=True)
     cols = {"10G": "#1f77b4", "24G": "#d62728", "47G": "#2ca02c", "76G": "#9467bd", "122G": "#8c564b", "134G": "#e377c2"}
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {q.get('band') or ''}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
@@ -1815,6 +1829,9 @@ def _learned_offset(D, band, me, my_loc, models):
     return res
 
 
+ASSUMED_COLOR = "#e8590c"        # assumed values (e.g. a Q65 submode the log does not say): orange
+
+
 def _num_rst(v):
     try:
         return float(str(v).replace("+", ""))
@@ -1848,6 +1865,15 @@ def _signal_tab(D):
     m[2].metric("Correzione appresa dai QSO", f"{off['offset_db']:+.1f} dB" if off["n"] else "–",
                 f"n={off['n']}" + (f", ±{off['mad_db']:.1f} dB" if off.get("mad_db") else ""), delta_color="off")
     m[3].metric("Stazioni con dati", len(models))
+    sets = openems_local.load_settings()
+    std = dx.Q65_STANDARD.get(band, "60E")
+    cur = dx.band_mode(band, sets)
+    q65 = st.selectbox(f"Modo Q65 su {band}", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(cur), key=f"sg_q65_{band}",
+                       format_func=lambda k: f"Q65-{k}" + (" (" + i18n.tr("standard della banda") + ")" if k == std else ""),
+                       help="Soglie e margini sono calcolati per questo sottomodo. Di solito 60D a 10 GHz e 60E da 24 GHz in "
+                            "su. La scelta viene ricordata per la banda.")
+    if q65 != cur:
+        openems_local.save_settings(q65_modes={**(sets.get("q65_modes") or {}), band: q65})
     if len(off.get("epochs", {})) > 1 or (off.get("epochs") and "configurazione attuale" not in off["epochs"]):
         with st.expander("📜 Correzione per periodo (storico della stazione)"):
             st.dataframe([{"Dal": i18n.tr(k), "QSO": v["n"], "Misura − teoria (dB)": round(v["offset_db"], 1),
@@ -1863,8 +1889,10 @@ def _signal_tab(D):
         if c[2].button("🏆 Calcola la classifica", type="primary", key="sg_go"):
             with st.spinner("Calcolo delle finestre comuni…"):
                 _st.session_state["sg_rank"] = dx.rank(me, my_loc, models, band, datetime.now(timezone.utc), float(hours),
-                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0)
-        rk = _st.session_state.get("sg_rank")
+                                                       30.0, float(min_el), off["offset_db"] if off["n"] >= 5 else 0.0,
+                                                       mode=q65)
+                _st.session_state["sg_rank_key"] = (band, q65)
+        rk = _st.session_state.get("sg_rank") if _st.session_state.get("sg_rank_key") == (band, q65) else None
         if rk:
             st.dataframe([{"Nominativo": r["call"], "Locator": r["locator"], "Antenna": r.get("antenna"), "Potenza (W)": r.get("power_w"),
                            "Probabilità": f"{100 * r['probability']:.0f} %",
@@ -1874,8 +1902,13 @@ def _signal_tab(D):
                            "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1) if r["best"] else None,
                            "Modo": r["best"]["mode"] if r["best"] else "", "Spread (Hz)": round(r["best"]["spread_hz"]) if r["best"] else None,
                            "Dpol (°)": round(r["best"]["dpol_deg"]) if r["best"] else None,
-                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None, "Sentito (ALL.TXT)": r.get("heard")}
+                           "Margine (dB)": round(r["best"]["margin_db"], 1) if r["best"] else None,
+                           "Sentito (ALL.TXT)": str(r["heard"]) if r.get("heard") else "",
+                           "Nota": ("⚠️ " + i18n.tr("spread oltre la tolleranza")) if r["best"] and not r["best"]["spread_ok"] else ""}
                           for r in rk], hide_index=True, width="stretch")
+            if any(r["best"] and not r["best"]["spread_ok"] for r in rk):
+                st.warning(f"Per alcune stazioni il mutual spread supera quello che Q65-{q65} tollera "
+                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
             st.caption("Probabilità stimata dal margine sulla soglia Q65 (±2 dB di incertezza tra modello e QSB). "
                        "«Sentito» = quante decodifiche hai di quella stazione nel tuo ALL.TXT.")
     with t2:
@@ -1907,7 +1940,7 @@ def _signal_tab(D):
         rows = []
         t0 = datetime.combine(d0, time(0, 0), tzinfo=timezone.utc)
         for i in range(0, 24 * 4):
-            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band)
+            r = dx.link_at(t0 + timedelta(minutes=15 * i), me, my_loc, other, o["loc"], band, mode=q65)
             if r:
                 rows.append(r)
         if not rows:
@@ -1916,16 +1949,19 @@ def _signal_tab(D):
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_a_hears_b"] + off["offset_db"] * (off["n"] >= 5) for r in rows], name="lo ricevi"))
             fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["snr_b_hears_a"] for r in rows], name="ti riceve"))
-            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name="soglia Q65", line=dict(dash="dot")))
+            fig.add_trace(go.Scatter(x=[r["utc"] for r in rows], y=[r["threshold_db"] for r in rows], name=f"soglia Q65-{q65}", line=dict(dash="dot")))
             fig.update_layout(title=f"{call} — " + i18n.tr("SNR atteso in 2500 Hz"), yaxis_title="dB", height=360,
                               margin=dict(l=10, r=10, t=40, b=10))
             st.plotly_chart(fig, width="stretch")
             b = max(rows, key=lambda r: r["margin_db"])
             hb = b["detail"][0]
             st.markdown(f"{i18n.tr('Momento migliore')}: **{b['utc']:%H:%M} UTC** · EL {b['el_a']:.0f}° / {b['el_b']:.0f}° · "
-                        f"spread {b['spread_hz']:.0f} Hz → **{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
+                        f"spread {b['spread_hz']:.0f} Hz · **Q65-{b['mode']}** · Dpol {b['dpol_deg']:+.0f}° ({b['pol_a']}/{b['pol_b']}: " +
                         i18n.tr("perdita di polarizzazione") + f" {b['pol_loss_db']:.1f} dB) · " + i18n.tr("perdita di tratta") +
                         f" {hb['path_loss_db']:.1f} dB · " + i18n.tr("fasci sulla Luna") + f" {hb['bwf_db']:.1f} dB · Tsys {hb['tsys_K']:.0f} K")
+            if not b["spread_ok"]:
+                st.warning(f"Il mutual spread ({b['spread_hz']:.0f} Hz) supera quello che Q65-{q65} tollera "
+                           f"({dx.Q65_SPREAD_MAX[q65]:.0f} Hz): la soglia è estrapolata e il margine penalizzato.")
             if other["assumed"]:
                 st.caption(i18n.tr("Ipotesi per l'altra stazione") + ": " + ", ".join(i18n.tr(a) for a in other["assumed"]))
 
@@ -2198,7 +2234,7 @@ def _wz_plan(D, stn, hz, fc):
                    "Probabilità tecnica": f"{min(100 * r['probability'], 99):.0f} %",
                    "Momento migliore (UTC)": f"{r['best']['utc']:%d/%m %H:%M}", "Ore in comune": round(r["hours_common"], 1),
                    "Lo ricevi a (dB)": round(r["best"]["snr_a_hears_b"] + (off["offset_db"] if off["n"] >= 5 else 0), 1),
-                   "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo consigliato": r["best"]["mode"],
+                   "Ti riceve a (dB)": round(r["best"]["snr_b_hears_a"], 1), "Modo": "Q65-" + r["best"]["mode"] + ("" if r["best"]["spread_ok"] else " ⚠️"),
                    "Mutual spread (Hz)": round(r["best"]["spread_hz"]),
                    "Polarizzazioni": f"{r['best']['pol_a']}/{r['best']['pol_b']}", "Dpol (°)": round(r["best"]["dpol_deg"]),
                    "Perdita di polarizzazione (dB)": round(r["best"]["pol_loss_db"], 1),
@@ -2309,10 +2345,12 @@ def _wsjtx_tab(D):
                 L = astro.locator_to_latlon(grid)
                 mut = astro.mutual(datetime.now(timezone.utc), (stn["lat"], stn["lon"]), L)
                 spread = mut["spread_hz_per_ghz"] * dx.BAND_GHZ.get(band, 10.368)
-                mode, thr = dx.best_mode(spread)
+                mode = dx.band_mode(band)
+                thr = dx.q65_threshold_db(mode, spread)
                 c = st.columns([3, 1])
-                c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz → " + i18n.tr("modo consigliato") +
-                          f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)")
+                c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz · " + i18n.tr("modo della banda") +
+                          f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)" +
+                          ("" if dx.spread_ok(mode, spread) else " ⚠️ " + i18n.tr("spread oltre la tolleranza")))
                 if c[1].button(f"⚙️ Imposta Q65-{mode} in WSJT-X", key="wj_setmode"):
                     st.success("Inviato a WSJT-X.") if svc.set_q65(mode) else st.error("WSJT-X non raggiungibile.")
             except Exception:
@@ -2332,7 +2370,7 @@ def _wsjtx_tab(D):
     if svc.logged:
         st.markdown("#### " + i18n.tr("QSO registrati da WSJT-X"))
         st.dataframe([{"UTC": q["utc"].strftime("%Y-%m-%d %H:%M"), "Nominativo": q["call"], "Banda": q["band"],
-                       "Inviato": q.get("rst_sent"), "Ricevuto": q.get("rst_rcvd"), "Locator": q.get("locator"),
+                       "Inviato": q.get("rst_sent") or "", "Ricevuto": q.get("rst_rcvd") or "", "Locator": q.get("locator") or "",
                        "Luna EL (°)": round((q.get("calc") or {}).get("moon_el", float("nan")), 1),
                        "Stato": i18n.tr("già nel log") if q["duplicate"] else i18n.tr("registrato")} for q in svc.logged],
                      hide_index=True, width="stretch")
