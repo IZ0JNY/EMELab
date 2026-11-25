@@ -294,8 +294,12 @@ def _alarm_body(items):
         st.error(i18n.tr(a["label"]) + " — " + i18n.tr("non va") + (f" ({a['detail']})" if a.get("detail") else ""))
     st.caption("EMELab legge soltanto: controlla DriverDish e la parabola. L'allarme torna se il problema sparisce e "
                "poi si ripresenta; si spegne nella scheda 🎯 Tracking.")
-    if st.button("Ho visto", type="primary", key="ea_alarm_ok"):
+    from emelab import nav
+    c = st.columns(2)
+    if c[0].button("Ho visto", type="primary", key="ea_alarm_ok"):
         _ack()
+        _st.rerun()
+    if nav.button("driverdish", key="ea_alarm_go", on_click=_ack, container=c[1]):
         _st.rerun()
 
 

@@ -314,7 +314,8 @@ def _live(cfg):
         st.caption(f"{(src.info or {}).get('name', '')} · {w}×{h} · {scale * 3600:.1f}\"/px · "
                    + i18n.tr("fotogramma di") + f" {max(0.0, now - t):.1f} s " + i18n.tr("fa"))
     if started:
-        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola."), icon="🚨")
+        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola.") + " "
+                  + i18n.tr("(clicca per aprire la scheda)"), icon="🚨")
         if cfg["beep"]:
             try:
                 _st.audio(mt.beep_wav(), format="audio/wav", autoplay=True)

@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, tab_order, ui, ui_camera, ui_gpsdo, ui_moon, ui_wsjtx_panel
+from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -42,10 +42,6 @@ def _biblio_dialog():
 
 D = ui._db()
 ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
-ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
-ui_wsjtx_panel.popup(ui._wsjtx_service())   # pop-up when a QSO parameter is off (closed twice: never again)
-from emelab import ui_tracking as _ui_tracking
-_ui_tracking.popup()                         # alarm when DriverDish (EA3HMJ) stops working (read-only check)
 if "update_info" not in S:                         # new version on GitHub: checked once per launch (as in FeedLab)
     from emelab import updates as _updates
     S["update_info"] = _updates.check(emelab.__version__, i18n.get_lang())
@@ -61,6 +57,7 @@ if "update_info" not in S:                         # new version on GitHub: chec
             st.link_button("⬇️ Scarica la nuova versione", _upd["url"])
 
         _update_popup()
+        S["_update_dialog"] = True                 # one dialog per run: the alarm pop-ups wait for the next run
 elif "coach_seen" not in S:                        # invitations to measure, once per launch
     S["coach_seen"] = True
     try:
@@ -188,6 +185,12 @@ def _tabs_settings():
 if "camera" not in S["tabs_on"]:
     from emelab import moontrack as _mt
     _mt.stop()                                # tab hidden: the camera is released for ASICap and the others
+nav.register({k: l for k, l, _ in TABS})          # a click on an alert opens Live (or the alert's tab)
+ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
+if not S.pop("_update_dialog", False):
+    ui_wsjtx_panel.popup(ui._wsjtx_service())   # pop-up when a QSO parameter is off (closed twice: never again)
+    from emelab import ui_tracking as _ui_tracking
+    _ui_tracking.popup()                         # alarm when DriverDish (EA3HMJ) stops working (read-only check)
 _by_key = {t[0]: t for t in TABS}
 shown = [TABS[0]] + [_by_key[k] for k in S["tabs_order"] if k == "station" or k in S["tabs_on"]]
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
@@ -210,4 +213,5 @@ for tab, (k, _, fn) in zip(tabs, shown):
         else:
             fn(D)
 
+nav.toast_hook()
 _show_counters()                            # QSO/measurements added or deleted in this run (ADIF import, WSJT-X…)

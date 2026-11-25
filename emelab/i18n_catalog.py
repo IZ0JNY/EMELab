@@ -768,6 +768,8 @@ ENTRIES = [
     ('Spunta le schede che usi e spostale con ⬆️ ⬇️: la scelta resta salvata su questo PC. 🧭 Assistente resta sempre la prima.', 'Tick the tabs you use and move them with ⬆️ ⬇️: the choice is saved on this PC. 🧭 Assistant always stays first.'),
     ('sempre visibile', 'always shown'),
     ('sposta prima', 'move earlier'),
+    ('Apri', 'Open'),
+    ('(clicca per aprire la scheda)', '(click to open the tab)'),
     ('sposta dopo', 'move later'),
     ('↩️ Ordine originale', '↩️ Original order'),
     ("rimette le schede nell'ordine di EMELab (la scelta di quelle visibili resta)", "puts the tabs back in EMELab's order (the choice of visible tabs stays)"),
