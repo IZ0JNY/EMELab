@@ -749,13 +749,22 @@ def _logbook_tab(D):
         ups = st.file_uploader("File ADIF (.adi, .adif)", type=["adi", "adif", "txt"], accept_multiple_files=True, key="q_adif")
         only_eme = st.checkbox("Solo i QSO EME e delle bande da 10 GHz in su", True, key="q_adif_eme")
         if ups and st.button("📥 Importa", key="q_adif_go"):
-            n = dup = 0
+            n = dup = skipped = 0
             bar = st.progress(0.0)
             recs = [r for f in ups for r in lb.parse_adif(f.getvalue().decode("utf-8", "replace"))]
+            eme_calls = {x["call"] for x in D.stations() if x.get("eme")}
             for k, r in enumerate(recs):
                 q = lb.from_adif_record(r)
-                if q is None or (only_eme and (q["band"] not in lb.BAND_F or (q.get("prop_mode") or "EME").upper() != "EME")):
+                if q is None:
                     continue
+                if only_eme:
+                    pm = (q.get("prop_mode") or "").upper()
+                    digi = " ".join(x for x in (q.get("mode"), q.get("submode")) if x).upper()
+                    # PROP_MODE EME, or (no PROP_MODE) an EME station / an EME digital mode; tropo, rain scatter… are left out
+                    looks_eme = pm == "EME" or (not pm and (q["call"] in eme_calls or any(m in digi for m in ("Q65", "JT65", "JT4", "QRA64"))))
+                    if q["band"] not in lb.BAND_F or not looks_eme:
+                        skipped += 1
+                        continue
                 q.pop("prop_mode", None)
                 q["my_locator"] = q.get("my_locator") or my_loc
                 q["calc"] = lb.enrich(q, my_loc, stn.get("height_m") or 0)
@@ -764,7 +773,8 @@ def _logbook_tab(D):
                 else:
                     dup += 1
                 bar.progress((k + 1) / max(len(recs), 1))
-            st.success(i18n.tr("QSO importati") + f": {n}" + (f" · " + i18n.tr("già presenti") + f": {dup}" if dup else ""))
+            st.success(i18n.tr("QSO importati") + f": {n}" + (f" · " + i18n.tr("già presenti") + f": {dup}" if dup else "")
+                       + (f" · " + i18n.tr("non EME o sotto i 10 GHz, lasciati fuori") + f": {skipped}" if skipped else ""))
     qs = D.qsos()
     if not qs:
         st.info("Nessun QSO nel log.")
@@ -1208,6 +1218,15 @@ def _lna_tab(D):
                "racconta le perdite nascoste e il fuoco.")
     st.divider()
     _catalog_box(D, ("LNA", "SW"), "ln")
+
+
+def _power_tab(D):
+    """Power amplifiers: solid state or travelling-wave tube, whichever the station uses on that band."""
+    a, b = st.tabs(["🔥 SSPA", "💡 TWT"])
+    with a:
+        _sspa_tab(D)
+    with b:
+        _twt_tab(D)
 
 
 def _sspa_tab(D):
