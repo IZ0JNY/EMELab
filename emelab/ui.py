@@ -89,6 +89,15 @@ def _set_position(lat, lon, source):
         ss["em_pos_msg"] = ("warn", msg + " · " + i18n.tr("quota non trovata (serve internet): scrivila a mano"))
 
 
+def _height_cb(lat, lon):
+    try:
+        h = weather.elevation(lat, lon)
+        _st.session_state["em_h"] = float(round(h))
+        _st.session_state["em_h_msg"] = ("ok", i18n.tr("quota del terreno") + f" {h:.0f} m (Open-Meteo)")
+    except Exception as e:
+        _st.session_state["em_h_msg"] = ("warn", i18n.tr("quota non trovata (serve internet): scrivila a mano") + f" — {str(e)[:120]}")
+
+
 def _gmaps_cb():
     p = astro.parse_coords(_st.session_state.get("em_gmaps", ""))
     if p is None:
@@ -130,7 +139,7 @@ def _wx_test_cb():
 
 
 def _osm_map(D, lat, lon):
-    """OpenStreetMap map with the locator grid, the station and the EME stations of the directory; a click sets the position"""
+    """OpenStreetMap / terrain / satellite map (locator grid optional) with the station and the EME stations of the directory; a click sets the position"""
     from emelab import osm
     pts = []
     try:
@@ -144,9 +153,13 @@ def _osm_map(D, lat, lon):
         pass
     osm.station_map(lat, lon, bool(lat or lon), pts[-400:], height=480,
                     me_label=_st.session_state.get("em_call") or i18n.tr("la mia stazione"),
-                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"), key="em_osm", on_change=_osm_cb)
-    st.caption("Mappa © OpenStreetMap con la griglia del locator: clic sul punto della parabola e latitudine, longitudine, "
-               "locator e quota si aggiornano. Rotellina per lo zoom, trascina per spostare.")
+                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"),
+                    layer_labels={"map": i18n.tr("Mappa"), "terrain": i18n.tr("Terreno"), "satellite": i18n.tr("Satellite"),
+                                  "grid": i18n.tr("Griglia del locator")},
+                    key="em_osm", on_change=_osm_cb)
+    st.caption("Clic sul punto della parabola: latitudine, longitudine, locator e quota si aggiornano. In alto a destra "
+               "scegli Mappa (OpenStreetMap), Terreno (OpenTopoMap) o Satellite (Esri World Imagery) e, se vuoi, la griglia "
+               "del locator. Rotellina per lo zoom, trascina per spostare.")
 
 
 def _station(D):
@@ -193,9 +206,20 @@ def _station(D):
         _osm_map(D, lat, lon)
     c = st.columns(4)
     ss.setdefault("em_h", float(stn.get("height_m") or 0.0))
+    if not ss["em_h"] and (lat or lon) and not ss.get("em_h_auto"):
+        ss["em_h_auto"] = True                   # height still 0 with a known position: ask once per session
+        try:
+            ss["em_h"] = float(round(weather.elevation(lat, lon)))
+        except Exception:
+            pass
     h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, step=1.0, key="em_h",
                           help="si riempie da sola dopo un clic sulla mappa o le coordinate di Google Maps (quota del terreno "
                                "da Open-Meteo, modello Copernicus a 90 m): correggila se serve")
+    c[0].button("⛰️ Quota dal punto", key="em_h_get", on_click=_height_cb, args=(lat, lon), disabled=not (lat or lon),
+                help="chiede a Open-Meteo la quota del terreno nel punto di latitudine e longitudine qui sopra")
+    if ss.get("em_h_msg"):
+        kind, msg = ss["em_h_msg"]
+        (c[0].success if kind == "ok" else c[0].warning)(msg)
     sets = openems_local.load_settings()
     url = c[1].text_input("Stazione meteo personale (facoltativa)", sets.get("emelab_wx_url", ""), key="em_wxurl",
                           help="indirizzo del tuo sito Meteotemplate / Cumulus / Weather Display, oppure del file dati. "
@@ -220,8 +244,8 @@ def _station(D):
         st.success("Stazione salvata (solo su questo PC).")
     st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
                "tuo PC e non vengono mai inviati. Escono solo le richieste a internet: il meteo riceve coordinate e ora, la "
-               "mappa scarica le immagini da OpenStreetMap (che vede la zona mostrata), la quota riceve solo il punto "
-               "cliccato (Open-Meteo). Senza internet la mappa mostra solo la griglia: scrivi coordinate e quota a mano.")
+               "mappa scarica le immagini da OpenStreetMap, OpenTopoMap o Esri (che vedono la zona mostrata), la quota riceve solo il punto "
+               "della stazione (Open-Meteo). Senza internet la mappa resta vuota: scrivi coordinate e quota a mano.")
 
 
 def _setups(D):
@@ -604,8 +628,8 @@ def _planner(D):
     days = c[1].number_input("Giorni", 1, 60, 14, key="em_p_days")
     min_el = c[2].number_input("Elevazione minima (°)", 0.0, 60.0, 10.0, 1.0, key="em_p_minel",
                                help="sotto i 10–15° a 24/47 GHz l'atmosfera e il rumore di terra pesano molto")
-    ploc = c[3].text_input("Locator della stazione corrispondente", "", key="em_p_ploc",
-                           help="facoltativo: mostra solo le finestre in cui la Luna è visibile da entrambi")
+    with c[3]:
+        pcall, ploc = _planner_partner(D)
     use_fc = c[4].checkbox("Usa le previsioni meteo", False, key="em_p_fc",
                            help="umidità prevista da Open-Meteo (16 giorni): a 24 GHz cambia l'attenuazione")
     if st.button("🗓️ Calcola", type="primary", key="em_p_go"):
@@ -615,6 +639,7 @@ def _planner(D):
                 partner = astro.locator_to_latlon(ploc)
             except Exception:
                 st.warning("Locator non valido.")
+        _st.session_state["em_plan_dx"] = (pcall, ploc.strip().upper()) if partner else None
         series = None
         if use_fc:
             try:
@@ -640,6 +665,10 @@ def _planner(D):
         if not rows:
             st.info("Nessuna finestra nel periodo con questi limiti.")
             return
+        dx_shown = _st.session_state.get("em_plan_dx")
+        if dx_shown:
+            st.caption(i18n.tr("Finestre con la Luna visibile da te e da") + " **"
+                       + " · ".join(x for x in dx_shown if x) + "**")
         st.dataframe([{"Inizio (UTC)": r["start"].strftime("%Y-%m-%d %H:%M"), "Fine (UTC)": r["end"].strftime("%Y-%m-%d %H:%M"),
                        "Ore": round(r["hours"], 1), "Momento migliore (UTC)": r["best_utc"].strftime("%Y-%m-%d %H:%M"),
                        "EL max (°)": round(r["best_el"], 1), "Distanza (km)": round(r["dist_km"]),
@@ -680,6 +709,52 @@ def _planner(D):
                            "Eco rispetto al perigeo (dB)": round(-40 * math.log10(d / min(x[1] for x in pts)), 2)}
                           for t, d, k in pts], hide_index=True, width="stretch")
         st.caption("Al perigeo le eco sono fino a 2.2 dB più forti che all'apogeo (la perdita di tratta va con R⁴).")
+
+
+_DX_NONE, _DX_NEW = "", "\u2795"
+
+
+def _planner_partner(D) -> tuple[str, str]:
+    """The other station of the planner, chosen by callsign from the EME stations database (corrections by hand
+    included); its locator comes from there. A callsign that is not there yet, or has no locator, takes a locator
+    typed by hand, which can be kept in the database. Returns (callsign, locator), both "" when none is chosen."""
+    from emelab import stations as stn
+    rows = D.stations()
+    loc_of = {r["call"]: (r.get("locator") or "").upper() for r in rows}
+    man = {r["call"] for r in rows if "locator" in ((r.get("data") or {}).get("manual") or {})}
+
+    def label(c):
+        if c == _DX_NONE:
+            return "— nessuna —"
+        if c == _DX_NEW:
+            return "➕ Altro nominativo o solo locator"
+        return f"{c} · {loc_of[c]}" if loc_of.get(c) else f"{c} · ?"
+
+    if "em_p_pcall_next" in _st.session_state:      # a station just added: pick it (before the widget exists)
+        _st.session_state["em_p_pcall"] = _st.session_state.pop("em_p_pcall_next")
+    call = st.selectbox("Stazione corrispondente", [_DX_NONE] + list(loc_of) + [_DX_NEW], key="em_p_pcall",
+                        format_func=label,
+                        help="scrivi il nominativo per cercarlo nelle Stazioni EME: il locator viene da lì. "
+                             "Facoltativo: mostra solo le finestre in cui la Luna è visibile da entrambi")
+    if call == _DX_NONE:
+        return "", ""
+    if call != _DX_NEW and loc_of.get(call):
+        st.caption("📍 " + i18n.tr("Locator") + f": **{loc_of[call]}**" + (" ✏️" if call in man else ""))
+        return call, loc_of[call]
+    if call == _DX_NEW:
+        call = st.text_input("Nominativo", "", key="em_p_newcall", placeholder="es. OK1KIR").strip().upper()
+        if call in loc_of and loc_of[call]:
+            st.caption("📍 " + i18n.tr("Locator") + f": **{loc_of[call]}**" + (" ✏️" if call in man else ""))
+            return call, loc_of[call]
+    loc = st.text_input("Locator", "", key=f"em_p_ploc_{call}", placeholder="es. JO70EB",
+                        help="locator della stazione corrispondente (4 o 6 caratteri)").strip().upper()
+    if call and loc and stn.LOC_RX.match(loc):
+        if st.button("➕ Aggiungi alle Stazioni EME", key=f"em_p_addst_{call}",
+                     help="salva nominativo e locator nel database come correzione a mano (✏️)"):
+            D.set_station_manual(call, {"locator": loc})
+            _st.session_state["em_p_pcall_next"] = call
+            st.rerun()
+    return call, loc
 
 
 # ------------------------------------------------------------------ guide

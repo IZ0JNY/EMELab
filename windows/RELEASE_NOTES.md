@@ -1,3 +1,17 @@
+## EMELab 0.1.5 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.5.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.5-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🗺️ Mappa della Stazione:** si sceglie fra Mappa (OpenStreetMap), Terreno (OpenTopoMap) e Satellite, e la scelta resta ricordata. La griglia del locator ora è spenta di base e si accende a richiesta.
+- **Quota:** se la posizione è salvata ma la quota è ancora 0, viene riempita da sola; c'è anche il pulsante «Quota dal punto», che dice chiaramente se il servizio non risponde.
+- **📅 Pianificatore:** la stazione corrispondente si sceglie per nominativo dalle Stazioni EME (correzioni a mano comprese) e il locator viene preso da lì. Per un nominativo sconosciuto o senza locator lo scrivi a mano e puoi aggiungerlo alle Stazioni EME con un pulsante.
+
+### 🇬🇧 What's new
+- **🗺️ Station map:** choose between Map (OpenStreetMap), Terrain (OpenTopoMap) and Satellite; the choice is remembered. The locator grid is now off by default and can be switched on.
+- **Height:** when the position is saved but the height is still 0 it is filled in by itself; there is also a «Height from the point» button that says plainly when the service does not answer.
+- **📅 Planner:** the other station is chosen by callsign from the EME Stations (corrections by hand included) and its locator is taken from there. For an unknown callsign or one without a locator you type it by hand and can add it to the EME Stations with one button.
+
 ## EMELab 0.1.4 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.4.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.4-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

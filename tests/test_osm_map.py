@@ -64,3 +64,35 @@ def test_google_maps_paste_also_fills_height(monkeypatch):
     ui, ss = _fake_st(monkeypatch, em_gmaps="41.64581, 12.62503")
     ui._gmaps_cb()
     assert ss["em_lat"] == 41.64581 and ss["em_h"] == 96.0 and ss["em_gmaps"] == ""
+
+
+def test_height_button(monkeypatch):
+    from emelab import weather
+    monkeypatch.setattr(weather, "elevation", lambda lat, lon, timeout=6.0: 401.2)
+    ui, ss = _fake_st(monkeypatch, em_h=0.0)
+    ui._height_cb(41.5, 13.3)
+    assert ss["em_h"] == 401.0 and ss["em_h_msg"][0] == "ok"
+
+
+def test_map_layers_and_grid_off_by_default():
+    d = Path(__file__).resolve().parent.parent / "emelab" / "osm_map"
+    html = (d / "index.html").read_text(encoding="utf-8")
+    assert "opentopomap.org" in html and "World_Imagery" in html and "Esri" in html
+    assert "L.control.layers" in html and "grid = L.layerGroup();" in html     # grid not added to the map at start
+    assert (d / "images" / "layers.png").exists()
+
+
+def test_station_tab_fills_zero_height_once(tmp_path, monkeypatch):
+    """Saved station with a position and height 0: the Station tab asks Open-Meteo once and fills the height."""
+    from streamlit.testing.v1 import AppTest
+    from emelab import db as edb, weather
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    monkeypatch.setenv("EMELAB_LANG", "it")
+    calls = []
+    monkeypatch.setattr(weather, "elevation", lambda lat, lon, timeout=6.0: calls.append((lat, lon)) or 312.0)
+    edb.DB().save_station(callsign="IZ0XXX", locator="JN61pm", lat=41.525926, lon=13.274918, height_m=0.0)
+    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "emelab_main.py"), default_timeout=60).run()
+    assert not at.exception
+    assert at.session_state["em_h"] == 312.0 and len(calls) == 1
+    at.run()
+    assert len(calls) == 1
