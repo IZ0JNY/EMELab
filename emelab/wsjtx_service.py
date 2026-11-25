@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
 """EMELab ↔ WSJT-X, live: keeps the decodes, logs the QSOs you accept in WSJT-X with every condition of that moment,
-and can colour callsigns and set the Q65 submode in WSJT-X. Runs in the background of the EMELab server."""
+and can colour callsigns and set the Q65 submode in WSJT-X. Runs in the background of the EMELab server.
+
+A QSO logged in WSJT-X reaches EMELab in two independent ways, used together or alone: the UDP «QSO Logged» message
+and the record WSJT-X appends to wsjtx_log.adi (see wsjtx_logfile). Both go through log_qso(): only EME QSOs at
+10 GHz and up are kept (logbook.eme_verdict), and the same QSO arriving twice, or already imported from an ADIF file,
+is recognised (same call and band within ±10 minutes) and logged once."""
 from __future__ import annotations
 
 import re
@@ -9,7 +14,7 @@ import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from . import logbook, stations, wsjtx
+from . import logbook, stations, wsjtx, wsjtx_logfile
 
 CALL = re.compile(r"^(?=.*\d)[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(?:/[A-Z0-9]{1,4})?$")
 GRID = re.compile(r"^[A-R]{2}\d{2}$")
@@ -41,6 +46,12 @@ class Service:
         self.logged = deque(maxlen=50)
         self.errors = deque(maxlen=20)
         self.auto_log = True
+        self.eme_only = True            # keep only EME QSOs at 10 GHz and up
+        self.strict_eme = False         # … and only those with PROP_MODE=EME
+        self.tail: wsjtx_logfile.LogTail | None = None
+        self.on_tail_pos = None         # callback(path, offset) to remember where the file was read up to
+        self.file_seen: datetime | None = None
+        self._file_stop = threading.Event()
         self._db = None
         self._lock = threading.Lock()
 
@@ -54,6 +65,56 @@ class Service:
         if self.listener:
             self.listener.stop()
         self.listener = None
+
+    def start_file(self, path, offset: int | None = None, interval: float = 3.0):
+        """Follow wsjtx_log.adi in the background (offset None: only the QSOs logged from now on)."""
+        self.stop_file()
+        self.tail = wsjtx_logfile.LogTail(path, offset)
+        self._file_stop = threading.Event()
+        stop = self._file_stop
+
+        def run():
+            while not stop.is_set():
+                self.poll_file()
+                stop.wait(interval)
+        threading.Thread(target=run, name="wsjtx-adi", daemon=True).start()
+        return self
+
+    def stop_file(self):
+        self._file_stop.set()
+        self.tail = None
+
+    @property
+    def file_running(self) -> bool:
+        return self.tail is not None
+
+    def poll_file(self) -> int:
+        """Read what WSJT-X appended to its log file; returns how many records were read."""
+        tail = self.tail
+        if tail is None:
+            return 0
+        try:
+            before = tail.offset
+            recs = tail.read_new()
+        except Exception as e:
+            self.errors.append(f"wsjtx_log.adi: {e}")
+            return 0
+        with self._lock:
+            for r in recs:
+                try:
+                    q = logbook.from_adif_record(r)
+                    if q:
+                        self.log_qso(logbook.wsjtx_mode(q), "wsjtx_log.adi")
+                except Exception as e:
+                    self.errors.append(f"wsjtx_log.adi: {e}")
+            if recs:
+                self.file_seen = datetime.now(timezone.utc)
+        if tail.offset != before and self.on_tail_pos:
+            try:
+                self.on_tail_pos(str(tail.path), tail.offset)
+            except Exception:
+                pass
+        return len(recs)
 
     @property
     def running(self) -> bool:
@@ -103,28 +164,53 @@ class Service:
             self.db().commit()
 
     def _on_qso_logged(self, m):
-        if not self.auto_log:
-            return
         f_mhz = m["tx_freq_hz"] / 1e6 if m.get("tx_freq_hz") else None
         band = stations.band_of(f_mhz) or self._band()
         mode = m.get("mode") or ""
-        sub = self.status.get("submode") if mode.upper().startswith("Q65") else None
         q = {"utc": m["time_on"], "call": m["dx_call"].upper(), "band": band, "freq_mhz": f_mhz, "mode": mode,
-             "submode": sub, "rst_sent": m.get("report_sent"), "rst_rcvd": m.get("report_rcvd"),
+             "rst_sent": m.get("report_sent"), "rst_rcvd": m.get("report_rcvd"),
              "locator": (m.get("dx_grid") or "").upper() or None, "my_locator": (m.get("my_grid") or "").upper() or None,
-             "name": m.get("name") or None, "tx_pwr": m.get("tx_power") or None,
-             "comment": " ".join(x for x in (m.get("comments"), "logged by WSJT-X → EMELab") if x)}
+             "name": m.get("name") or None, "tx_pwr": m.get("tx_power") or None, "comment": m.get("comments") or None,
+             "prop_mode": m.get("prop_mode") or None}
+        self.log_qso(q, "UDP")
+
+    def log_qso(self, q: dict, source: str) -> int | None:
+        """One QSO from WSJT-X (UDP or log file) → the EMELab log, with the conditions of that moment.
+        Returns the new id, None when left out (not EME) or already in the log."""
+        if not self.auto_log:
+            return None
+        q = dict(q)
+        q.pop("adif", None)
+        prop = q.pop("prop_mode", None)
+        if (q.get("mode") or "").upper().startswith("Q65") and not q.get("submode"):
+            q["submode"] = self.status.get("submode") or None
+        entry = {**q, "source": source, "id": None, "duplicate": False, "skipped": None}
+        db = self.db()
+        if self.eme_only:
+            eme_calls = {q["call"]} if (db.station_of(q["call"]) or {}).get("eme") else set()
+            why = logbook.eme_verdict({**q, "prop_mode": prop}, eme_calls, self.strict_eme)
+            if why:
+                self.logged.appendleft({**entry, "skipped": why})
+                return None
+        if db.qso_near(q["call"], q.get("band"), q["utc"]):
+            self.logged.appendleft({**entry, "duplicate": True})
+            return None
+        q["comment"] = " ".join(x for x in (q.get("comment"), "logged by WSJT-X → EMELab") if x)
         wx = None
         if self.wx_fn:
             try:
                 wx = self.wx_fn(q["utc"])
             except Exception as e:
                 self.errors.append(f"meteo: {e}")
-        q["calc"] = logbook.enrich(q, q["my_locator"] or self.my_locator_fn() or "", 0.0, wx)
+        q["calc"] = logbook.enrich(q, q.get("my_locator") or self.my_locator_fn() or "", 0.0, wx)
         if wx:
             q.update(t_c=wx.get("t_c"), rh=wx.get("rh"), p_hpa=wx.get("p_hpa"), wx_source=wx.get("wx_source"))
-        qid = self.db().add_qso(**q)
-        self.logged.appendleft({**q, "id": qid, "duplicate": qid is None})
+        qid = db.add_qso(**q)
+        if qid and q.get("locator"):
+            db.upsert_station(q["call"], locator=q["locator"], eme=1)
+            db.commit()
+        self.logged.appendleft({**q, "source": source, "id": qid, "duplicate": qid is None, "skipped": None})
+        return qid
 
     # ---------------------------------------------------------------- outgoing
     def highlight(self, call: str, bg: str | None, fg: str | None = "#000000") -> bool:
