@@ -59,17 +59,39 @@ def _latlon_cb():
     _st.session_state["em_loc"] = astro.latlon_to_locator(_st.session_state["em_lat"], _st.session_state["em_lon"], 6)
 
 
+def _set_position(lat, lon, source):
+    """position chosen on the map or pasted from Google Maps → latitude, longitude, locator and ground height"""
+    ss = _st.session_state
+    ss["em_lat"], ss["em_lon"] = round(lat, 6), round(lon, 6)
+    ss["em_loc"] = astro.latlon_to_locator(lat, lon, 6)
+    msg = i18n.tr(source) + f": {lat:.6f}, {lon:.6f} → {astro.latlon_to_locator(lat, lon, 10)}"
+    try:
+        h = weather.elevation(lat, lon)
+        ss["em_h"] = float(round(h))
+        ss["em_pos_msg"] = ("ok", msg + " · " + i18n.tr("quota del terreno") + f" {h:.0f} m (Open-Meteo)")
+    except Exception:
+        ss["em_pos_msg"] = ("warn", msg + " · " + i18n.tr("quota non trovata (serve internet): scrivila a mano"))
+
+
 def _gmaps_cb():
     p = astro.parse_coords(_st.session_state.get("em_gmaps", ""))
     if p is None:
         _st.session_state["em_pos_msg"] = ("err", i18n.tr("Coordinate non riconosciute: in Google Maps fai clic destro sul "
                                                           "punto e poi clic sui numeri in alto per copiarli."))
         return
-    _st.session_state["em_lat"], _st.session_state["em_lon"] = round(p[0], 6), round(p[1], 6)
-    _st.session_state["em_loc"] = astro.latlon_to_locator(p[0], p[1], 6)
     _st.session_state["em_gmaps"] = ""
-    _st.session_state["em_pos_msg"] = ("ok", i18n.tr("Posizione presa da Google Maps") +
-                                       f": {p[0]:.6f}, {p[1]:.6f} → {astro.latlon_to_locator(p[0], p[1], 10)}")
+    _set_position(p[0], p[1], "Posizione presa da Google Maps")
+
+
+def _osm_cb():
+    v = _st.session_state.get("em_osm")
+    if not isinstance(v, dict) or v.get("t") == _st.session_state.get("em_osm_t"):
+        return
+    _st.session_state["em_osm_t"] = v.get("t")
+    try:
+        _set_position(float(v["lat"]), float(v["lon"]), "Posizione presa dalla mappa")
+    except (KeyError, TypeError, ValueError):
+        pass
 
 
 def _wx_test_cb():
@@ -89,31 +111,24 @@ def _wx_test_cb():
         _st.session_state["em_wx_msg"] = ("err", i18n.tr("Stazione meteo non letta") + f": {str(e)[:300]}")
 
 
-def _world_map(D, lat, lon):
-    """small world map (offline coastlines) with the station and the EME stations of the directory; wheel to zoom"""
+def _osm_map(D, lat, lon):
+    """OpenStreetMap map with the locator grid, the station and the EME stations of the directory; a click sets the position"""
+    from emelab import osm
     pts = []
     try:
         for x in D.stations():
             if x.get("locator") and x.get("eme"):
                 try:
-                    pts.append((*astro.locator_to_latlon(x["locator"]), "", "#7f8c8d"))
+                    pts.append((*astro.locator_to_latlon(x["locator"]), x.get("call") or ""))
                 except Exception:
                     pass
     except Exception:
         pass
-    if lat or lon:
-        pts.append((lat, lon, _st.session_state.get("em_call") or i18n.tr("la mia stazione"), "#e74c3c"))
-    fig = world_fig([], pts[-400:], height=300)
-    for tr in fig.data[1:-1] if (lat or lon) else fig.data[1:]:
-        tr.marker.size = 4
-    if lat or lon:
-        fig.data[-1].marker.update(size=12, symbol="star")
-        fig.update_layout(xaxis_range=[lon - 40, lon + 40], yaxis_range=[max(-90, lat - 25), min(90, lat + 25)])
-    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), dragmode="pan", showlegend=False,
-                      xaxis=dict(dtick=20), yaxis=dict(dtick=10))
-    st.plotly_chart(fig, width="stretch", config={"scrollZoom": True, "displaylogo": False})
-    st.caption("Rotellina per lo zoom, trascina per spostare. Griglia ogni 20° × 10° (i campi del locator). La mappa è disegnata "
-               "sul tuo PC: non manda la posizione a nessuno.")
+    osm.station_map(lat, lon, bool(lat or lon), pts[-400:], height=480,
+                    me_label=_st.session_state.get("em_call") or i18n.tr("la mia stazione"),
+                    hint=i18n.tr("Clic sulla tua parabola per scegliere la posizione"), key="em_osm", on_change=_osm_cb)
+    st.caption("Mappa © OpenStreetMap con la griglia del locator: clic sul punto della parabola e latitudine, longitudine, "
+               "locator e quota si aggiornano. Rotellina per lo zoom, trascina per spostare.")
 
 
 def _station(D):
@@ -129,13 +144,13 @@ def _station(D):
                 pass
         ss["em_lat"], ss["em_lon"] = float(lat0 or 0.0), float(lon0 or 0.0)
     ss.setdefault("em_loc", stn.get("locator") or "")
-    left, right = st.columns([3, 2])
+    left, right = st.columns([1, 1])
     with left:
         c = st.columns(2)
         call = c[0].text_input("Nominativo", stn.get("callsign") or "", key="em_call")
         loc = c[1].text_input("Locator", key="em_loc", on_change=_loc_cb,
                               help="es. JN61fs: latitudine e longitudine vanno al centro del quadrato. Per la posizione esatta "
-                                   "usa Google Maps qui sotto")
+                                   "fai clic sulla mappa o usa Google Maps")
         c = st.columns(2)
         lat = c[0].number_input("Latitudine (°, nord +)", -90.0, 90.0, step=0.0001, format="%.6f", key="em_lat",
                                 on_change=_latlon_cb)
@@ -155,11 +170,14 @@ def _station(D):
                        "il link della pagina.")
             if ss.get("em_pos_msg"):
                 kind, msg = ss["em_pos_msg"]
-                (st.success if kind == "ok" else st.error)(msg)
+                (st.success if kind == "ok" else st.warning if kind == "warn" else st.error)(msg)
     with right:
-        _world_map(D, lat, lon)
+        _osm_map(D, lat, lon)
     c = st.columns(4)
-    h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, float(stn.get("height_m") or 0.0), 1.0, key="em_h")
+    ss.setdefault("em_h", float(stn.get("height_m") or 0.0))
+    h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, step=1.0, key="em_h",
+                          help="si riempie da sola dopo un clic sulla mappa o le coordinate di Google Maps (quota del terreno "
+                               "da Open-Meteo, modello Copernicus a 90 m): correggila se serve")
     sets = openems_local.load_settings()
     url = c[1].text_input("Stazione meteo personale (facoltativa)", sets.get("emelab_wx_url", ""), key="em_wxurl",
                           help="indirizzo del tuo sito Meteotemplate / Cumulus / Weather Display, oppure del file dati. "
@@ -183,7 +201,9 @@ def _station(D):
         openems_local.save_settings(emelab_wx_url=url.strip(), emelab_flux=flux)
         st.success("Stazione salvata (solo su questo PC).")
     st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
-               "tuo PC e non vengono mai inviati: il meteo da internet riceve solo coordinate e ora.")
+               "tuo PC e non vengono mai inviati. Escono solo le richieste a internet: il meteo riceve coordinate e ora, la "
+               "mappa scarica le immagini da OpenStreetMap (che vede la zona mostrata), la quota riceve solo il punto "
+               "cliccato (Open-Meteo). Senza internet la mappa mostra solo la griglia: scrivi coordinate e quota a mano.")
 
 
 def _setups(D):

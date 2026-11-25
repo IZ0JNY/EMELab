@@ -140,3 +140,14 @@ def station_now(url: str, timeout: float = 8.0) -> dict:
         except Exception as e:
             tried.append(f"{u}: {e}")
     raise RuntimeError("; ".join(tried) or "nessun dato")
+
+
+def elevation(lat: float, lon: float, timeout: float = 6.0) -> float:
+    """Ground height (m above sea level) at one point from the free Open-Meteo elevation API (Copernicus DEM
+    GLO-90, about 90 m resolution). Only latitude and longitude are sent; raises if the service is not reachable."""
+    q = urllib.parse.urlencode({"latitude": f"{lat:.6f}", "longitude": f"{lon:.6f}"})
+    js = json.loads(_get("https://api.open-meteo.com/v1/elevation?" + q, timeout))
+    h = (js.get("elevation") or [None])[0]
+    if h is None or (isinstance(h, float) and math.isnan(h)):
+        raise ValueError("no elevation in the answer")
+    return float(h)
