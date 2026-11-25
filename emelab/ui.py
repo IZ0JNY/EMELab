@@ -2039,6 +2039,7 @@ def _wsjtx_autostart():
     svc.auto_log = bool(sets.get("wsjtx_autolog", True))
     svc.eme_only = bool(sets.get("wsjtx_eme_only", True))
     svc.strict_eme = bool(sets.get("wsjtx_strict_eme", False))
+    svc.auto_fix = bool(sets.get("wsjtx_autofix", True))
     if sets.get("wsjtx_on") and not svc.running:
         try:
             svc.start(sets.get("wsjtx_host", "127.0.0.1"), int(sets.get("wsjtx_port", 2237)), sets.get("wsjtx_mcast") or None)
@@ -2049,6 +2050,46 @@ def _wsjtx_autostart():
         svc.on_tail_pos = _wsjtx_save_pos
         svc.start_file(sets["wsjtx_file"], pos.get("offset") if pos.get("path") == sets["wsjtx_file"] else None)
     return svc
+
+
+def _wsjtx_live_problems(svc):
+    """What is wrong in WSJT-X now (only while it is talking to EMELab)."""
+    if not (svc.running and svc.last_seen and svc.problems):
+        return []
+    return svc.problems if (datetime.now(timezone.utc) - svc.last_seen).total_seconds() < 90 else []
+
+
+def _wsjtx_banner():
+    """Warning on every page when the WSJT-X settings do not fit the band."""
+    probs = _wsjtx_live_problems(_wsjtx_service())
+    if probs:
+        st.warning(i18n.tr("⚠️ Impostazioni di WSJT-X da controllare") + ": " +
+                   " · ".join(i18n.tr(p["msg"]) + (f" ({p['detail']})" if p.get("detail") else "") for p in probs)
+                   + " — " + i18n.tr("dettagli nella scheda 📻 WSJT-X"))
+
+
+def _wsjtx_check_box(svc, sets):
+    st.markdown("#### " + i18n.tr("✅ Controllo delle impostazioni di WSJT-X"))
+    st.caption("A ogni messaggio di stato EMELab controlla modo, sottomodo e periodo T/R (Q65-60D a 10 GHz, Q65-60E da "
+               "24 GHz in su), la banda, il nominativo e il locator. Modo, sottomodo e T/R li può correggere da solo "
+               "(serve «Accept UDP requests» in WSJT-X), mai durante la trasmissione; il resto lo segnala soltanto. "
+               "Doppler tracking, Prop Mode e audio non passano dal protocollo UDP: controllali tu nella finestra Astro "
+               "e in «Log QSO».")
+    fix = st.checkbox("Correggi da solo modo, sottomodo e T/R", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
+    if fix != svc.auto_fix:
+        svc.auto_fix = fix
+        openems_local.save_settings(wsjtx_autofix=fix)
+    probs = _wsjtx_live_problems(svc)
+    if svc.last_seen and not probs:
+        st.success("Impostazioni di WSJT-X a posto per questa banda.")
+    for k, p in enumerate(probs):
+        c = st.columns([5, 1])
+        c[0].warning(i18n.tr(p["msg"]) + (f": {p['detail']}" if p.get("detail") else ""))
+        if p.get("fix") and c[1].button(f"⚙️ Q65-{p['fix']}", key=f"wj_fix_{k}"):
+            st.success("Inviato a WSJT-X.") if svc.set_q65(p["fix"]) else st.error("WSJT-X non raggiungibile.")
+    if svc.fixes:
+        f = svc.fixes[0]
+        st.caption(i18n.tr("Ultima correzione inviata") + f": {f['utc']:%H:%M:%S} UTC, {f['from']} → {f['to']}")
 
 
 def _wsjtx_save_pos(path, offset):
@@ -2162,6 +2203,7 @@ def _wsjtx_tab(D):
                     + f"**{s.get('mode', '')} {s.get('submode', '')}** · DX **{s.get('dx_call') or '—'}** {s.get('dx_grid') or ''} · "
                     + ("🔴 TX" if s.get("transmitting") else "🟢 RX"))
     st.button("🔄 Aggiorna", key="wj_refresh")
+    _wsjtx_check_box(svc, sets)
     stn = D.station()
     band = None
     if s.get("dial_hz"):

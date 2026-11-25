@@ -14,7 +14,7 @@ import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from . import logbook, stations, wsjtx, wsjtx_logfile
+from . import logbook, stations, wsjtx, wsjtx_check, wsjtx_logfile
 
 CALL = re.compile(r"^(?=.*\d)[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(?:/[A-Z0-9]{1,4})?$")
 GRID = re.compile(r"^[A-R]{2}\d{2}$")
@@ -51,6 +51,10 @@ class Service:
         self.tail: wsjtx_logfile.LogTail | None = None
         self.on_tail_pos = None         # callback(path, offset) to remember where the file was read up to
         self.file_seen: datetime | None = None
+        self.auto_fix = True            # correct mode/submode/T-R in WSJT-X when they do not match the band
+        self.problems: list[dict] = []  # what is wrong in the WSJT-X settings now (wsjtx_check)
+        self.fixes = deque(maxlen=20)   # corrections sent to WSJT-X
+        self._fix_try: dict = {}        # Q65 code → (attempts, last time)
         self._file_stop = threading.Event()
         self._db = None
         self._lock = threading.Lock()
@@ -137,6 +141,25 @@ class Service:
 
     def _on_status(self, m):
         self.status = m
+        try:
+            stn = self.db().station()
+        except Exception:
+            stn = {}
+        probs = wsjtx_check.check(m, stn)
+        want = next((p["fix"] for p in probs if p.get("fix")), None)
+        if want is None:
+            self._fix_try = {}
+        elif self.auto_fix and not m.get("transmitting"):
+            n, last = self._fix_try.get(want, (0, None))
+            now = datetime.now(timezone.utc)
+            if n < 3 and (last is None or (now - last).total_seconds() > 15):
+                if self.set_q65(want):
+                    self._fix_try = {want: (n + 1, now)}
+                    self.fixes.appendleft({"utc": now, "to": f"Q65-{want}", "from": f"{m.get('mode')} {m.get('submode')}"})
+            elif n >= 3:
+                probs.append({"code": "udp_requests", "msg": "WSJT-X non accetta le correzioni: in Settings → Reporting "
+                              "spunta «Accept UDP requests»", "detail": "", "fix": None})
+        self.problems = probs
 
     def _band(self):
         hz = self.status.get("dial_hz")

@@ -28,6 +28,16 @@ JT65, JT4 o QRA64 o il corrispondente è una stazione EME nota, a meno di spunta
 Doppioni: stesso nominativo e banda entro ±10 minuti = stesso QSO, che arrivi da UDP, dal file o da un ADIF importato.
 Q65 scritto da WSJT-X come MODE=MFSK/SUBMODE=Q65 torna «Q65», con la lettera del sottomodo presa dallo Status UDP.
 
+### Controllo delle impostazioni di WSJT-X
+
+A ogni Status EMELab controlla (`emelab/wsjtx_check.py`) e mostra un avviso in cima a ogni pagina:
+- **modo, sottomodo, T/R** rispetto alla banda (Q65-60D a 10 GHz, Q65-60E da 24 GHz in su, o la scelta per banda):
+  **corretti da soli** con Configure (spunta disattivabile), mai in trasmissione, al massimo 3 tentativi; se WSJT-X
+  li ignora, avviso «Accept UDP requests»;
+- **banda** fuori da quelle ≥10 GHz, **nominativo** e **locator** diversi dalla stazione EMELab, **TX watchdog**: solo
+  avviso, il protocollo UDP non li può cambiare.
+Doppler tracking, Prop Mode, audio e CAT non sono nello Status: EMELab non li vede.
+
 EMELab invia:
 - **HighlightCallsign**: colora i nominativi nella finestra Band Activity (verde = da collegare, grigio = già collegato);
 - **Configure**: imposta Q65 e il sottomodo consigliato (60D, 60E, 120E…) in base al mutual spread con il DX;

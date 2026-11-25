@@ -89,3 +89,32 @@ def test_qso_near_catches_adif_without_seconds(tmp_path):
     assert D.qso_near("ok1kir", "24G", datetime(2026, 2, 25, 17, 8, 41, tzinfo=timezone.utc))
     assert not D.qso_near("OK1KIR", "10G", datetime(2026, 2, 25, 17, 8, tzinfo=timezone.utc))
     assert not D.qso_near("OK1KIR", "24G", datetime(2026, 2, 25, 18, 0, tzinfo=timezone.utc))
+
+
+def test_settings_check_and_auto_fix(tmp_path):
+    from emelab import db as edb, wsjtx_check
+    from emelab.wsjtx_service import Service
+    stn = {"callsign": "IZ0JNY", "locator": "JN61PM"}
+    ok = {"dial_hz": 10_368_100_000, "mode": "Q65", "submode": "D", "tr_period": 60, "de_call": "IZ0JNY", "de_grid": "JN61"}
+    assert wsjtx_check.check(ok, stn) == []
+    p = wsjtx_check.check({**ok, "dial_hz": 24_048_100_000}, stn)          # 24 GHz wants 60E
+    assert [x["code"] for x in p] == ["mode"] and p[0]["fix"] == "60E"
+    p = wsjtx_check.check({**ok, "mode": "FT8", "submode": "", "dial_hz": 144_174_000, "de_grid": "JN45",
+                           "tx_watchdog": True}, stn)
+    assert {x["code"] for x in p} == {"band", "grid", "watchdog"}
+    assert wsjtx_check.check({**ok, "tr_period": 0xFFFFFFFF}, stn) == []    # T/R not reported: submode only
+
+    D = edb.DB(tmp_path / "t.sqlite")
+    D.save_station(callsign="IZ0JNY", locator="JN61PM", lat=41.6, lon=13.3, height_m=0)
+    s = Service(lambda: D, lambda: "JN61PM")
+    sent = []
+    s.set_q65 = lambda code: sent.append(code) or True
+    s.on_message({"type": "status", "id": "WSJT-X", **ok, "submode": "E"}, None)
+    assert sent == ["60D"] and s.problems and s.fixes
+    s.on_message({"type": "status", "id": "WSJT-X", **ok, "submode": "E", "transmitting": True}, None)
+    assert sent == ["60D"]                                                  # never while transmitting / too soon
+    s._fix_try = {"60D": (3, None)}
+    s.on_message({"type": "status", "id": "WSJT-X", **ok, "submode": "E"}, None)
+    assert any(x["code"] == "udp_requests" for x in s.problems)
+    s.on_message({"type": "status", "id": "WSJT-X", **ok}, None)
+    assert s.problems == [] and not s.errors
