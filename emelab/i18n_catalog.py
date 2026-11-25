@@ -1653,4 +1653,13 @@ ENTRIES = [
     ('Scostamento negli ultimi 10 minuti (secondi fa)', 'Offset over the last 10 minutes (seconds ago)'),
     ('Simulatore', 'Simulator'),
     ('Immagine', 'Image'),
+    ('0,1° con linee sottili ogni 0,05°: con ASI120MM Mini e 30F4 un decimo di grado sono ~28 pixel (binning 2×2), 0,05° sono ~14 pixel', '0.1° with thin lines every 0.05°: with ASI120MM Mini and 30F4 a tenth of a degree is ~28 pixels (2×2 binning), 0.05° is ~14 pixels'),
+    ('📡 Allineamento telecamera ↔ fascio radio', '📡 Camera ↔ radio beam alignment'),
+    ("La croce azzurra è il centro radio: dove punta davvero la parabola. All'inizio è il centro dell'immagine; dopo l'allineamento con il rumore del Sole (o della Luna) scrivi qui lo scostamento misurato, oppure punta al massimo del segnale e premi 🎯.", 'The cyan cross is the radio centre: where the dish really points. At first it is the image centre; after aligning on Sun (or Moon) noise type the measured offset here, or peak on the signal and press 🎯.'),
+    ('Centro radio: Az rispetto alla telecamera (°)', 'Radio centre: Az relative to the camera (°)'),
+    ('Centro radio: El rispetto alla telecamera (°)', 'Radio centre: El relative to the camera (°)'),
+    ('azzurro: centro radio', 'cyan: radio centre'),
+    ('giallo: centro della Luna', 'yellow: Moon centre'),
+    ('cerchio: tolleranza', 'circle: tolerance'),
+    ('griglia', 'grid'),
 ]

@@ -102,3 +102,10 @@ def test_camera_tab_off_by_default(tmp_path, monkeypatch):
     at.run()
     assert not any("Telecamera" in t.label for t in at.tabs)
     assert mt.current() is None
+
+
+def test_ref_point_is_inverse_of_offset():
+    for fx, fy in ((False, False), (True, False), (False, True), (True, True)):
+        ref = mt.ref_point(640, 480, 0.12, -0.07, 0.004, fx, fy)
+        o = mt.offset({"cx": ref[0], "cy": ref[1]}, (319.5, 239.5), 0.004, fx, fy)
+        assert o["az_deg"] == pytest.approx(0.12) and o["el_deg"] == pytest.approx(-0.07)

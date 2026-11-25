@@ -53,7 +53,12 @@ def load_library(user_path: str = "") -> dict:
     if _LIB["path"]:
         return {"ok": True, "path": _LIB["path"], "error": None}
     try:
-        import zwoasi as asi
+        import logging
+        logging.disable(logging.WARNING)             # zwoasi warns at import before EMELab gives it the DLL path
+        try:
+            import zwoasi as asi
+        finally:
+            logging.disable(logging.NOTSET)
     except Exception:
         return {"ok": False, "path": None, "error": "manca il pacchetto Python «zwoasi»"}
     tried = dll_candidates(user_path)
@@ -357,6 +362,14 @@ def offset(det: dict, ref: tuple[float, float], scale: float, flip_x: bool = Fal
             "total_deg": math.hypot(dx, dy) * scale, "total_px": math.hypot(dx, dy)}
 
 
+def ref_point(w: int, h: int, rf_az_deg: float, rf_el_deg: float, scale: float, flip_x: bool = False,
+              flip_y: bool = False) -> tuple[float, float]:
+    """Pixel of the radio boresight: image centre moved by the camera ↔ dish offset (inverse of `offset`)."""
+    dx = rf_az_deg / scale * (-1 if flip_x else 1)
+    dy = rf_el_deg / scale * (-1 if flip_y else 1)
+    return (w - 1) / 2 + dx, (h - 1) / 2 - dy
+
+
 def pointing_loss_db(off_deg: float, hpbw_deg: float) -> float:
     """Loss of a Gaussian beam pointed off_deg away: 12 (θ/θ₃dB)² dB, one way (twice for the echo)."""
     return 12.0 * (off_deg / hpbw_deg) ** 2 if hpbw_deg > 0 else 0.0
@@ -388,12 +401,16 @@ class Alarm:
 
 # ------------------------------------------------------------------ drawing
 GRID_COLOR = (80, 200, 255)
+GRID_MINOR = (40, 90, 120)
+REF_COLOR = (0, 255, 255)
+MOON_COLOR = (255, 200, 0)
 OK_COLOR, BAD_COLOR = (60, 220, 90), (255, 60, 60)
 
 
 def overlay(frame: np.ndarray, det: dict | None, ref: tuple[float, float], tol_px: float, grid_px: float,
-            alarm: bool, max_w: int = 960, stretch: bool = True):
-    """The frame with the grid, the reference centre, the tolerance circle and the detected Moon; a PIL image."""
+            alarm: bool, max_w: int = 960, stretch: bool = True, grid_deg: float = 0.1, minor: bool = True):
+    """The frame with the grid (major lines every grid_deg with their value, minor ones at half step), the radio
+    centre (cyan cross), the tolerance circle, the detected Moon (yellow cross) and the line between the two."""
     from PIL import Image, ImageDraw
     a = _gray(frame)
     if stretch:
@@ -407,24 +424,41 @@ def overlay(frame: np.ndarray, det: dict | None, ref: tuple[float, float], tol_p
     W, H = im.size
     rx, ry = ref[0] * k, ref[1] * k
     g = grid_px * k
-    if g >= 8:
+    if g >= 6:
+        if minor and g >= 16:                        # half-step lines, fainter
+            i = 0.5
+            while rx - i * g > 0 or rx + i * g < W or ry - i * g > 0 or ry + i * g < H:
+                for x in (rx - i * g, rx + i * g):
+                    d.line([(x, 0), (x, H)], fill=GRID_MINOR, width=1)
+                for y in (ry - i * g, ry + i * g):
+                    d.line([(0, y), (W, y)], fill=GRID_MINOR, width=1)
+                i += 1
         i = 1
         while rx - i * g > 0 or rx + i * g < W or ry - i * g > 0 or ry + i * g < H:
-            for x in (rx - i * g, rx + i * g):
+            for sgn in (-1, 1):
+                x, y = rx + sgn * i * g, ry - sgn * i * g
                 d.line([(x, 0), (x, H)], fill=GRID_COLOR, width=1)
-            for y in (ry - i * g, ry + i * g):
                 d.line([(0, y), (W, y)], fill=GRID_COLOR, width=1)
+                lab = f"{sgn * i * grid_deg:+.2f}°"
+                if i % max(1, math.ceil(45 / g)):        # labels at least ~45 px apart
+                    continue
+                if 0 < x < W - 30:
+                    d.text((x + 2, 2), lab, fill=GRID_COLOR)
+                if 12 < y < H - 2:
+                    d.text((2, y - 11), lab, fill=GRID_COLOR)
             i += 1
-    d.line([(rx, 0), (rx, H)], fill=GRID_COLOR, width=2)
-    d.line([(0, ry), (W, ry)], fill=GRID_COLOR, width=2)
+    d.line([(rx, 0), (rx, H)], fill=REF_COLOR, width=1)
+    d.line([(0, ry), (W, ry)], fill=REF_COLOR, width=1)
+    d.line([(rx - 18, ry), (rx + 18, ry)], fill=REF_COLOR, width=3)
+    d.line([(rx, ry - 18), (rx, ry + 18)], fill=REF_COLOR, width=3)
     col = BAD_COLOR if alarm else OK_COLOR
     t = tol_px * k
-    d.ellipse([rx - t, ry - t, rx + t, ry + t], outline=col, width=3)
+    d.ellipse([rx - t, ry - t, rx + t, ry + t], outline=col, width=2)
     if det:
         cx, cy, r = det["cx"] * k, det["cy"] * k, det["r"] * k
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 200, 0), width=2)
-        d.line([(cx - 12, cy), (cx + 12, cy)], fill=(255, 200, 0), width=3)
-        d.line([(cx, cy - 12), (cx, cy + 12)], fill=(255, 200, 0), width=3)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=MOON_COLOR, width=1)
+        d.line([(cx - 14, cy - 14), (cx + 14, cy + 14)], fill=MOON_COLOR, width=3)
+        d.line([(cx - 14, cy + 14), (cx + 14, cy - 14)], fill=MOON_COLOR, width=3)
         d.line([(rx, ry), (cx, cy)], fill=col, width=2)
     if alarm:
         d.rectangle([0, 0, W - 1, H - 1], outline=BAD_COLOR, width=8)

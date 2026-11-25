@@ -119,27 +119,45 @@ def tab(D):
                   help="consigliata: 1/4 del fascio a −3 dB, cioè circa 0,75 dB di perdita in ciascun verso")
     c = st.columns(4)
     hold = _widget(c[0].number_input, "Allarme dopo (s) fuori tolleranza", "cam_hold", 3.0, "cam_hold_s", 0.0, 60.0, step=1.0)
-    grid = _widget(c[1].number_input, "Passo della griglia (°)", "cam_grid", 0.1, "cam_grid_deg", 0.01, 2.0, step=0.05)
+    grid = _widget(c[1].selectbox, "Passo della griglia (°)", "cam_grid", 0.1, "cam_grid_deg", [0.05, 0.1, 0.2, 0.25, 0.5],
+                   help="0,1° con linee sottili ogni 0,05°: con ASI120MM Mini e 30F4 un decimo di grado sono ~28 pixel "
+                        "(binning 2×2), 0,05° sono ~14 pixel")
     refresh = _widget(c[2].selectbox, "Aggiorna ogni (s)", "cam_refresh", 1.0, "cam_refresh_s", [0.5, 1.0, 2.0, 5.0])
     beep = _widget(c[3].checkbox, "🔔 Suono d'allarme", "cam_beep", True, "cam_beep")
     c = st.columns(4)
     flip_x = _widget(c[0].checkbox, "Immagine specchiata (destra/sinistra)", "cam_fx", False, "cam_flip_x")
     flip_y = _widget(c[1].checkbox, "Immagine capovolta (su/giù)", "cam_fy", False, "cam_flip_y")
+    st.markdown("#### " + i18n.tr("📡 Allineamento telecamera ↔ fascio radio"))
+    st.caption("La croce azzurra è il centro radio: dove punta davvero la parabola. All'inizio è il centro dell'immagine; "
+               "dopo l'allineamento con il rumore del Sole (o della Luna) scrivi qui lo scostamento misurato, "
+               "oppure punta al massimo del segnale e premi 🎯.")
+    if "cam_rf_set" in S:                            # value from the 🎯 button, before the widgets are drawn
+        S["cam_rfaz"], S["cam_rfel"] = S.pop("cam_rf_set")
+    c = st.columns(4)
+    rf_az = _widget(c[0].number_input, "Centro radio: Az rispetto alla telecamera (°)", "cam_rfaz", 0.0, "cam_rf_az_deg",
+                    -3.0, 3.0, step=0.01, format="%.3f")
+    rf_el = _widget(c[1].number_input, "Centro radio: El rispetto alla telecamera (°)", "cam_rfel", 0.0, "cam_rf_el_deg",
+                    -3.0, 3.0, step=0.01, format="%.3f")
+    cfg = dict(tol=tol, hold=hold, grid=grid, hpbw=hpbw, flip_x=flip_x, flip_y=flip_y, beep=beep,
+               scale_mode=scale_mode, focal=focal, rf=(rf_az, rf_el))
     if c[2].button("🎯 Usa la posizione attuale della Luna come centro", key="cam_setref",
                    help="la telecamera non è mai perfettamente allineata al fascio radio: punta al massimo del rumore "
                         "della Luna (o del Sole) e premi qui"):
         fr, _ = src.latest()
         det = mt.detect(fr) if fr is not None else None
         if det:
-            _set(cam_ref=[det["cx"] / det["width"], det["cy"] / det["height"]])
-            st.success("Centro salvato: ora la croce è sulla Luna.")
+            h, w = fr.shape[:2]
+            o = mt.offset(det, ((w - 1) / 2, (h - 1) / 2), _scale(src, det, cfg), flip_x, flip_y)
+            S["cam_rf_set"] = (round(o["az_deg"], 3), round(o["el_deg"], 3))
+            _set(cam_rf_az_deg=S["cam_rf_set"][0], cam_rf_el_deg=S["cam_rf_set"][1])
+            st.rerun()
         else:
             st.warning("Luna non trovata nell'immagine: centro non cambiato.")
     if c[3].button("↩️ Centro dell'immagine", key="cam_resetref"):
-        _set(cam_ref=None)
+        S["cam_rf_set"] = (0.0, 0.0)
+        _set(cam_rf_az_deg=0.0, cam_rf_el_deg=0.0)
+        st.rerun()
 
-    cfg = dict(tol=tol, hold=hold, grid=grid, hpbw=hpbw, flip_x=flip_x, flip_y=flip_y, beep=beep,
-               scale_mode=scale_mode, focal=focal, ref=openems_local.load_settings().get("cam_ref"))
     frag = getattr(_st, "fragment", None)
     live = frag(run_every=refresh)(_live) if frag else _live
     live(cfg)
@@ -147,6 +165,17 @@ def tab(D):
                "più in alto: alza la parabola. Vale con la telecamera dritta; altrimenti usa specchiata/capovolta. "
                "Con la Luna non piena il centro trovato è quello della parte illuminata: per questo conviene "
                "fissare il centro con il pulsante 🎯 quando sei sul massimo del segnale.")
+
+
+def _scale(src, det, cfg) -> float:
+    """Degrees per pixel of the frame: from the optics, or from the Moon's diameter."""
+    sc = 0.0
+    if cfg["scale_mode"] == "moon" and det:
+        sc = mt.deg_per_px_from_moon(det["r"])
+    if not sc:
+        info = src.info or {}
+        sc = mt.deg_per_px(info.get("pixel_um") or mt.DEFAULT_PIXEL_UM, info.get("bin") or 1, cfg["focal"])
+    return sc or mt.deg_per_px(mt.DEFAULT_PIXEL_UM, 1, mt.DEFAULT_FOCAL_MM)
 
 
 def _live(cfg):
@@ -161,14 +190,9 @@ def _live(cfg):
             st.info("In attesa del primo fotogramma dalla telecamera…")
         return
     h, w = frame.shape[:2]
-    ref = (cfg["ref"][0] * w, cfg["ref"][1] * h) if cfg["ref"] else ((w - 1) / 2, (h - 1) / 2)
     det = mt.detect(frame)
-    if cfg["scale_mode"] == "moon" and det:
-        scale = mt.deg_per_px_from_moon(det["r"])
-    else:
-        info = src.info or {}
-        scale = mt.deg_per_px(info.get("pixel_um") or mt.DEFAULT_PIXEL_UM, info.get("bin") or 1, cfg["focal"])
-    scale = scale or mt.deg_per_px(mt.DEFAULT_PIXEL_UM, 1, mt.DEFAULT_FOCAL_MM)
+    scale = _scale(src, det, cfg)
+    ref = mt.ref_point(w, h, cfg["rf"][0], cfg["rf"][1], scale, cfg["flip_x"], cfg["flip_y"])
     off = mt.offset(det, ref, scale, cfg["flip_x"], cfg["flip_y"]) if det else None
     now = time.time()
     alarm = getattr(src, "alarm", None) or mt.Alarm()
@@ -176,9 +200,11 @@ def _live(cfg):
     started = alarm.update(now, off["total_deg"] if off else None, cfg["tol"], cfg["hold"])
     src.history.append((now, off["az_deg"] if off else None, off["el_deg"] if off else None))
 
-    img = mt.overlay(frame, det, ref, cfg["tol"] / scale, cfg["grid"] / scale, alarm.active)
+    img = mt.overlay(frame, det, ref, cfg["tol"] / scale, cfg["grid"] / scale, alarm.active, grid_deg=cfg["grid"])
     c = st.columns([3, 1])
     c[0].image(img, width="stretch")
+    c[0].caption("✚ " + i18n.tr("azzurro: centro radio") + " · ✖ " + i18n.tr("giallo: centro della Luna") + " · "
+                 + i18n.tr("cerchio: tolleranza") + f" {cfg['tol']:.3f}° · " + i18n.tr("griglia") + f" {cfg['grid']:g}°")
     with c[1]:
         if alarm.active:
             st.error("🚨 FUORI TRACKING" if alarm.reason == "out" else "🚨 LUNA PERSA: non è più nell'immagine")
