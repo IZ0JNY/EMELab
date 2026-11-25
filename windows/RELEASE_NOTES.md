@@ -1,3 +1,29 @@
+## EME Assistant 0.1.2 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EME-Assistant-Setup-0.1.2.exe` (senza diritti di amministratore / no admin rights) oppure / or `EME-Assistant-0.1.2-portable.zip` → `EME Assistant.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **EMELab ora si chiama EME Assistant.** L'installazione aggiorna quella di prima: stazione, QSO, misure e impostazioni restano dove sono.
+- **🆕 Avviso di nuova versione** come in FeedLab: all'avvio il programma chiede a GitHub se c'è una versione più nuova e mostra le novità. C'è anche il pulsante «🔄 Controlla aggiornamenti» nella barra laterale.
+- **🏠 Stazione:**
+  - il locator aggiorna subito latitudine e longitudine (prima restavano a 0);
+  - posizione esatta da Google Maps: clic destro sulla parabola, copia le coordinate e incollale (va bene anche il link); il programma calcola il locator preciso a 10 caratteri;
+  - piccola mappa del mondo con la tua stazione e le stazioni EME dell'elenco, con zoom;
+  - pulsante «🌡️ Prova la stazione meteo» per controllare subito l'indirizzo della tua stazione meteo personale.
+- **⚡ Potenza:** SSPA e TWT riuniti in una sola scheda.
+- **Import ADIF:** entrano solo i QSO EME da 10 GHz in su; gli altri vengono contati e lasciati fuori.
+
+### 🇬🇧 What's new
+- **EMELab is now called EME Assistant.** The installer upgrades the previous one: station, QSOs, measurements and settings stay where they are.
+- **🆕 New-version notice** as in FeedLab: at start the program asks GitHub whether a newer version exists and shows what's new. There is also a «🔄 Check for updates» button in the sidebar.
+- **🏠 Station:**
+  - the locator now updates latitude and longitude at once (they used to stay at 0);
+  - exact position from Google Maps: right-click on the dish, copy the coordinates and paste them (the link works too); the program works out the precise 10-character locator;
+  - small world map with your station and the EME stations of the directory, with zoom;
+  - «🌡️ Test the weather station» button to check the address of your personal weather station at once.
+- **⚡ Power:** SSPA and TWT in a single tab.
+- **ADIF import:** only EME QSOs from 10 GHz up are taken; the others are counted and left out.
+
 ## EMELab 0.1.1 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.1.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.1-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

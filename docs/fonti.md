@@ -1,4 +1,4 @@
-# EMELab — fonti (da citare nei Credits)
+# EME Assistant — fonti (da citare nei Credits)
 
 ## Doug McArthur VK3UM (SK 22/02/2016) — programmi conservati da John Drew VK5DJ
 https://www.vk5dj.com/doug.html — archivio con l'approvazione di Bev, moglie di Doug. Programmi Windows (Delphi 32 bit):

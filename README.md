@@ -1,9 +1,9 @@
-# EMELab
+# EME Assistant
 
 **Misure, analisi, pianificazione e log EME da 10 a 134 GHz** — il compagno di [FeedLab](https://github.com/IZ0JNY/FeedLab).
 Software progettato da Ivan De Cesaris IZ0JNY · GPL-3.0-or-later.
 
-EMELab usa i progetti di parabola e feed di FeedLab (file `.feedlab.json`), registra misure e QSO con tutte le condizioni del
+EME Assistant usa i progetti di parabola e feed di FeedLab (file `.feedlab.json`), registra misure e QSO con tutte le condizioni del
 momento (Sole e Luna da ERFA/IAU, atmosfera ITU-R P.676, librazione, spread e Doppler mutui, meteo), li confronta con la
 teoria e **si tara sulla tua stazione** man mano che misuri.
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""The tabs of EMELab (emelab/app.py): station, setups (dish and feed from a FeedLab project file), new measurement with Sun/Moon positions and weather (UTC), log, expected vs measured,
+"""The tabs of EME Assistant (emelab/app.py): station, setups (dish and feed from a FeedLab project file), new measurement with Sun/Moon positions and weather (UTC), log, expected vs measured,
 pointing model, Moon planner and measurement guide. All data stay in a local SQLite file (settings folder);
 the personal weather-station address is saved only in the local settings."""
 from __future__ import annotations
@@ -45,26 +45,127 @@ def _noaa_cb(lon):
         _st.session_state["em_noaa_msg"] = ("err", i18n.tr("NOAA non raggiungibile") + f": {e}")
 
 
+def _loc_cb():
+    """locator typed → latitude and longitude follow (centre of the square)"""
+    try:
+        _st.session_state["em_lat"], _st.session_state["em_lon"] = astro.locator_to_latlon(_st.session_state.get("em_loc", ""))
+        _st.session_state["em_pos_msg"] = None
+    except Exception:
+        pass
+
+
+def _latlon_cb():
+    """latitude or longitude changed by hand → locator follows"""
+    _st.session_state["em_loc"] = astro.latlon_to_locator(_st.session_state["em_lat"], _st.session_state["em_lon"], 6)
+
+
+def _gmaps_cb():
+    p = astro.parse_coords(_st.session_state.get("em_gmaps", ""))
+    if p is None:
+        _st.session_state["em_pos_msg"] = ("err", i18n.tr("Coordinate non riconosciute: in Google Maps fai clic destro sul "
+                                                          "punto e poi clic sui numeri in alto per copiarli."))
+        return
+    _st.session_state["em_lat"], _st.session_state["em_lon"] = round(p[0], 6), round(p[1], 6)
+    _st.session_state["em_loc"] = astro.latlon_to_locator(p[0], p[1], 6)
+    _st.session_state["em_gmaps"] = ""
+    _st.session_state["em_pos_msg"] = ("ok", i18n.tr("Posizione presa da Google Maps") +
+                                       f": {p[0]:.6f}, {p[1]:.6f} → {astro.latlon_to_locator(p[0], p[1], 10)}")
+
+
+def _wx_test_cb():
+    from emelab import weather
+    url = (_st.session_state.get("em_wxurl") or "").strip()
+    if not url:
+        _st.session_state["em_wx_msg"] = ("warn", i18n.tr("Scrivi prima l'indirizzo della stazione meteo."))
+        return
+    try:
+        d = weather.station_now(url)
+        parts = [f"{d['t_c']:.1f} °C" if d.get("t_c") is not None else None,
+                 f"{d['rh']:.0f} %" if d.get("rh") is not None else None,
+                 f"{d['p_hpa']:.1f} hPa" if d.get("p_hpa") is not None else None]
+        _st.session_state["em_wx_msg"] = ("ok", i18n.tr("Stazione meteo letta") + ": " + " · ".join(x for x in parts if x) +
+                                          f" ({d.get('wx_utc', '')})")
+    except Exception as e:
+        _st.session_state["em_wx_msg"] = ("err", i18n.tr("Stazione meteo non letta") + f": {str(e)[:300]}")
+
+
+def _world_map(D, lat, lon):
+    """small world map (offline coastlines) with the station and the EME stations of the directory; wheel to zoom"""
+    pts = []
+    try:
+        for x in D.stations():
+            if x.get("locator") and x.get("eme"):
+                try:
+                    pts.append((*astro.locator_to_latlon(x["locator"]), "", "#7f8c8d"))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    if lat or lon:
+        pts.append((lat, lon, _st.session_state.get("em_call") or i18n.tr("la mia stazione"), "#e74c3c"))
+    fig = world_fig([], pts[-400:], height=300)
+    for tr in fig.data[1:-1] if (lat or lon) else fig.data[1:]:
+        tr.marker.size = 4
+    if lat or lon:
+        fig.data[-1].marker.update(size=12, symbol="star")
+        fig.update_layout(xaxis_range=[lon - 40, lon + 40], yaxis_range=[max(-90, lat - 25), min(90, lat + 25)])
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), dragmode="pan", showlegend=False,
+                      xaxis=dict(dtick=20), yaxis=dict(dtick=10))
+    st.plotly_chart(fig, width="stretch", config={"scrollZoom": True, "displaylogo": False})
+    st.caption("Rotellina per lo zoom, trascina per spostare. Griglia ogni 20° × 10° (i campi del locator). La mappa è disegnata "
+               "sul tuo PC: non manda la posizione a nessuno.")
+
+
 def _station(D):
     stn = D.station()
     st.subheader("Stazione")
-    c = st.columns(4)
-    call = c[0].text_input("Nominativo", stn.get("callsign") or "", key="em_call")
-    loc = c[1].text_input("Locator", stn.get("locator") or "", key="em_loc", help="es. JN61fs: calcola latitudine e longitudine")
-    lat0, lon0 = stn.get("lat"), stn.get("lon")
-    if loc and len(loc.strip()) >= 4 and (lat0 is None or loc.strip().upper() != (stn.get("locator") or "").upper()):
-        try:
-            lat0, lon0 = astro.locator_to_latlon(loc)
-        except Exception:
-            pass
-    lat = c[2].number_input("Latitudine (°, nord +)", -90.0, 90.0, float(lat0 or 0.0), 0.0001, format="%.4f", key="em_lat")
-    lon = c[3].number_input("Longitudine (°, est +)", -180.0, 180.0, float(lon0 or 0.0), 0.0001, format="%.4f", key="em_lon")
+    ss = _st.session_state
+    if "em_lat" not in ss:                       # first draw: from the database, or from the locator
+        lat0, lon0 = stn.get("lat"), stn.get("lon")
+        if (lat0 is None or (not lat0 and not lon0)) and stn.get("locator"):
+            try:
+                lat0, lon0 = astro.locator_to_latlon(stn["locator"])
+            except Exception:
+                pass
+        ss["em_lat"], ss["em_lon"] = float(lat0 or 0.0), float(lon0 or 0.0)
+    ss.setdefault("em_loc", stn.get("locator") or "")
+    left, right = st.columns([3, 2])
+    with left:
+        c = st.columns(2)
+        call = c[0].text_input("Nominativo", stn.get("callsign") or "", key="em_call")
+        loc = c[1].text_input("Locator", key="em_loc", on_change=_loc_cb,
+                              help="es. JN61fs: latitudine e longitudine vanno al centro del quadrato. Per la posizione esatta "
+                                   "usa Google Maps qui sotto")
+        c = st.columns(2)
+        lat = c[0].number_input("Latitudine (°, nord +)", -90.0, 90.0, step=0.0001, format="%.6f", key="em_lat",
+                                on_change=_latlon_cb)
+        lon = c[1].number_input("Longitudine (°, est +)", -180.0, 180.0, step=0.0001, format="%.6f", key="em_lon",
+                                on_change=_latlon_cb)
+        st.markdown(i18n.tr("Locator preciso") + f": **{astro.latlon_to_locator(lat, lon, 10)}**" +
+                    f" · {astro.latlon_to_locator(lat, lon, 6)}")
+        with st.container(border=True):
+            st.markdown("**" + i18n.tr("📍 Posizione da Google Maps") + "**")
+            g = st.columns([1, 2])
+            g[0].link_button("🗺️ Apri Google Maps", f"https://www.google.com/maps/@{lat:.5f},{lon:.5f},17z/data=!3m1!1e3"
+                             if (lat or lon) else "https://www.google.com/maps")
+            g[1].text_input("Incolla qui le coordinate o il link", key="em_gmaps", on_change=_gmaps_cb,
+                            placeholder="41.64581, 12.62503", label_visibility="collapsed")
+            st.caption("In Google Maps fai clic destro sulla tua parabola: le coordinate compaiono in alto nel menu, un clic "
+                       "le copia. Incollale qui e premi Invio: latitudine, longitudine e locator si aggiornano. Va bene anche "
+                       "il link della pagina.")
+            if ss.get("em_pos_msg"):
+                kind, msg = ss["em_pos_msg"]
+                (st.success if kind == "ok" else st.error)(msg)
+    with right:
+        _world_map(D, lat, lon)
     c = st.columns(4)
     h = c[0].number_input("Quota (m s.l.m.)", -100.0, 5000.0, float(stn.get("height_m") or 0.0), 1.0, key="em_h")
     sets = openems_local.load_settings()
     url = c[1].text_input("Stazione meteo personale (facoltativa)", sets.get("emelab_wx_url", ""), key="em_wxurl",
                           help="indirizzo del tuo sito Meteotemplate / Cumulus / Weather Display, oppure del file dati. "
                                "Resta salvato solo su questo PC")
+    c[1].button("🌡️ Prova la stazione meteo", key="em_wxtest", on_click=_wx_test_cb,
+                help="legge adesso temperatura, umidità e pressione dall'indirizzo scritto sopra")
     flux = c[2].number_input("Flusso solare a 15.4 GHz (SFU)", 300.0, 3000.0, float(sets.get("emelab_flux", 550.0)), 10.0,
                              key="em_flux", help="valore del giorno dagli osservatori RSTN (San Vito, Learmonth, Sagamore "
                                                  "Hill, Palehua) pubblicato da NOAA SWPC; serve per il rumore solare atteso")
@@ -74,11 +175,14 @@ def _station(D):
     if _st.session_state.get("em_noaa_msg"):
         kind, msg = _st.session_state["em_noaa_msg"]
         (st.success if kind == "ok" else st.warning if kind == "warn" else st.error)(msg)
+    if _st.session_state.get("em_wx_msg"):
+        kind, msg = _st.session_state["em_wx_msg"]
+        (st.success if kind == "ok" else st.warning if kind == "warn" else st.error)(msg)
     if c[3].button("💾 Salva stazione", key="em_save_st"):
         D.save_station(callsign=call.strip().upper(), locator=loc.strip(), lat=lat, lon=lon, height_m=h)
         openems_local.save_settings(emelab_wx_url=url.strip(), emelab_flux=flux)
         st.success("Stazione salvata (solo su questo PC).")
-    st.caption("Tutti i dati di EMELab (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
+    st.caption("Tutti i dati di EME Assistant (stazione, configurazioni, misure, indirizzo della stazione meteo) restano in un file sul "
                "tuo PC e non vengono mai inviati: il meteo da internet riceve solo coordinate e ora.")
 
 
@@ -175,7 +279,7 @@ def _history_editor(D):
     from emelab import dx
     st.divider()
     st.subheader("📜 Storico della stazione")
-    st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EMELab usa il periodo giusto per "
+    st.caption("Quale parabola, potenza e ricevitore hai usato su ogni banda e da quando. EME Assistant usa il periodo giusto per "
                "ogni QSO quando confronta i rapporti con la teoria e impara la correzione della tua stazione periodo per "
                "periodo. Ogni riga vale dalla sua data fino alla riga successiva.")
     band = st.selectbox("Banda", list(dx.BAND_GHZ), key="hist_band", format_func=lambda b: b.replace("G", " GHz"))
@@ -547,6 +651,10 @@ def _guide():
     p = Path(__file__).resolve().parent / f"guida_misure_{'it' if lang == 'it' else 'en'}.md"
     if p.exists():
         _st.markdown(p.read_text(encoding="utf-8"))
+    from emelab import credits
+    st.divider()
+    st.subheader("📚 Bibliografia")
+    credits.render_bibliography(st)
 
 
 # ------------------------------------------------------------------ world map (plotly, offline coastlines)
@@ -875,7 +983,7 @@ def _prints_tab(D):
 
 def _database_tab(D):
     st.subheader("Database")
-    st.caption(i18n.tr("Tutti i dati di EMELab sono in un unico file SQLite su questo PC") + f": `{D.path}`. " +
+    st.caption(i18n.tr("Tutti i dati di EME Assistant sono in un unico file SQLite su questo PC") + f": `{D.path}`. " +
                i18n.tr("Puoi aprirlo anche con un programma come «DB Browser for SQLite»."))
     import pandas as pd
     tabs = {"measurements": "Misure", "qsos": "QSO", "stations": "Stazioni EME", "setups": "Configurazioni", "station": "Stazione"}
@@ -956,7 +1064,7 @@ def _design_tab(D):
     st.divider()
     st.subheader("Libreria dei componenti")
     st.caption("Componenti con i valori dei datasheet dei produttori (inseriti da te o trovati nel catalogo Mouser) e il "
-               "link al datasheet. EMELab non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
+               "link al datasheet. EME Assistant non inventa i valori: controlla sempre il datasheet alla tua frequenza.")
     rows = parts.all_parts(D)
     if rows:
         st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
@@ -1000,7 +1108,7 @@ def _charts_tab(D):
     st.subheader("Grafici e interpolazioni")
     st.caption("Qualsiasi parametro dei QSO o delle misure contro qualsiasi altro, con interpolazione: retta, polinomio, "
                "LOESS (tendenza locale) o mediane per classi. Le condizioni di ogni QSO (Luna, spread, Doppler, atmosfera, "
-               "meteo) sono quelle calcolate da EMELab.")
+               "meteo) sono quelle calcolate da EME Assistant.")
     src = st.radio("Dati", ["QSO", "Misure"], horizontal=True, key="pl_src")
     rows = plots.rows_from_qsos(D.qsos()) if src == "QSO" else plots.rows_from_measurements(D.measurements())
     if not rows:
@@ -1367,7 +1475,7 @@ def _model_at(D, band, t, me_now):
 
 def _learned_offset(D, band, me, my_loc, models):
     """Median of (reported − predicted) on the QSOs of this band, each QSO with the station of its period (station
-    history): what EMELab has learned about your station, overall and period by period."""
+    history): what EME Assistant has learned about your station, overall and period by period."""
     from emelab import dx
     key = ("em_offset", band, len(D.qsos(band=band)), len(D.history(band)))
     if _st.session_state.get("em_off_key") == key:
@@ -1404,7 +1512,7 @@ def _signal_tab(D):
     st.caption("Equazione radar bistatica con la distanza reale della Luna da entrambe le stazioni, la parte di Luna "
                "illuminata da entrambi i fasci, l'atmosfera ai due capi e il rumore di chi riceve puntato sulla Luna. "
                "Soglie Q65 di G3WDG contro il mutual spread. Dati delle altre stazioni dalla EME Directory; dove mancano, "
-               "valori tipici della banda (indicati come ipotesi). EMELab corregge il modello con i rapporti dei tuoi QSO.")
+               "valori tipici della banda (indicati come ipotesi). EME Assistant corregge il modello con i rapporti dei tuoi QSO.")
     stn = D.station()
     s = _setup_pick(D, "sg_setup")
     if not s or not stn.get("lat"):
@@ -1508,7 +1616,7 @@ def _signal_tab(D):
 
 # ------------------------------------------------------------------ device catalogue and heat sink
 def _catalog_box(D, kinds, key):
-    """Devices for the band from EMELab's catalogue and the user's library, datasheet search and reading."""
+    """Devices for the band from EME Assistant's catalogue and the user's library, datasheet search and reading."""
     import pandas as pd
     from emelab import catalog, parts
     st.subheader("📚 Catalogo dispositivi")
@@ -1517,7 +1625,7 @@ def _catalog_box(D, kinds, key):
                           format_func=lambda f: f"{f:g} GHz")
     kind_lbl = {k: catalog.TYPES[k] for k in kinds}
     kind = c[1].selectbox("Tipo", list(kinds), format_func=lambda k: kind_lbl[k], key=f"{key}_ck")
-    rows = [dict(d, origine="catalogo EMELab") for d in catalog.for_band(band, kind)]
+    rows = [dict(d, origine="catalogo EME Assistant") for d in catalog.for_band(band, kind)]
     pk = {"PA": "pa", "LNA": "lna", "SW": "passive", "TWT": "pa", "TRV": "mixer"}[kind]
     for p in parts.all_parts(D, band, pk):
         rows.append({"part": p["part"], "maker": p["maker"], "type": kind, "f_lo": p["f_lo_ghz"], "f_hi": p["f_hi_ghz"],
@@ -1530,13 +1638,13 @@ def _catalog_box(D, kinds, key):
         tab = pd.DataFrame([{"Sigla": r["part"], "Produttore": i18n.tr(r["maker"]), "Da GHz": r.get("f_lo"), "A GHz": r.get("f_hi"),
                              "Guadagno (dB)": r.get("gain_db"), "NF (dB)": r.get("nf_db"), "Psat (dBm)": r.get("psat_dbm"),
                              "Note": i18n.tr(r.get("notes")),
-                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EMELab" else
+                             "Fonte": i18n.tr(r.get("source")) if r["origine"] == "catalogo EME Assistant" else
                              f"{i18n.tr(r['origine'])}: {r.get('source') or ''}",
                              "Da verificare": "⚠️" if r.get("check") else ""} for r in rows])
         tab.columns = [i18n.tr(x) for x in tab.columns]
         st.dataframe(tab, hide_index=True, width="stretch")
         st.caption("⚠️ = valori tipici da confermare sul datasheet attuale alla tua frequenza. Le celle vuote vanno lette "
-                   "dal datasheet: EMELab non inventa i numeri.")
+                   "dal datasheet: EME Assistant non inventa i numeri.")
         sel = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"{key}_cs",
                              format_func=lambda i: f"{rows[i]['part']} — {rows[i]['maker']}")
         sel = rows[sel]
@@ -1648,7 +1756,7 @@ def _wizard(D):
     S = _st.session_state
     stn = D.station()
     if not stn.get("lat"):
-        st.info("Benvenuto in EMELab! Per cominciare inserisci nominativo e locator nella scheda Stazione.")
+        st.info("Benvenuto in EME Assistant! Per cominciare inserisci nominativo e locator nella scheda Stazione.")
         return
     hz = _horizon_editor()
     now = wizard.sky_now_text(stn["lat"], stn["lon"], stn.get("height_m") or 0.0, hz)
@@ -1701,7 +1809,7 @@ def _wizard(D):
         for sgg in coach.suggestions(D)[:8]:
             st.markdown("- " + i18n.tr(sgg["text"]))
         st.info("Nella scheda 🎯 Puntamento trovi il bilancio degli errori e le strategie; in ➕ Nuova misura registri sole, "
-                "Luna, terra e fuoco; in 📊 Analisi EMELab stima G/T, efficienza, NF e il modello di puntamento.")
+                "Luna, terra e fuoco; in 📊 Analisi EME Assistant stima G/T, efficienza, NF e il modello di puntamento.")
     elif goal == "analyse":
         st.info("Nella scheda 📈 Grafici puoi mettere in relazione i rapporti dei QSO con elevazione, spread, distanza, "
                 "umidità…; «Correlazioni» ti mostra cosa va insieme ai tuoi risultati. In 📉 Statistiche QSO trovi le "
@@ -1801,7 +1909,7 @@ def _wz_plan(D, stn, hz, fc):
     st.code(wizard.sked_text(lang, stn.get("callsign") or "", stn.get("locator") or "", pick, info.get("name"), band, t0, t1,
                              r["best"]["mode"], (stn.get("callsign") or "") < pick, r["best"]["snr_a_hears_b"], r["best"]["snr_b_hears_a"]),
             language=None)
-    st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EMELab non conserva le email: "
+    st.caption("Copia il testo e mandalo come preferisci (email, chat EME, HB9Q logger). EME Assistant non conserva le email: "
                "l'indirizzo lo trovi su QRZ.com o sul sito della stazione.")
 
 
@@ -1834,7 +1942,7 @@ def _wsjtx_tab(D):
     from emelab import dx
     st.subheader("Collegamento con WSJT-X")
     st.caption("In WSJT-X: Settings → Reporting → «UDP Server» = 127.0.0.1, porta 2237, e spunta «Accept UDP requests». "
-               "EMELab riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
+               "EME Assistant riceve le decodifiche, registra nel Log QSO ogni QSO che confermi in WSJT-X (con tutte le condizioni "
                "di quel momento) e può colorare i nominativi e impostare il sottomodo Q65. Se usi anche JTAlert o "
                "GridTracker, metti in WSJT-X un indirizzo multicast (per esempio 224.0.0.1) e lo stesso qui.")
     sets = openems_local.load_settings()
@@ -1927,7 +2035,7 @@ def _sunscan_box(D, setup, f, Dm, hp_expected):
     st.divider()
     st.subheader("☀️ Scansione del Sole")
     st.caption("Incolla o carica le letture di una scansione: a croce (in AZ e in EL attraverso il Sole) oppure a deriva "
-               "(antenna ferma, il Sole passa). EMELab adatta il modello disco solare ⊗ fascio gaussiano (IZ0JNY) e ti dà "
+               "(antenna ferma, il Sole passa). EME Assistant adatta il modello disco solare ⊗ fascio gaussiano (IZ0JNY) e ti dà "
                "la larghezza del fascio vera, l'errore di puntamento in quel punto e il fattore Y. L'errore si salva nel "
                "diario e alimenta il modello di puntamento.")
     c = st.columns(4)

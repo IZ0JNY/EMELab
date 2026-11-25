@@ -1,4 +1,4 @@
-name: EMELab per Windows
+name: EME Assistant per Windows
 
 on:
   push:
@@ -65,7 +65,7 @@ jobs:
       - name: Silent install + server smoke test + screenshot
         shell: pwsh
         run: |
-          $setup = Get-ChildItem dist\EMELab-Setup-*.exe | Select-Object -First 1
+          $setup = Get-ChildItem dist\EME-Assistant-Setup-*.exe | Select-Object -First 1
           Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/CURRENTUSER","/NORESTART" -Wait
           $app = "$env:LOCALAPPDATA\Programs\EMELab"
           if (-not (Test-Path "$app\python\pythonw.exe")) { throw "installazione non trovata" }
@@ -90,16 +90,16 @@ jobs:
           Get-ChildItem dist | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
-          name: EMELab-Windows-${{ steps.ver.outputs.version }}
+          name: EME-Assistant-Windows-${{ steps.ver.outputs.version }}
           path: |
-            dist/EMELab-Setup-*.exe
+            dist/EME-Assistant-Setup-*.exe
             dist/SHA256SUMS.txt
             dist/screenshot.png
           retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
-          name: EMELab-Windows-portable-${{ steps.ver.outputs.version }}
-          path: dist/EMELab-*-portable.zip
+          name: EME-Assistant-Windows-portable-${{ steps.ver.outputs.version }}
+          path: dist/EME-Assistant-*-portable.zip
           retention-days: 30
       - name: GitHub release (every build of main, and tags v*)
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -108,10 +108,10 @@ jobs:
         shell: pwsh
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          $files = @((Get-ChildItem dist\EMELab-Setup-*.exe).FullName, (Get-ChildItem dist\EMELab-*-portable.zip).FullName, (Get-Item dist\SHA256SUMS.txt).FullName)
+          $files = @((Get-ChildItem dist\EME-Assistant-Setup-*.exe).FullName, (Get-ChildItem dist\EME-Assistant-*-portable.zip).FullName, (Get-Item dist\SHA256SUMS.txt).FullName)
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "$tag already published: not overwritten (bump the version to publish changes)"
           } else {
-            gh release create $tag @files --target $env:GITHUB_SHA --latest --title "EMELab $tag per Windows" --notes-file windows/RELEASE_NOTES.md
+            gh release create $tag @files --target $env:GITHUB_SHA --latest --title "EME Assistant $tag per Windows" --notes-file windows/RELEASE_NOTES.md
           }

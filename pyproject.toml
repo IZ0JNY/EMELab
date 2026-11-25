@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emelab"
-version = "0.1.1"
-description = "EMELab — EME measurements, planning, log and station design from 10 to 134 GHz (companion of FeedLab)"
+version = "0.1.2"
+description = "EME Assistant — EME planning, measurements, log and station design from 10 to 134 GHz (companion of FeedLab)"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 authors = [{name = "Ivan De Cesaris, IZ0JNY"}]

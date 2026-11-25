@@ -9,8 +9,8 @@ kernel), then a target name; the answer is one line
     <target>,date,azimuth,elevation,distance,relative velocity,delay,frequency with doppler,frequency,drift
 (Astroserver v1.6 manual, EA3HMJ). `<target>?Ddate` asks for another instant, `?P[n]` for n samples.
 
-EMELab only READS from the servers here (the same positions DriverDish uses to point the dish), so the scans and the
-measurements in EMELab use exactly the dish's own ephemerides. Commanding the dish is left to DriverDish."""
+EME Assistant only READS from the servers here (the same positions DriverDish uses to point the dish), so the scans and the
+measurements in EME Assistant use exactly the dish's own ephemerides. Commanding the dish is left to DriverDish."""
 from __future__ import annotations
 
 import socket

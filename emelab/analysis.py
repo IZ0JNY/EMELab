@@ -180,7 +180,7 @@ def advice(rows: list[dict], setup: dict) -> list[str]:
     if echo:
         d = np.array([e["snr_delta"] for _, e in echo])
         tips.append(f"Eco: SNR misurato {d.mean():+.1f} dB rispetto al previsto (in 1 Hz, {len(d)} misure). "
-                    "Se la differenza è stabile, è la riflettività efficace della Luna con il tuo fascio: EMELab la usa "
+                    "Se la differenza è stabile, è la riflettività efficace della Luna con il tuo fascio: EME Assistant la usa "
                     "per tarare le previsioni.")
     if not tips:
         tips.append("Registra almeno 4–5 misure di sole a elevazioni diverse (con il meteo) per avere le prime indicazioni.")

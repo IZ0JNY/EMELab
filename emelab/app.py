@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""EMELab — EME planning, measurements, analysis and log from 10 to 134 GHz (companion of FeedLab).
+"""EME Assistant — EME planning, measurements, analysis and log from 10 to 134 GHz (companion of FeedLab).
 Run with  streamlit run emelab_main.py.  Same look as FeedLab: sidebar with title, author, language, Credits."""
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ S = st.session_state
 if "lang" not in S:
     S.lang = i18n.default_lang()
 i18n.set_lang(S.lang)
-st.set_page_config(page_title="EMELab — Laboratorio di misure e pianificazione EME", page_icon="🌕", layout="wide")
+st.set_page_config(page_title="EME Assistant — pianificazione, misure e assistenza EME", page_icon="🌕", layout="wide")
 
 
 def _set_lang():
@@ -34,9 +34,30 @@ def _credits_dialog():
     credits.render(st)
 
 
+@_st.dialog("📚 Bibliografia", width="large")
+def _biblio_dialog():
+    from emelab import credits
+    credits.render_bibliography(st)
+
+
 D = ui._db()
 ui._wsjtx_autostart()                # keeps listening to WSJT-X in the background if it was switched on
-if "coach_seen" not in S:                          # invitations to measure, once per launch
+if "update_info" not in S:                         # new version on GitHub: checked once per launch (as in FeedLab)
+    from emelab import updates as _updates
+    S["update_info"] = _updates.check(emelab.__version__, i18n.get_lang())
+    if S["update_info"]:
+        _upd = S["update_info"]
+
+        @_st.dialog(i18n.tr("🆕 Nuova versione disponibile"), width="large")
+        def _update_popup():
+            st.markdown(i18n.tr("**EME Assistant {new}** è disponibile (stai usando la {cur}).").format(
+                new=_upd["version"], cur=emelab.__version__))
+            st.markdown(f"**{i18n.tr('Cosa c’è di nuovo')}**")
+            _st.markdown(_upd["notes"] or i18n.tr("Vedi le note di rilascio su GitHub."))   # already in the right language
+            st.link_button("⬇️ Scarica la nuova versione", _upd["url"])
+
+        _update_popup()
+elif "coach_seen" not in S:                        # invitations to measure, once per launch
     S["coach_seen"] = True
     try:
         _sug = coach.suggestions(D)
@@ -46,8 +67,8 @@ if "coach_seen" not in S:                          # invitations to measure, onc
         pass
 
 with st.sidebar:
-    st.title("🌕 EMELab")
-    st.subheader("Laboratorio di misure e pianificazione EME")
+    st.title("🌕 EME Assistant")
+    st.subheader("Pianificazione, misure e assistenza EME")
     st.caption("10–134 GHz · Software progettato da Ivan IZ0JNY")
     stn = D.station()
     if stn.get("callsign") or stn.get("locator"):
@@ -60,11 +81,25 @@ with st.sidebar:
     st.selectbox("Lingua / Language", list(i18n.LANGS), key="lang", format_func=lambda k: i18n.LANGS[k],
                  on_change=_set_lang)       # chosen in the installer; here for the portable version
     if os.environ.get("EMELAB_DESKTOP") == "browser":
-        if st.button("⏻ Chiudi EMELab", help="ferma il programma"):
-            st.write("EMELab chiuso: puoi chiudere questa scheda del browser.")
+        if st.button("⏻ Chiudi EME Assistant", help="ferma il programma"):
+            st.write("EME Assistant chiuso: puoi chiudere questa scheda del browser.")
             os._exit(0)
     if st.button("ℹ️ Credits", key="credits_btn", help="Autore, versione e tutte le fonti"):
         _credits_dialog()
+    if st.button("📚 Bibliografia", key="biblio_btn", help="i libri su cui si basano i calcoli"):
+        _biblio_dialog()
+    if st.button("🔄 Controlla aggiornamenti", key="upd_btn", help="chiede a GitHub se c'è una versione più nuova"):
+        from emelab import updates as _updates
+        _u = _updates.check(emelab.__version__, i18n.get_lang())
+        if _u:
+            st.markdown(i18n.tr("**EME Assistant {new}** è disponibile (stai usando la {cur}).").format(
+                new=_u["version"], cur=emelab.__version__))
+            st.link_button("⬇️ Scarica la nuova versione", _u["url"])
+        elif _updates.LAST_ERROR:
+            st.warning(i18n.tr("Impossibile contattare GitHub ({e}). Controlla la connessione o scarica da {url}").format(
+                e=_updates.LAST_ERROR, url=_updates.RELEASES_URL))
+        else:
+            st.success("Hai già l'ultima versione.")
     st.link_button("🐞 Segnala un problema", "https://github.com/IZ0JNY/EMELab/issues")
     st.caption("Tutti i dati restano su questo PC. Orari in UTC.")
 
@@ -94,7 +129,7 @@ with st.sidebar:
     with st.expander("⚙️ Schede da mostrare"):
         st.multiselect("Schede", [k for k, _, _ in TABS[2:]], key="tabs_on", on_change=_save_tabs,
                        format_func=lambda k: next(l for kk, l, _ in TABS if kk == k),
-                       help="scegli le parti di EMELab che usi: la scelta resta salvata su questo PC")
+                       help="scegli le parti di EME Assistant che usi: la scelta resta salvata su questo PC")
 shown = [t for t in TABS if t[0] in ("wizard", "station") or t[0] in S["tabs_on"]]
 tabs = st.tabs([l for _, l, _ in shown])
 for tab, (k, _, fn) in zip(tabs, shown):

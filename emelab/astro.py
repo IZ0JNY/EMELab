@@ -5,6 +5,8 @@ arc-seconds), Sun by eraEpv00. Topocentric (parallax included, ~1° for the Moon
 radio refraction (ITU-R P.834). All times are UTC (UT1 ≈ UTC: < 0.9 s, < 0.004°)."""
 from __future__ import annotations
 
+import re
+
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -193,17 +195,58 @@ def locator_to_latlon(loc: str) -> tuple[float, float]:
 
 
 def latlon_to_locator(lat: float, lon: float, n: int = 6) -> str:
-    lon += 180
-    lat += 90
+    """Maidenhead locator of 4, 6, 8 or 10 characters (10: about 20 m × 20 m in Italy)."""
+    lon = min(max(lon, -180.0), 179.9999999) + 180
+    lat = min(max(lat, -90.0), 89.9999999) + 90
     s = chr(65 + int(lon // 20)) + chr(65 + int(lat // 10))
     lon %= 20
     lat %= 10
     s += str(int(lon // 2)) + str(int(lat // 1))
+    lon, lat = lon % 2, lat % 1
     if n >= 6:
-        lon = (lon % 2) * 12
-        lat = (lat % 1) * 24
+        lon, lat = lon * 12, lat * 24
+        s += chr(97 + int(lon)) + chr(97 + int(lat))
+        lon, lat = lon % 1, lat % 1
+    if n >= 8:
+        lon, lat = lon * 10, lat * 10
+        s += str(int(lon)) + str(int(lat))
+        lon, lat = lon % 1, lat % 1
+    if n >= 10:
+        lon, lat = lon * 24, lat * 24
         s += chr(97 + int(lon)) + chr(97 + int(lat))
     return s
+
+
+def parse_coords(text: str) -> tuple[float, float] | None:
+    """Latitude and longitude from what Google Maps gives: «41.12345, 12.34567» (right click on the map), a link
+    with «@41.1,12.3,15z», «q=41.1,12.3», «!3d41.1!4d12.3», or degrees-minutes-seconds «41°07'24.4"N 12°20'44.4"E»."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = re.search(r"!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)", t)
+    if not m:
+        m = re.search(r"[@=/](-?\d{1,2}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)", t)
+    if not m:
+        m = re.fullmatch(r"\(?\s*(-?\d{1,2}(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:[.,]\d+)?)\s*\)?", t)
+        if m and "," in m.group(1) + m.group(2) and ";" not in t:
+            m = None if t.count(",") != 1 or " " not in t else m
+    if m:
+        lat, lon = (float(x.replace(",", ".")) for x in m.groups())
+    else:
+        d = re.findall(r"(\d{1,3})°\s*(\d{1,2})?['′]?\s*(\d{1,2}(?:[.,]\d+)?)?[\"″]?\s*([NSEWO])", t.upper())
+        if len(d) != 2:
+            return None
+        v = []
+        for deg, mi, se, h in d:
+            x = float(deg) + float(mi or 0) / 60 + float((se or "0").replace(",", ".")) / 3600
+            v.append((-x if h in "SWO" else x, h))
+        lat = next((x for x, h in v if h in "NS"), None)
+        lon = next((x for x, h in v if h in "EWO"), None)
+        if lat is None or lon is None:
+            return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    return lat, lon
 
 
 # ------------------------------------------------------------------ two stations: mutual Doppler and spread

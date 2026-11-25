@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
 """EME logbook: QSOs with every condition of the moment (both stations), ADIF import/export, statistics.
 
-For each QSO EMELab stores date/time UTC, call, band/frequency, mode, reports, locators, power, setup and comment,
+For each QSO EME Assistant stores date/time UTC, call, band/frequency, mode, reports, locators, power, setup and comment,
 and computes for both stations: Moon azimuth/elevation, distance, path loss vs perigee, Doppler and mutual libration
 spread, Sun–Moon angle, lunar phase, atmospheric attenuation and sky temperature (with the weather when known).
 Imported ADIF QSOs get the same parameters, recomputed from their date, time and locators."""
@@ -50,9 +50,9 @@ def _f(tag, val):
     return f"<{tag}:{len(v.encode('utf-8'))}>{v} " if v != "" else ""
 
 
-def to_adif(qsos: list[dict], my_call: str = "", program: str = "EMELab") -> str:
+def to_adif(qsos: list[dict], my_call: str = "", program: str = "EME Assistant") -> str:
     """ADIF 3 export (PROP_MODE EME), with the EME conditions in the comment fields."""
-    head = f"EMELab ADIF export\n{_f('ADIF_VER', '3.1.4')}{_f('PROGRAMID', program)}<EOH>\n"
+    head = f"EME Assistant ADIF export\n{_f('ADIF_VER', '3.1.4')}{_f('PROGRAMID', program)}<EOH>\n"
     lines = []
     for q in qsos:
         t = q["utc"] if isinstance(q["utc"], datetime) else datetime.strptime(q["utc"].replace("Z", ""), "%Y-%m-%dT%H:%M:%S")

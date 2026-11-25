@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""Author, sources and acknowledgements of EMELab."""
+"""Author, sources and acknowledgements of EME Assistant."""
 from __future__ import annotations
 
 AUTHOR = "Ivan De Cesaris, IZ0JNY"
@@ -24,7 +24,7 @@ SOURCES = [
      "calcoli passo passo", "https://github.com/ic8tem/YAEC"),
     ("Joe Taylor K1JT", "WSJT-X lib/astro.f90: sfasamento spaziale della polarizzazione (Dpol)", "https://wsjt.sourceforge.io/"),
     ("José EA3HMJ", "EA3HMJ Tracking Software Suite (DriverDish, DishController, Astroserver, SNserver): file DriftScan e "
-     "corrections.txt, server telnet e server delle effemeridi letti da EMELab", "https://github.com/EA3HMJ-Tracking-Software-Suite"),
+     "corrections.txt, server telnet e server delle effemeridi letti da EME Assistant", "https://github.com/EA3HMJ-Tracking-Software-Suite"),
     ("Joachim Köppen DF3GJ", "deconvoluzione delle scansioni a deriva di Sole e Luna (Lunar Drift Scans)",
      "https://portia.astrophysik.uni-kiel.de/~koeppen/JS/LunarDriftScans.html"),
     ("Carsten Groen OZ9AAR", "SimpleCalc, SkyScanner, WSJT Log Viewer e il calcolatore online del rumore solare: idee per il "
@@ -46,10 +46,22 @@ SOURCES = [
     ("QRZ.com", "servizio XML per nominativi e indirizzi QSL (con l'account dell'utente)", "https://www.qrz.com/"),
 ]
 
+BIBLIOGRAPHY = [   # (author, title, details) — the books behind the calculations, shown apart from the credits
+    ("Constantine A. Balanis", "Antenna Theory: Analysis and Design", "Wiley — guadagno, efficienza d'apertura, "
+     "diagrammi, polarizzazione, riflettori"),
+    ("Miroslav Kasal OK2AQ", "Weak Radio Signals from Space", "ricezione di segnali deboli: rumore, temperatura "
+     "d'antenna, G/T, EME"),
+]
+
+
+def render_bibliography(st):
+    for who, title, what in BIBLIOGRAPHY:
+        st.markdown(f"- {who}, ***{title}***" + (f" — {what}" if what else ""))
+
 
 def render(st):
     from . import __version__
-    st.markdown(f"**EMELab {__version__}** — {AUTHOR} · GPL-3.0-or-later · [{REPO}]({REPO})")
+    st.markdown(f"**EME Assistant {__version__}** — {AUTHOR} · GPL-3.0-or-later · [{REPO}]({REPO})")
     st.markdown("**Fonti e ringraziamenti**")
     for who, what, url in SOURCES:
         st.markdown(f"- **{who}** — {what}" + (f" — [{url}]({url})" if url else ""))

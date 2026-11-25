@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""EMELab's own settings folder (Windows: %APPDATA%\\EMELab, Linux: ~/.config/EMELab, or EMELAB_CONFIG):
+"""EME Assistant's own settings folder (Windows: %APPDATA%\\EMELab, Linux: ~/.config/EMELab, or EMELAB_CONFIG):
 settings.json and the measurement database. Nothing here is ever uploaded."""
 from __future__ import annotations
 

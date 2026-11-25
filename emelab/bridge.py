@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""FeedLab project files (.feedlab.json) in EMELab: dish, feed and the results FeedLab already computed (gain,
-G/T, efficiency, spillover, edge taper, Tsys). EMELab never recomputes them. One project per band."""
+"""FeedLab project files (.feedlab.json) in EME Assistant: dish, feed and the results FeedLab already computed (gain,
+G/T, efficiency, spillover, edge taper, Tsys). EME Assistant never recomputes them. One project per band."""
 from __future__ import annotations
 
 import json
@@ -42,7 +42,7 @@ def describe(p: dict) -> str:
 
 
 def setup_from_project(p: dict, extra: dict) -> dict:
-    """Setup for EMELab from the results stored in the project (nothing is recomputed)."""
+    """Setup for EME Assistant from the results stored in the project (nothing is recomputed)."""
     i, r = p["inputs"], p["results"]
     d = i["dish"]
     return {"band_ghz": float(i["f_ghz"]), "D_m": d["D_mm"] / 1000, "eta_ap": r["eta"], "gain_dbi": r["gain_dbi"],

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""Local EMELab database (SQLite) in the user settings folder: station, setups per band and measurements.
+"""Local EME Assistant database (SQLite) in the user settings folder: station, setups per band and measurements.
 
 Nothing here is ever uploaded: the file stays on this computer (export/import as CSV). Every time is stored
 as ISO 8601 UTC ("2026-11-24T22:15:00Z")."""

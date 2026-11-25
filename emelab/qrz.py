@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
 """QRZ.com XML Logbook Data service (https://xmldata.qrz.com): name, address, QTH, country, locator of a callsign,
 for QSL labels and the station database. The user's own QRZ account is used; username and password are saved only
-in EMELab's local settings and sent only to xmldata.qrz.com. Full addresses need a QRZ XML subscription."""
+in EME Assistant's local settings and sent only to xmldata.qrz.com. Full addresses need a QRZ XML subscription."""
 from __future__ import annotations
 
 import urllib.parse

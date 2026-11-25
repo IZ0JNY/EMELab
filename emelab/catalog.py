@@ -4,7 +4,7 @@
 switches, transverters, tubes) and the tools to complete it from the manufacturers' datasheets.
 
 Rule: a number is written here only when it comes from a datasheet or from the station page that uses the
-device; everything else is left empty (None) and EMELab asks the user to read it from the datasheet. Entries
+device; everything else is left empty (None) and EME Assistant asks the user to read it from the datasheet. Entries
 marked check=True carry typical values to be confirmed on the current datasheet at the actual frequency.
 The user's own devices are added to the local parts library (parts.py) and stay on this PC."""
 from __future__ import annotations

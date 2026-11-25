@@ -9,4 +9,4 @@ def test_app_starts_on_a_fresh_pc(tmp_path, monkeypatch):
     at = AppTest.from_file(os.path.join(root, "emelab_main.py"), default_timeout=300)
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any("EMELab" in t.value for t in at.title)
+    assert any("EME Assistant" in t.value for t in at.title)

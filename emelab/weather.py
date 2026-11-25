@@ -3,7 +3,7 @@
 """Weather at the time of a measurement, always with its UTC timestamp and its source.
 
 Sources: Open-Meteo (free, no account: forecast API for the last days and the next 16, archive API for older
-dates) and an optional personal station. The station address is typed by the user in EMELab and saved only in
+dates) and an optional personal station. The station address is typed by the user in EME Assistant and saved only in
 the local settings of this computer: it is never written in the program or sent anywhere else.
 Supported station formats: Meteotemplate (live JSON), Cumulus realtime.txt, Weather Display clientraw.txt and
 a plain JSON with the usual names."""
@@ -24,7 +24,7 @@ def _get(url: str, timeout: float = 10.0) -> bytes:
     err = None
     for _, ctx in _contexts():
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "FeedLab-EMELab"})
+            req = urllib.request.Request(url, headers={"User-Agent": "FeedLab-EME Assistant"})
             with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
                 return r.read()
         except Exception as e:                    # try the next TLS context

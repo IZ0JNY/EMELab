@@ -33,7 +33,7 @@ def k_from_taper(edge_taper_db: float) -> float:
 
 def baars_width(hpbw: float, sun_diam: float = SUN_DIAM_DEG) -> float:
     """Width of the scan of a uniform disc with a Gaussian beam (Baars 1973 approximation):
-    θ_scan² ≈ θ_beam² + (ln 2 / 2)·θ_disc². Error of the scan width (EMELab check against the 2D disc model): −1.6 % at
+    θ_scan² ≈ θ_beam² + (ln 2 / 2)·θ_disc². Error of the scan width (EME Assistant check against the 2D disc model): −1.6 % at
     θ_beam = θ_disc, −3 % at 0.8, −5.5 % at 0.66 (24 GHz, 2.4 m), −10 % at 0.5, −20 % at 0.3 (47 GHz, 2.4 m).
     Use fit_scan() (full 2D model) whenever the beam is narrower than the Sun."""
     return math.sqrt(hpbw ** 2 + math.log(2) / 2 * sun_diam ** 2)

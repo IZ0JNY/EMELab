@@ -1,4 +1,4 @@
-"""Interface languages of EMELab: Italiano (source) and English.
+"""Interface languages of EME Assistant: Italiano (source) and English.
 
 The app is written in Italian; `tr()` translates any interface text into the current language:
 first by exact match of the whole string, otherwise by replacing every known Italian phrase inside it

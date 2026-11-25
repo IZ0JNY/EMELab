@@ -20,9 +20,9 @@ st = i18n.wrap(_st)
 def tracking_box(D, hp_expected: float | None = None):
     st.divider()
     st.subheader("📡 Sistema di inseguimento EA3HMJ (DriverDish)")
-    st.caption("EMELab legge i file e lo stato di DriverDish (José EA3HMJ, EA3HMJ Tracking Software Suite): scansioni a "
+    st.caption("EME Assistant legge i file e lo stato di DriverDish (José EA3HMJ, EA3HMJ Tracking Software Suite): scansioni a "
                "deriva, mappa delle correzioni in azimut, posizione e offset dell'antenna. Il comando dell'antenna resta a "
-               "DriverDish: EMELab non la muove.")
+               "DriverDish: EME Assistant non la muove.")
     t1, t2, t3 = st.tabs(["☀️ Scansione a deriva (DriftScan)", "🧭 Correzioni (corrections.txt)", "🔌 Stato dell'antenna"])
     with t1:
         _driftscan(D, hp_expected)
