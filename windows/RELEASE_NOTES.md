@@ -1,3 +1,21 @@
+## EMELab 0.1.16 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.16.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.16-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🌕 Temperatura della Luna nelle misure di rumore lunare:** ogni misura mostra e salva la temperatura di brillanza della Luna nella banda in quel momento (modello Krotikov & Troitskii / Linsky 1973: cambia con la fase e cresce di più alle frequenze alte), l'intervallo nel mese e il rumore lunare nel fascio. Colonna «T Luna» nel diario e nel PDF, in arancione perché presunta.
+- **📐 Ref Spec:** la procedura di DL3WDG nella scheda WSJT-X e un promemoria a ogni sessione finché lo spettro di riferimento non è rifatto.
+- **📇 Stazioni EME:** parabole e potenze per banda dal logger HB9Q (CSV in `C:\Claude.ai\hb9q-stazioni.csv`, correzioni da spuntare).
+- **🔥 Ampli:** raffreddamento passivo, ventilato o ad acqua, temperatura di giunzione nel ciclo Q65 (60/120 s) o in un QSO intero, margine, potenza e duty massimi, durata (MTBF) per tecnologia.
+- **❄️ LNA raffreddato o criogenico:** Peltier, ghiaccio secco, azoto liquido o criocooler, e cosa cambia per ogni banda su NF, Tsys, G/T, rumore di Sole e Luna ed eco.
+
+### 🇬🇧 What's new
+- **🌕 Moon temperature in Moon noise measurements:** each measurement shows and stores the Moon's brightness temperature in the band at that moment (Krotikov & Troitskii / Linsky 1973 model: it follows the phase and swings more at higher frequencies), the range over the month and the Moon noise in the beam. «T Moon» column in the diary and the PDF, in orange because it is assumed.
+- **📐 Ref Spec:** DL3WDG's procedure in the WSJT-X tab and a reminder every session until the reference spectrum is redone.
+- **📇 EME stations:** dishes and power per band from the HB9Q logger (CSV in `C:\Claude.ai\hb9q-stazioni.csv`, corrections to tick).
+- **🔥 Amplifier:** passive, fan or water cooling, junction temperature over a Q65 cycle (60/120 s) or a whole QSO, margin, max power and duty, life (MTBF) per technology.
+- **❄️ Cooled or cryogenic LNA:** Peltier, dry ice, liquid nitrogen or cryocooler, and what changes on every band in NF, Tsys, G/T, Sun and Moon noise and echo.
+
 ## EMELab 0.1.15 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.15.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.15-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
