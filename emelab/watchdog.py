@@ -69,7 +69,7 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
             add("driverdish", "DriverDish", "bad" if late else "warn", "DriverDish non risponde" + (f": {dd_err}" if dd_err else "")
                 + (" · " + TELNET_HINT if refused(dd_err) else ""))
         elif dd.get("tracking") is False:
-            add("driverdish", "DriverDish", "bad", "DriverDish non insegue (TRACKING OFF)")
+            add("driverdish", "DriverDish", "warn", "DriverDish non insegue (TRACKING OFF)")
         else:
             add("driverdish", "DriverDish", "ok", f"TRACKING ON · {dd.get('target', '')}".strip(" ·"))
     if wsjtx_on:

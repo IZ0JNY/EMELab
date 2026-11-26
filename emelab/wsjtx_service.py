@@ -52,10 +52,9 @@ class Service:
         self.tail: wsjtx_logfile.LogTail | None = None
         self.on_tail_pos = None         # callback(path, offset) to remember where the file was read up to
         self.file_seen: datetime | None = None
-        self.auto_fix = True            # correct mode/submode/T-R in WSJT-X when they do not match the band
+        self.auto_fix = False           # Ivan: EMELab changes WSJT-X only when he presses «Applica il preset»
         self.problems: list[dict] = []  # what is wrong in the WSJT-X settings now (wsjtx_check)
         self.fixes = deque(maxlen=20)   # corrections sent to WSJT-X
-        self._fix_try: dict = {}        # what was sent → (attempts, last time)
         self._preset_band: str | None = None   # band whose preset (Rx DF too) was applied or found in place
         self._file_stop = threading.Event()
         self.all_tail: alltxt.LineTail | None = None     # ALL.TXT followed live (alltxt)
@@ -211,25 +210,8 @@ class Service:
         for p in probs:
             if p.get("cfg") and (not p.get("soft") or band != self._preset_band):    # Rx DF only on a band change
                 extra.update(p["cfg"])
-        if want is None and not extra:
-            self._fix_try = {}
-            if band and not m.get("transmitting"):
-                self._preset_band = band
-        elif self.auto_fix and not m.get("transmitting"):
-            key = (want or "") + "".join(f" {k}={v}" for k, v in sorted(extra.items()))
-            n, last = self._fix_try.get(key, (0, None))
-            now = datetime.now(timezone.utc)
-            if n < 3 and (last is None or (now - last).total_seconds() > 15):
-                if self.set_q65(want, **extra) if extra else self.set_q65(want):
-                    self._fix_try = {key: (n + 1, now)}
-                    self._preset_band = band
-                    to = " ".join(x for x in ((f"Q65-{want}" if want else ""),
-                                               *(f"{_FIX_NAMES.get(k, k)} {v} Hz" for k, v in sorted(extra.items()))) if x)
-                    self.fixes.appendleft({"utc": now, "to": to, "from": f"{m.get('mode')} {m.get('submode')}"})
-            elif n >= 3:
-                self._preset_band = band
-                probs.append({"code": "udp_requests", "msg": "WSJT-X non accetta le correzioni: in Settings → Reporting "
-                              "spunta «Accept UDP requests»", "detail": "", "fix": None})
+        if want is None and not extra and band and not m.get("transmitting"):
+            self._preset_band = band                     # preset found in place: Rx DF is flagged only on a band change
         self.problems = probs
 
     def _band(self):

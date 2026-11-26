@@ -481,15 +481,11 @@ def render(svc, sets):
     st.markdown("#### " + i18n.tr("✅ Controllo dei parametri per il QSO"))
     st.caption("EMELab confronta i valori di WSJT-X con il preset della banda (10GHz: Q65-60D, Tx e Rx 1000 Hz, CFOM; "
                "24GHz: Q65-60E, Tx e Rx 700 Hz; 47 e 76GHz: presunti come i 24GHz; Split «Rig»; tutti modificabili "
-               "qui sotto). Modo, sottomodo, T/R e F Tol li corregge da solo (serve "
-               "«Accept UDP requests» in WSJT-X), mai durante la trasmissione; Rx lo imposta al cambio di banda. Tx lo "
+               "qui sotto). EMELab cambia WSJT-X solo quando premi «⚙️ Applica il preset» (serve "
+               "«Accept UDP requests» in WSJT-X); altrimenti legge e segnala soltanto; Tx lo "
                "segnala soltanto; Doppler tracking, Split, Tx even/1st, Max Drift e Auto Seq non passano via UDP: li "
                "legge da WSJT-X.ini (che WSJT-X salva quando cambi un'impostazione). EMELab ascolta e legge file: "
                "non rallenta WSJT-X.")
-    fix = st.checkbox("Correggi da solo modo, sottomodo, T/R e F Tol", bool(sets.get("wsjtx_autofix", True)), key="wj_autofix")
-    if fix != svc.auto_fix:
-        svc.auto_fix = fix
-        openems_local.save_settings(wsjtx_autofix=fix)
     if band and _live(svc):
         _check_table(svc, sets, band)
     else:
