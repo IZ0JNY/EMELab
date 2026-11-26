@@ -512,13 +512,13 @@ def _clock_live():
     mode = next((v for k, v, _ in strip_items(stt, None, None, None, None, 0, None) if k == "Modo"), "—")
     mono = "font-family:ui-monospace,Consolas,monospace;font-weight:700"
     _html("<div style='display:grid;grid-template-columns:1fr 1.25fr;align-items:center;text-align:center;height:100%'>"
-          f"<div><span style='{mono};font-size:48px;line-height:1.05'>{now:%H:%M:%S}</span>"
+          f"<div><span style='{mono};font-size:44px;line-height:1.0'>{now:%H:%M:%S}</span>"
           f"<span style='font-size:18px;opacity:.75'> UTC</span>"
           f"<div style='font-size:17px;opacity:.75'>{html.escape(_date_it(now))}</div></div>"
           f"<div style='border-left:1px solid rgba(127,127,127,.35)'>"
-          f"<span style='{mono};font-size:48px;line-height:1.05;white-space:nowrap'>{_mhz(hz)[:-3] if hz else '—'}</span>"
+          f"<span style='{mono};font-size:44px;line-height:1.0;white-space:nowrap'>{_mhz(hz)[:-3] if hz else '—'}</span>"
           f"<span style='font-size:18px;opacity:.75'> MHz</span>"
-          f"<div style='{mono};font-size:24px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
+          f"<div style='{mono};font-size:22px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
 
 
 def _date_it(d: datetime) -> str:
