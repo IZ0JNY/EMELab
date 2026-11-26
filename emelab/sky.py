@@ -34,9 +34,22 @@ def sun_tb_from_flux(flux_sfu_15g4: float, f_ghz: float, diam_deg: float = 0.533
     return tb0 * (f_ghz / 15.4) ** -0.3
 
 
+MOON_TB_SOURCE = "Krotikov & Troitskii 1963; Linsky 1973"
+
+
 def moon_tb(f_ghz: float, phase_signed_deg: float) -> float:
-    t0, t1, lag = MOON_TB[band_key(f_ghz)]
-    return t0 + t1 * math.cos(math.radians(phase_signed_deg - lag))
+    return moon_tb_detail(f_ghz, phase_signed_deg)["tb"]
+
+
+def moon_tb_detail(f_ghz: float, phase_signed_deg: float) -> dict:
+    """Disk-average radio brightness temperature of the Moon (K) at f and the lunar phase, with the model terms.
+    It is the thermal emission from the first centimetres of regolith (deeper at longer wavelengths), not the
+    infrared temperature of the surface, which swings from ~100 K at night to ~390 K at local noon."""
+    b = band_key(f_ghz)
+    t0, t1, lag = MOON_TB[b]
+    return {"tb": t0 + t1 * math.cos(math.radians(phase_signed_deg - lag)), "t0": t0, "t1": t1, "lag_deg": lag,
+            "phase_deg": phase_signed_deg, "model_band": b, "extrapolated": abs(f_ghz - b) > 5,
+            "tb_min": t0 - t1, "tb_max": t0 + t1, "source": MOON_TB_SOURCE}
 
 
 def hpbw_deg(f_ghz: float, D_m: float, edge_taper_db: float = 12.0) -> float:

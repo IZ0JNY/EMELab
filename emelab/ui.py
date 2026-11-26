@@ -803,6 +803,40 @@ def _show_snapshot(c, kind):
                          + f" {e['beam_moon_db']:.1f} dB") if e else None)
     st.caption(i18n.tr("Doppler eco") + f" {c['doppler_hz']:+.0f} Hz · " + i18n.tr("allargamento") + f" {c['spread_hz']:.0f} Hz · "
                + i18n.tr("fase lunare") + f" {c['moon_phase_deg']:+.0f}° ({100 * c['moon_illum']:.0f} %)")
+    if kind == "moon":
+        _moon_tb_box(c)
+
+
+def _moon_tb_box(c):
+    """Moon brightness temperature at the moment of the measurement: model value, shown as assumed."""
+    m = c["moon"]
+    if m.get("tb") is None:
+        return
+    cols = st.columns(4)
+    cols[0].metric("Temperatura della Luna (Tb)", f"{m['tb']:.0f} K",
+                   help=i18n.tr("temperatura di brillanza media del disco nella banda, dal modello") +
+                   f" Tb = T0 + T1·cos(Φ − ξ) ({_moon_tb_src(m)}). " +
+                   i18n.tr("È l'emissione dei primi centimetri di suolo, non la temperatura della superficie all'infrarosso "
+                           "(da circa 100 K di notte a 390 K a mezzogiorno lunare)."))
+    if m.get("tb_t0") is not None:
+        cols[1].metric("Intervallo nel mese", f"{m['tb_min']:.0f}–{m['tb_max']:.0f} K",
+                       help=f"T0 {m['tb_t0']:.0f} K · T1 {m['tb_t1']:.0f} K · ξ {m['tb_lag_deg']:.0f}°: " +
+                       i18n.tr("il massimo arriva dopo la Luna piena perché il suolo si scalda in ritardo"))
+    cols[2].metric("Fase lunare (Φ)", f"{c['moon_phase_deg']:+.0f}°",
+                   help="0° Luna piena, ±180° Luna nuova, negativo mentre cresce")
+    cols[3].metric("Rumore lunare nel fascio", _fmt(m.get("t_src"), "{:.1f} K"),
+                   help="temperatura d'antenna dovuta alla Luna all'ingresso dell'LNA (dopo atmosfera e perdite): "
+                        "è quella che dà lo Y luna atteso")
+    note = i18n.tr("modello di fase per la banda più vicina") + f" ({m['tb_model_band']} GHz)" \
+        if m.get("tb_model_band") and abs(float(c["f_ghz"]) - m["tb_model_band"]) > 5 else ""
+    st.markdown(f"<span style='color:{ASSUMED_COLOR};font-size:0.85em'>" + i18n.tr("presunto") + "</span>"
+                f"<span style='font-size:0.85em'>: " + i18n.tr("temperatura della Luna dal modello") + f" {_moon_tb_src(m)}"
+                + (f"; {note}" if note else "") + "</span>", unsafe_allow_html=True)
+
+
+def _moon_tb_src(m):
+    from emelab import sky
+    return m.get("tb_source") or sky.MOON_TB_SOURCE
 
 
 # ------------------------------------------------------------------ log
@@ -825,7 +859,9 @@ def _log(D):
             tab.append({"ID": r["id"], "UTC": r["utc"].replace("T", " ").replace("Z", ""), "Banda": _bl(r["band_ghz"]), "Tipo": edb.KINDS.get(r["kind"], r["kind"]),
                         "Y (dB)": r["y_db"], "Y atteso": _r(ev.get("y_expected")), "ΔY": _r(ev.get("y_delta")),
                         "G/T misurato": _r(ev.get("gt_measured")), "ΔG/T": _r(ev.get("gt_delta")), "SNR": r["snr_db"],
-                        "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
+                        "SNR atteso": _r(ev.get("snr_expected")),
+                        "T Luna (K)": _r(_moon_tb_of(r), 0) if r["kind"] in ("moon", "echo", "qso") else None,
+                        "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
                         "AZ letto": r["az_read"], "EL letto": r["el_read"],
                         "Errore punt. (°)": _r((x.get("driverdish") or {}).get("err_deg"), 3),
                         "MHz": (x.get("wsjtx") or {}).get("freq_mhz"),
@@ -834,7 +870,15 @@ def _log(D):
         tr = i18n.tr                                   # pandas tables are not translated by the streamlit proxy
         df = pd.DataFrame([{tr(k): (tr(v) if k in ("Tipo", "Meteo") and isinstance(v, str) else v) for k, v in row.items()}
                            for row in tab])
-        st.dataframe(df, hide_index=True, width="stretch")
+        col = tr("T Luna (K)")
+        st.dataframe(df.style.apply(lambda cc: [f"color: {ASSUMED_COLOR}" if v == v and v is not None else "" for v in cc],
+                                    subset=[col]),
+                     hide_index=True, width="stretch")
+        if df[col].notna().any():
+            from emelab import sky
+            st.markdown(f"<span style='color:{ASSUMED_COLOR};font-size:0.85em'>" + i18n.tr("presunto") + "</span>"
+                        "<span style='font-size:0.85em'>: " + i18n.tr("T Luna = temperatura di brillanza della Luna nella banda "
+                        "al momento della misura, dal modello") + f" {sky.MOON_TB_SOURCE}</span>", unsafe_allow_html=True)
         c = st.columns(3)
         dl = c[0].selectbox("Elimina misura (ID)", [None] + [r["id"] for r in rows], key="em_del_m",
                             format_func=lambda i: "—" if i is None else str(i))
@@ -847,6 +891,16 @@ def _log(D):
     if up is not None and st.button("📥 Importa", key="em_imp_btn"):
         n = D.import_csv(up.getvalue().decode("utf-8"))
         st.success(i18n.tr("Misure importate") + f": {n}")
+
+
+def _moon_tb_of(r):
+    """Moon brightness temperature stored with a measurement; recomputed from the stored phase for older ones."""
+    from emelab import sky
+    c = r.get("calc") or {}
+    tb = (c.get("moon") or {}).get("tb")
+    if tb is None and c.get("moon_phase_deg") is not None and r.get("band_ghz"):
+        tb = sky.moon_tb(float(r["band_ghz"]), c["moon_phase_deg"])
+    return tb
 
 
 def _r(v, n=2):
@@ -2213,6 +2267,7 @@ def _prints_tab(D):
             r["_y_exp"], r["_y_delta"] = ev.get("y_expected"), ev.get("y_delta")
             src = (r.get("calc") or {}).get("sun" if r["kind"] == "sun" else "moon") or {}
             r["_el"] = src.get("el")
+            r["_tb"] = _moon_tb_of(r) if r["kind"] in ("moon", "echo", "qso") else None
         adv = []
         for s in sets.values():
             adv += [f"{s['name']}: {a}" for a in analysis.advice([r for r in rows if r.get("setup_id") == s["id"]], s)]

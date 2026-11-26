@@ -68,6 +68,9 @@ def snapshot(station: dict, setup: dict, dt: datetime, wx: dict | None = None, f
                      "ra": b.ra, "dec": b.dec, "a_slant_db": a, "t_sky": tsk, "tb": tb, "t_src": ta_src_rx,
                      "tsys": ts["sys"] if ts else float("nan"),
                      "y_db": sky.y_db(ta_src_rx, ts["sys"]) if ts else float("nan")}
+    md = sky.moon_tb_detail(f, ph)
+    out["moon"].update({"tb_t0": md["t0"], "tb_t1": md["t1"], "tb_lag_deg": md["lag_deg"], "tb_min": md["tb_min"],
+                        "tb_max": md["tb_max"], "tb_model_band": md["model_band"], "tb_source": md["source"]})
     out["sun_moon_deg"] = s.sun_moon_deg
     out["moon_phase_deg"] = ph
     out["moon_illum"] = s.moon_illum
