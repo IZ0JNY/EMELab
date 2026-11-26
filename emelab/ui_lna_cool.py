@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 import plotly.graph_objects as go
 import streamlit as _st
 
-from emelab import analysis, astro, chain, cooling, i18n, parts
+from emelab import analysis, astro, chain, i18n, parts
+from emelab import lna_cooling as cooling
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)

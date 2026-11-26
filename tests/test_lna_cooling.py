@@ -3,7 +3,8 @@ import os
 
 import pytest
 
-from emelab import analysis, cooling
+from emelab import analysis
+from emelab import lna_cooling as cooling
 
 
 def test_te_scales_with_physical_temperature():

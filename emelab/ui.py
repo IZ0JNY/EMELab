@@ -1496,6 +1496,7 @@ def _stations_tab(D):
         for kind, msg in st.session_state.pop("st_flash", None) or []:
             getattr(st, kind)(msg)
         _station_edit_box(D, rows)
+        _hb9q_box(D, rows)
         _qrz_box(D, [r["call"] for r in rows])
     if rows or D.station_imports():
         _stations_manage(D, [r["call"] for r in rows])
@@ -1579,6 +1580,46 @@ def _station_edit_box(D, rows):
             D.set_station_manual(call, {k: "" for k in D.MANUAL_FIELDS}, {b: None for b in man.get("bands") or {}})
             st.success(i18n.tr("Tornati i dati importati") + f": {call}")
             st.rerun()
+
+
+def _hb9q_box(D, rows):
+    """Dish and power per band from the HB9Q logger profiles (CSV file): compare, then write the ticked rows as
+    corrections by hand (✏️), which «↩️ Togli le correzioni a mano» takes away again."""
+    from emelab import hb9q
+    with st.expander("📡 Parabole e potenze dal logger HB9Q"):
+        st.caption("Carica il file CSV con i profili HB9Q (nominativo, banda, antenna, potenza). EMELab lo confronta con "
+                   "la tabella e scrive come correzioni a mano (✏️) solo le righe che spunti. Solo 10, 24, 47 e 76 GHz.")
+        up = st.file_uploader("File CSV di HB9Q", type=["csv"], key="st_hb9q_up")
+        if up is None:
+            return
+        import pandas as pd
+        cur = {r["call"]: D.directory_of(r.get("data", {})) for r in rows}
+        cmp_ = [r for r in hb9q.compare(hb9q.parse_csv(up.getvalue().decode("utf-8", "replace")), cur) if r["known"]]
+        n = {k: sum(r["state"] == k for r in cmp_) for k in ("nuovo", "manca", "diverso", "uguale")}
+        st.info(i18n.tr("Stazioni trovate su HB9Q") + f": {len({r['call'] for r in cmp_})} · "
+                + i18n.tr("bande nuove") + f": {n['nuovo']} · " + i18n.tr("dati mancanti") + f": {n['manca']} · "
+                + i18n.tr("diversi") + f": {n['diverso']} · " + i18n.tr("uguali") + f": {n['uguale']}")
+        todo = [r for r in cmp_ if r["state"] != "uguale"]
+        if not todo:
+            return
+        state_txt = {"nuovo": i18n.tr("banda nuova"), "manca": i18n.tr("completa"), "diverso": i18n.tr("diverso")}
+        df = pd.DataFrame([{"✔": r["state"] != "diverso", "Nominativo": r["call"], "Banda": _bl(r["band"]),
+                            "Cosa": state_txt[r["state"]],
+                            "Ora in EMELab": _station_text({"": {"antenna": r["cur_antenna"], "power_w": r["cur_power_w"]}})[2:],
+                            "HB9Q": _station_text({"": hb9q.merged(r)})[2:], "Profilo HB9Q": r["hb9q"]} for r in todo])
+        cols = list(df.columns)
+        df.columns = [i18n.tr(c) for c in cols]
+        st.caption("Spuntate già le bande nuove e i dati che mancano; quelle «diverso» spuntale tu se HB9Q è più aggiornato.")
+        ed = st.data_editor(df, hide_index=True, width="stretch", key="st_hb9q_tab" + _lang_key(),
+                            disabled=[c for c in df.columns if c != "✔"])
+        if st.button("💾 Applica le righe spuntate", key="st_hb9q_go"):
+            by_call = {}
+            for r, tick in zip(todo, ed["✔"]):
+                if tick:
+                    by_call.setdefault(r["call"], {})[r["band"]] = hb9q.merged(r)
+            for call, bands in by_call.items():
+                D.set_station_manual(call, None, bands)
+            st.success(i18n.tr("Stazioni corrette con HB9Q") + f": {len(by_call)}")
 
 
 def _blank(v):
@@ -2694,7 +2735,7 @@ def _sspa_tab(D):
                "riduce il calore.")
     st.divider()
     dev = _catalog_box(D, ("PA",), "sp")
-    _heatsink_box(dev, 10 ** ((tot + lout - 30) / 10) / max(int(n), 1), eff, "sp")
+    _heatsink_box(dev, 10 ** ((tot + lout - 30) / 10) / max(int(n), 1), eff, "sp", int(n))
 
 
 def _twt_tab(D):
@@ -3180,46 +3221,212 @@ def _device_editor(D, key, kind, sel):
         st.rerun()
 
 
-def _heatsink_box(dev, p_out_w, pae_default, key):
-    from emelab import catalog
-    st.subheader("🌡️ Dissipatore del dispositivo di potenza")
-    st.caption("La giunzione segue il periodo di trasmissione in millisecondi, il dissipatore fa la media su minuti: "
-               "con Q65 (50 % in trasmissione) il dissipatore vede metà potenza, la giunzione la vede tutta. "
+_COOL_COLORS = {"passivo": "#868e96", "ventilato": "#1c7ed6", "acqua": "#0ca678"}
+_COOL_NAMES = {"passivo": "🪨 Dissipatore passivo", "ventilato": "🌀 Dissipatore ventilato", "acqua": "💧 Piastra ad acqua"}
+
+
+def _a(label):
+    """Label of an input whose default is an assumed value: orange, like every «presunto» in EMELab."""
+    return f":orange[{label}]"
+
+
+def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
+    import pandas as pd
+    from emelab import cooling
+    st.subheader("🌡️ Raffreddamento del dispositivo di potenza")
+    st.caption("Tre modi di raffreddare lo stesso dispositivo: dissipatore passivo, lo stesso dissipatore con una ventola, "
+               "piastra ad acqua. La giunzione segue la trasmissione in millisecondi, il dissipatore con la sua costante di "
+               "tempo: un grosso dissipatore passivo fa la media su molti minuti, una piastra ad acqua segue ogni periodo. "
                "Resistenza termica giunzione–case dal datasheet del dispositivo.")
-    tech = (dev or {}).get("tech") or "GaN"
-    c = st.columns(4)
-    pw = c[0].number_input("Potenza d'uscita del dispositivo (W)", 0.1, 500.0, float(round(p_out_w, 1)), 0.5, key=f"{key}_hp")
-    pae = c[1].number_input("Efficienza (PAE, %)", 5.0, 80.0, float(pae_default), 1.0, key=f"{key}_he")
-    rjc = c[2].number_input("R giunzione–case (K/W)", 0.05, 50.0, 1.5, 0.05, key=f"{key}_hj",
+    th = cooling.device_thermal(dev)
+    dk = f"{key}_{(dev or {}).get('part') or 'x'}".replace(" ", "_")          # new device → its own defaults
+    c = st.columns(5)
+    techs = list(cooling.LIFE)
+    tech = c[0].selectbox("Tecnologia" if th["tech"] else _a("Tecnologia"), techs,
+                          index=techs.index(th["tech"]) if th["tech"] else 0, key=f"{dk}_tech",
+                          help="dal dispositivo scelto qui sopra; cambia Tj max, R giunzione–case tipica ed energia di attivazione")
+    pw = c[1].number_input("Potenza d'uscita del dispositivo (W)", 0.1, 500.0, float(round(p_out_w, 1)), 0.5, key=f"{key}_hp")
+    pae0 = th["pae_pct"] or float(pae_default)
+    pae = c[2].number_input("Efficienza (PAE, %)", 5.0, 80.0, pae0, 1.0, key=f"{dk}_he")
+    rjc0 = th["rth_jc"] or cooling.RJC_TYP[tech]
+    rjc = c[3].number_input("R giunzione–case (K/W)" if th["rth_jc"] else _a("R giunzione–case (K/W)"), 0.05, 50.0, rjc0, 0.05,
+                            key=f"{dk}_hj_{tech if not th['rth_jc'] else ''}",
                             help="«thermal resistance, channel to case» nel datasheet")
-    rcs = c[3].number_input("R case–dissipatore (K/W)", 0.0, 5.0, 0.2, 0.05, key=f"{key}_hc",
+    rcs = c[4].number_input(_a("R case–dissipatore (K/W)"), 0.0, 5.0, 0.2, 0.05, key=f"{key}_hc",
                             help="pasta termica o indio: 0.1–0.3 K/W; con isolante di più")
-    c = st.columns(4)
-    tamb = c[0].number_input("Temperatura dell'aria (°C)", -20.0, 60.0, 35.0, 1.0, key=f"{key}_ha",
+    c = st.columns(6)
+    ndev = c[5].number_input("Dispositivi sullo stesso dissipatore", 1, 16, int(n_dev), key=f"{key}_hn")
+    tamb = c[0].number_input(_a("Temperatura dell'aria (°C)"), -20.0, 60.0, 35.0, 1.0, key=f"{key}_ha",
                              help="al fuoco d'estate, al sole, la scatola si scalda: meglio abbondare")
-    tjmax = catalog.TJ_MAX.get(tech, 175.0)
-    tjt = c[1].number_input("Temperatura di giunzione obiettivo (°C)", 60.0, 250.0, min(150.0, tjmax - 25), 5.0, key=f"{key}_ht",
+    tjmax = th["tj_max"] or cooling.TJ_MAX[tech]
+    tjt = c[1].number_input("Temperatura di giunzione obiettivo (°C)", 60.0, 250.0, min(150.0, tjmax - 25), 5.0,
+                            key=f"{dk}_ht_{tech}",
                             help=i18n.tr("massimo assoluto tipico") + f" {tech}: {tjmax:.0f} °C; " +
-                                 i18n.tr("ogni 10 °C in meno raddoppia circa la vita del dispositivo"))
-    duty = c[2].number_input("Frazione in trasmissione", 0.05, 1.0, 0.5, 0.05, key=f"{key}_hd",
+                                 i18n.tr("ogni grado in meno allunga la vita: vedi MTBF qui sotto"))
+    tr_s = c[2].selectbox("Periodo T/R (s)", [15, 30, 60, 120, 300], index=2, key=f"{key}_htr",
+                          help="Q65-60: 60 s; Q65-120: 120 s")
+    duty = c[3].number_input("Frazione in trasmissione", 0.05, 1.0, 0.5, 0.05, key=f"{key}_hd",
                              help="Q65: 0.5; prove e beacon continui: 1")
-    h = catalog.heatsink(pw, pae, rjc, rcs, tamb, tjt, duty)
-    m = st.columns(4)
-    m[0].metric("Potenza dissipata", f"{h['p_diss_w']:.0f} W", f"DC {h['p_dc_w']:.0f} W", delta_color="off")
-    if not h["ok"]:
-        m[1].metric("Dissipatore", "impossibile")
+    period = tr_s / max(duty, 1e-3)
+    p_dc = pw / max(pae / 100, 1e-3)
+    p_d = max(p_dc - pw, 0.0)
+    c[4].metric("Potenza dissipata", f"{p_d:.0f} W", f"DC {p_dc:.0f} W", delta_color="off")
+    if dev and dev.get("part"):
+        st.caption(i18n.tr("Dispositivo") + f": **{dev['part']}** ({dev.get('maker') or '—'}) · {tech} · Tj max {tjmax:.0f} °C" +
+                   ("" if th["tj_max"] else " (" + i18n.tr("tipica della tecnologia") + ")") + " · R giunzione–case " +
+                   (i18n.tr("dal dispositivo") if th["rth_jc"] else i18n.tr("tipica della tecnologia, presunta")))
+
+    sink = {}
+    with st.expander("🧱 " + i18n.tr("Dissipatore alettato (passivo e ventilato)")):
+        st.caption("Piastra di alluminio con alette parallele, alette in verticale per il passivo; la ventola soffia lungo "
+                   "le alette. Misura il tuo dissipatore: i valori proposti sono un esempio.")
+        cc = st.columns(6)
+        for col, (k, lab, lo, hi, stp) in zip(cc, [("w_cm", "Larghezza (cm)", 3.0, 60.0, 0.5), ("l_cm", "Lunghezza alette (cm)", 3.0, 60.0, 0.5),
+                                                   ("base_mm", "Spessore base (mm)", 2.0, 30.0, 0.5), ("fin_h_mm", "Altezza alette (mm)", 5.0, 150.0, 1.0),
+                                                   ("n_fins", "Numero di alette", 2, 80, 1), ("fin_t_mm", "Spessore alette (mm)", 0.5, 10.0, 0.1)]):
+            d = cooling.SINK[k]
+            sink[k] = col.number_input(_a(lab), lo if k != "n_fins" else int(lo), hi if k != "n_fins" else int(hi),
+                                       d if k != "n_fins" else int(d), stp, key=f"{key}_s_{k}")
+        sink["emiss"] = 0.85
+    cc = st.columns(2)
+    with cc[0].container(border=True):
+        st.markdown("**" + i18n.tr(_COOL_NAMES["ventilato"]) + "**")
+        k2 = st.columns(2)
+        flow = k2[0].number_input(_a("Portata della ventola (m³/h)"), 5.0, 1000.0, 100.0, 5.0, key=f"{key}_ff",
+                                  help="a bocca libera, dal datasheet: 120 mm ≈ 100 m³/h (60 CFM); 1 CFM = 1.7 m³/h")
+        thr = k2[1].number_input(_a("Frazione che passa tra le alette"), 0.1, 1.0, 0.5, 0.05, key=f"{key}_ft",
+                                 help="la contropressione delle alette e le fughe ai lati riducono la portata: 0.4–0.6 "
+                                      "con la ventola appoggiata, 0.7–0.9 con un convogliatore")
+    with cc[1].container(border=True):
+        st.markdown("**" + i18n.tr(_COOL_NAMES["acqua"]) + "**")
+        k3 = st.columns(4)
+        flw = k3[0].number_input(_a("Portata del liquido (L/min)"), 0.1, 20.0, 2.0, 0.1, key=f"{key}_wf",
+                                 help="pompa da PC 1–2 L/min, pompa 12 V da camper 4–6 L/min")
+        tw = k3[1].number_input(_a("Liquido in ingresso (°C)"), 0.0, 70.0, float(tamb) + 3, 1.0, key=f"{key}_wt",
+                                help="con un buon radiatore il liquido resta 3–8 °C sopra l'aria")
+        rref = k3[2].number_input(_a("R piastra (K/W)"), 0.005, 1.0, 0.04, 0.005, key=f"{key}_wr", format="%.3f",
+                                  help="dal datasheet della piastra, alla portata di riferimento; piastra di rame 0.02–0.06 K/W")
+        fref = k3[3].number_input(_a("alla portata (L/min)"), 0.1, 20.0, 2.0, 0.1, key=f"{key}_wq")
+        k3 = st.columns(2)
+        cool = k3[0].selectbox("Liquido", list(cooling.COOLANTS), key=f"{key}_wc")
+        mcp = k3[1].number_input(_a("Massa della piastra di rame (kg)"), 0.02, 5.0, 0.25, 0.05, key=f"{key}_wm")
+    common = {"n_dev": int(ndev), "rth_jc": rjc, "rth_cs": rcs}
+    meth = {"passivo": dict(t_ref_c=tamb, sink=sink),
+            "ventilato": dict(t_ref_c=tamb, sink=sink, flow_m3h=flow, through=thr),
+            "acqua": dict(t_ref_c=tw, flow_lmin=flw, r_ref_kw=rref, flow_ref_lmin=fref, coolant=cool, mass_kg=mcp)}
+    lf = dict(cooling.LIFE.get(tech, cooling.LIFE["GaN"]))
+    with st.expander("⏳ " + i18n.tr("Vita del dispositivo (MTBF, modello di Arrhenius)")):
+        st.caption("I datasheet GaN e GaAs danno la vita mediana (MTTF) contro la temperatura di canale: una retta in scala "
+                   "logaritmica, il modello di Arrhenius. Copia dal grafico l'energia di attivazione e un punto della retta.")
+        k4 = st.columns(3)
+        ea = k4[0].number_input(_a("Energia di attivazione (eV)"), 0.3, 3.0, lf["ea_ev"], 0.05, key=f"{key}_le_{tech}",
+                                help="GaN su SiC 1.6–2.1 eV, GaAs pHEMT 1.3–1.6 eV, LDMOS e MOSFET 0.7–1.1 eV")
+        mref = k4[1].number_input(_a("MTTF di riferimento (ore)"), 1e3, 1e10, lf["mttf_h"], key=f"{key}_lm_{tech}", format="%.2e")
+        tref = k4[2].number_input(_a("alla temperatura di canale (°C)"), 50.0, 300.0, lf["t_ref_c"], 5.0, key=f"{key}_lt_{tech}")
+
+    res, rows = {}, []
+    for m, kw in meth.items():
+        args = {**common, **kw}
+        r = cooling.solve(m, p_d, duty=duty, period_s=period, **args)
+        r1 = cooling.solve(m, p_d, duty=1.0, period_s=period, **args)
+        pmx = cooling.max_p_diss(m, tjt, duty, period_s=period, **args)
+        pmc = cooling.max_p_diss(m, tjt, 1.0, period_s=period, **args)
+        dmx = cooling.max_duty(m, p_d, tjt, period_s=period, **args)
+        res[m] = (r, args)
+        life = cooling.mttf_h(r["tj_c"], ea, mref, tref)
+        rows.append({"Raffreddamento": i18n.tr(_COOL_NAMES[m]),
+                     "R verso aria o liquido (K/W)": round(r["r_kw"], 3),
+                     "Costante di tempo": f"{r['tau_s'] / 60:.1f} min" if r["tau_s"] >= 120 else f"{r['tau_s']:.0f} s",
+                     "Dissipatore a fine TX (°C)": round(r["t_sink_c"]),
+                     "Flangia a fine TX (°C)": round(r["t_case_c"]),
+                     "Giunzione a fine TX (°C)": round(r["tj_c"]),
+                     "Margine (°C)": round(tjt - r["tj_c"]),
+                     "Escursione per ciclo (°C)": round(r["tj_swing_k"]),
+                     "Giunzione in continuo (°C)": round(r1["tj_c"]),
+                     "Pout max in EME (W)": round(cooling.p_out_from_diss(pmx, pae), 1),
+                     "Pout max in continuo (W)": round(cooling.p_out_from_diss(pmc, pae), 1),
+                     "TX massima a questa potenza": "—" if dmx is None else f"{dmx * 100:.0f} %",
+                     "MTTF (ore in TX)": f"{life:,.0f}".replace(",", " "),
+                     "_life": life})
+    base = rows[0]["_life"]
+    for r in rows:
+        r["Vita rispetto al passivo"] = f"× {r.pop('_life') / base:.1f}"
+    df = pd.DataFrame(rows)
+    df.columns = [i18n.tr(x) for x in df.columns]
+    mcol = i18n.tr("Margine (°C)")
+    fmt = {i18n.tr("R verso aria o liquido (K/W)"): "{:.3f}", i18n.tr("Pout max in EME (W)"): "{:.1f}",
+           i18n.tr("Pout max in continuo (W)"): "{:.1f}"}
+    _st.dataframe(df.style.map(lambda v: "color:#c92a2a;font-weight:600" if isinstance(v, (int, float)) and v < 0 else "",
+                               subset=[mcol]).format(fmt), hide_index=True, width="stretch")
+    rp, rv, rw = (res[m][0] for m in ("passivo", "ventilato", "acqua"))
+    m4 = st.columns(4)
+    m4[0].metric("R dissipatore–aria massima", f"{(tjt - tamb - p_d * (rjc + rcs)) / max(duty * p_d * ndev, 1e-9):.2f} K/W",
+                 help=i18n.tr("il dissipatore più piccolo che basta, con la media del ciclo T/R"))
+    m4[1].metric("Ventola: aria tra le alette", f"{rv['u_ms']:.1f} m/s",
+                 f"+{rv['air_rise_k_per_w'] * p_d * ndev:.1f} °C " + i18n.tr("all'uscita"), delta_color="off")
+    m4[2].metric("Acqua: riscaldamento del liquido", f"+{rw['rise_k_per_w'] * p_d * ndev:.1f} °C", delta_color="off")
+    m4[3].metric("Massa del dissipatore", f"{rp['mass_kg']:.2f} kg")
+    if p_d * (rjc + rcs) + min(tamb, tw) > tjt:
         st.error("Anche con un dissipatore ideale la giunzione supera l'obiettivo: riduci la potenza, migliora il contatto "
                  "termico (R case–dissipatore) o usa un dispositivo con resistenza termica più bassa.")
-        return
-    m[1].metric("R dissipatore–aria massima", f"{h['rsa_max']:.2f} K/W")
-    m[2].metric("Temperatura del dissipatore", f"{h['t_sink_c']:.0f} °C")
-    m[3].metric("Giunzione in trasmissione continua", f"{h['tj_continuous_c']:.0f} °C",
-                help=i18n.tr("se trasmetti senza pause (prove, beacon) con lo stesso dissipatore"))
-    st.dataframe([{"Raffreddamento": i18n.tr(k), "Superficie alettata (cm²)": round(a * 1e4) if a == a else None,
-                   "Ordine di grandezza": i18n.tr("piastra alettata") + f" ≈ {math.sqrt(a * 1e4 / 6):.0f} × {math.sqrt(a * 1e4 / 6):.0f} cm"
-                   if a == a else ""} for k, a in h["area_m2"].items()], hide_index=True, width="stretch")
-    st.caption("Superficie stimata con un coefficiente di scambio efficace (alette comprese): naturale ≈ 7, ventola ≈ 35, "
-               "ventola forte ≈ 70 W/(m²·K). Per la scelta finale usa la curva K/W del produttore del dissipatore.")
+
+    st.markdown("#### 📈 " + i18n.tr("Riscaldamento nel tempo"))
+    k5 = st.columns(5)
+    kind = k5[0].radio("Simulazione", ["ciclo", "qso"], key=f"{key}_sk", horizontal=True,
+                       format_func=lambda x: {"ciclo": "Ciclo Q65 continuo", "qso": "QSO completo"}[x])
+    if kind == "ciclo":
+        mins = k5[1].number_input("Durata (min)", 2.0, 240.0, 30.0, 2.0, key=f"{key}_sm")
+        seq = cooling.schedule("ciclo", tr_s, minutes=mins)
+    else:
+        ncq = k5[1].number_input("Chiamate CQ prima del QSO", 0, 100, 10, key=f"{key}_sc")
+        nq = k5[2].number_input("Trasmissioni del QSO", 1, 40, 6, key=f"{key}_sq",
+                                help="nominativi e locator, rapporto, R+rapporto, RRR, 73…")
+        cl = k5[3].number_input("Ascolto finale (min)", 0.0, 60.0, 10.0, 1.0, key=f"{key}_sl")
+        seq = cooling.schedule("qso", tr_s, ncq, nq, cool_min=cl)
+    show_sink = k5[4].checkbox("Mostra il dissipatore", True, key=f"{key}_ss")
+    fig = go.Figure()
+    for m, (r, args) in res.items():
+        sim = cooling.simulate(m, p_d, seq=seq, dt_s=1.0 if tr_s >= 30 else 0.5, **args)
+        tmin = [t / 60 for t in sim["t_s"]]
+        fig.add_trace(go.Scatter(x=tmin, y=sim["tj_c"], name=i18n.tr(_COOL_NAMES[m]) + " · " + i18n.tr("giunzione"),
+                                 line=dict(color=_COOL_COLORS[m], width=1.6)))
+        if show_sink:
+            fig.add_trace(go.Scatter(x=tmin, y=sim["t_sink_c"], name=i18n.tr(_COOL_NAMES[m]) + " · " + i18n.tr("dissipatore"),
+                                     line=dict(color=_COOL_COLORS[m], width=1, dash="dot")))
+    fig.add_hline(y=tjt, line_dash="dash", line_color="#c92a2a",
+                  annotation_text=i18n.tr("obiettivo") + f" {tjt:.0f} °C", annotation_position="top left")
+    fig.update_layout(title=i18n.tr("Temperatura dalla partenza a freddo") + f" · T/R {tr_s} s",
+                      xaxis_title="min", yaxis_title="°C", height=380, margin=dict(l=10, r=10, t=40, b=10),
+                      legend=dict(orientation="h", y=-0.2))
+    st.plotly_chart(fig, width="stretch", key=f"{key}_simfig")
+    st.caption("Durante ogni trasmissione la giunzione sta sopra il dissipatore di P·(R giunzione–case + R case–dissipatore); "
+               "in ricezione torna alla temperatura del dissipatore. Il passivo si scalda lentamente ma continua a salire per "
+               "tutto il QSO, l'acqua arriva a regime in pochi periodi.")
+
+    import numpy as _np
+    tj_axis = _np.linspace(max(60.0, min(r["tj_c"] for r, _ in res.values()) - 30), max(tjmax, max(r["tj_c"] for r, _ in res.values()) + 10), 60)
+    fig2 = go.Figure(go.Scatter(x=tj_axis, y=[cooling.mttf_h(t, ea, mref, tref) for t in tj_axis], name="MTTF",
+                                line=dict(color="#495057")))
+    for m, (r, _) in res.items():
+        fig2.add_trace(go.Scatter(x=[r["tj_c"]], y=[cooling.mttf_h(r["tj_c"], ea, mref, tref)], mode="markers+text",
+                                  marker=dict(size=11, color=_COOL_COLORS[m]), name=i18n.tr(_COOL_NAMES[m]),
+                                  text=[f"{r['tj_c']:.0f} °C"], textposition="top right"))
+    fig2.add_vline(x=tjmax, line_dash="dot", line_color="#c92a2a")
+    fig2.update_layout(title=i18n.tr("Vita mediana contro temperatura di giunzione") + f" · {tech}, Ea {ea:.2f} eV",
+                       xaxis_title=i18n.tr("Temperatura di giunzione (°C)"), yaxis_title=i18n.tr("ore"), yaxis_type="log",
+                       yaxis_exponentformat="power",
+                       height=340, margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", y=-0.25))
+    st.plotly_chart(fig2, width="stretch", key=f"{key}_lifefig")
+    d10 = cooling.life_factor(tjt, tjt - 10, ea)
+    st.markdown(i18n.tr("Con questa energia di attivazione, 10 °C in meno di giunzione allungano la vita di") +
+                f" **× {d10:.1f}**; " + i18n.tr("dal passivo all'acqua") +
+                f" ({rp['tj_c']:.0f} → {rw['tj_c']:.0f} °C): **× {cooling.life_factor(rp['tj_c'], rw['tj_c'], ea):.1f}**.")
+    st.caption("Arrhenius conta solo la temperatura. Anche i cicli termici consumano le saldature e il die attach: "
+               "l'escursione per ciclo in tabella è più grande con l'acqua, perché la piastra si raffredda a ogni ricezione. "
+               "La vita è in ore di trasmissione alla temperatura di fine TX (stima prudente).")
+    st.markdown(f"<span style='color:{ASSUMED_COLOR}'>" + i18n.tr("presunto") + "</span>: " +
+                i18n.tr("i valori in arancione sono esempi tipici: sostituiscili con quelli del tuo hardware e dei datasheet."),
+                unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------------ guided start
