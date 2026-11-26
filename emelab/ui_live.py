@@ -21,7 +21,7 @@ from emelab import settings as openems_local
 st = i18n.wrap(_st)
 S = _st.session_state
 GPSDO_EVERY_S = 15
-CAM_MAX_H = 300
+CAM_MAX_H = 250
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 
 
@@ -195,13 +195,13 @@ def tab(D):
             _watchdog_quadrant()
         with q[1].container(border=True):
             _bottom_strip()
-        with st.container(border=True):
-            _clock_quadrant()
-    with right:    # the two stations · WSJT-X checks
+    with right:    # the two stations · WSJT-X checks · UTC clock + frequency (Ivan: the left column keeps its height)
         with st.container(border=True):
             _moon_quadrant(D)
         with st.container(border=True):
             _frag(2)(_wsjtx_checks_live)()
+        with st.container(border=True):
+            _clock_quadrant()
 
 
 _PAGE_CSS = """<style>
@@ -211,6 +211,8 @@ _PAGE_CSS = """<style>
 .st-key-lvin [data-testid=stColumn]>[data-testid=stVerticalBlock]>[data-testid=stLayoutWrapper]:last-child{flex-grow:1}
 .st-key-lvgrid>div>[data-testid=stHorizontalBlock]>[data-testid=stColumn]>[data-testid=stVerticalBlock]>[data-testid=stLayoutWrapper]:last-child>div,
 .st-key-lvin [data-testid=stColumn]>[data-testid=stVerticalBlock]>[data-testid=stLayoutWrapper]:last-child>div{height:100%}
+.st-key-lvin{flex-grow:1}.st-key-lvin>[data-testid=stHorizontalBlock]{height:100%}
+.st-key-lvin [data-testid=stColumn]>[data-testid=stVerticalBlock]{height:100%}
 .badge{padding:3px 10px;border-radius:6px;font-weight:600;font-size:14px;margin:2px 0;border:1px solid rgba(127,127,127,.35)}
 .badge.ok{background:rgba(46,160,67,.10);border-color:#2ea043;color:#1a7f37}
 .badge.warn{background:rgba(210,153,34,.12);border-color:#d29922;color:#9a6700}
@@ -306,34 +308,37 @@ def corrections(off: dict | None, prefix: str = "live"):
     p = rotor.plan(off["az_deg"], off["el_deg"], (d or {}).get("dish_el") or 0.0) if off else None
     if p and d:
         new_az, new_el = (d.get("off_az") or 0) + p["az"], (d.get("off_el") or 0) + p["el"]
-        st.markdown(i18n.tr("Correzione proposta") + f": **Az {p['az']:+.3f}°** · **El {p['el']:+.3f}°** → "
-                    + i18n.tr("offset di DriverDish") + f" Az {new_az:+.3f}° · El {new_el:+.3f}° (" + i18n.tr("limite") + " ±0,5°)")
-        if abs(p["az_full"]) > rotor.MAX_STEP_DEG or abs(p["el_full"]) > rotor.MAX_STEP_DEG:
-            st.caption("Scostamento grande: mando al massimo 0,25° per volta, ripremi dopo qualche secondo.")
+        big = abs(p["az_full"]) > rotor.MAX_STEP_DEG or abs(p["el_full"]) > rotor.MAX_STEP_DEG
+        st.caption(i18n.tr("Correzione proposta") + f": **Az {p['az']:+.3f}°** · **El {p['el']:+.3f}°** → "
+                   + i18n.tr("offset di DriverDish") + f" Az {new_az:+.3f}° · El {new_el:+.3f}° (" + i18n.tr("limite") + " ±0,5°)"
+                   + (" · " + i18n.tr("max 0,25° per volta") if big else ""))
     why = rotor.preflight(d)
     c = st.columns([3, 2])
     if c[0].button("✅ Applica queste correzioni", key=f"{prefix}_apply", type="primary", width="stretch",
                    disabled=bool(why) or not p):
         r = rotor.apply(p["az"], p["el"], d, host, port)
-        (st.success if r["ok"] else st.error)((i18n.tr("Inviato a DriverDish") + ": " + " · ".join(r["sent"])) if r["ok"]
-                                             else i18n.tr(r["error"]))
+        st.toast((i18n.tr("Inviato a DriverDish") + ": " + " · ".join(r["sent"])) if r["ok"] else i18n.tr(r["error"]))
     if c[1].button("⏹️ STOP correzioni", key=f"{prefix}_stop", width="stretch"):
         rotor.stop()
         st.rerun()
-    if why:
-        st.caption("⏸️ " + i18n.tr(why))
-    with st.expander(i18n.tr("Spostamenti a mano e registro")):
-        c = st.columns([1.5, 1, 1, 1, 1], vertical_alignment="bottom")
-        step = c[0].selectbox("Passo (°)", rotor.STEPS, index=1, key=f"{prefix}_step",
-                              format_func=lambda v: f"{v:g}".replace(".", ",") + "°")
-        for i, (lbl, ax, sg) in enumerate((("⬅️ Az−", "az", -1), ("➡️ Az+", "az", 1), ("⬆️ El+", "el", 1), ("⬇️ El−", "el", -1))):
-            if c[i + 1].button(lbl, key=f"{prefix}_mv{i}", disabled=bool(why), width="stretch"):
-                r = rotor.apply(sg * step if ax == "az" else 0.0, sg * step if ax == "el" else 0.0, d, host, port, reason="passo")
-                (st.success if r["ok"] else st.error)(" · ".join(r["sent"]) if r["ok"] else i18n.tr(r["error"]))
+    # manual moves always visible in one row (no expander: the page must not grow); the log in a pop-over
+    c = st.columns([1.5, 1, 1, 1, 1, 0.8], vertical_alignment="bottom", gap="small")
+    step = c[0].selectbox("Passo", rotor.STEPS, index=1, key=f"{prefix}_step", label_visibility="collapsed",
+                          format_func=lambda v: f"{v:g}".replace(".", ",") + "°")
+    for i, (lbl, ax, sg) in enumerate((("Az−", "az", -1), ("Az+", "az", 1), ("El+", "el", 1), ("El−", "el", -1))):
+        if c[i + 1].button(lbl, key=f"{prefix}_mv{i}", disabled=bool(why), width="stretch"):
+            r = rotor.apply(sg * step if ax == "az" else 0.0, sg * step if ax == "el" else 0.0, d, host, port, reason="passo")
+            if not r["ok"]:
+                st.toast(i18n.tr(r["error"]))
+    with c[5].popover("📜", help=i18n.tr("Registro dei comandi mandati a DriverDish")):
         log = rotor.totals()["log"]
         if log:
             st.dataframe([{"UTC": e["utc"], "Tipo": e["reason"], "Comandi": " ".join(e["cmds"])} for e in reversed(log)],
                          hide_index=True, width="stretch")
+        else:
+            st.caption("Nessun comando mandato.")
+    if why:
+        st.caption("⏸️ " + i18n.tr(why))
 
 
 def _driverdish_quadrant(sets):
@@ -551,14 +556,18 @@ def _clock_live():
     hz = stt.get("dial_hz")
     mode = next((v for k, v, _ in strip_items(stt, None, None, None, None, 0, None) if k == "Modo"), "—")
     mono = "font-family:ui-monospace,Consolas,monospace;font-weight:700"
-    _html("<div style='display:grid;grid-template-columns:1fr 1.25fr;align-items:center;text-align:center;height:100%'>"
-          f"<div><span style='{mono};font-size:44px;line-height:1.0'>{now:%H:%M:%S}</span>"
-          f"<span style='font-size:18px;opacity:.75'> UTC</span>"
-          f"<div style='font-size:17px;opacity:.75'>{html.escape(_date_it(now))}</div></div>"
+    _html("<div style='display:grid;grid-template-columns:1fr 1.3fr;align-items:center;text-align:center;height:100%'>"
+          f"<div><span style='{mono};font-size:26px;line-height:1.0'>{now:%H:%M:%S}</span>"
+          f"<span style='font-size:14px;opacity:.75'> UTC</span>"
+          f"<div style='font-size:13px;opacity:.75'>{html.escape(_date_it(now))}</div></div>"
           f"<div style='border-left:1px solid rgba(127,127,127,.35)'>"
-          f"<span style='{mono};font-size:44px;line-height:1.0;white-space:nowrap'>{_mhz(hz)[:-3] if hz else '—'}</span>"
-          f"<span style='font-size:18px;opacity:.75'> MHz</span>"
-          f"<div style='{mono};font-size:22px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
+          f"<span style='{mono};font-size:26px;line-height:1.0;white-space:nowrap'>{big_mhz(hz)}</span>"
+          f"<div style='{mono};font-size:15px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
+
+
+def big_mhz(hz) -> str:
+    """Ivan's format for the big frequency: 24.048.160MHz (dots every three digits, kHz resolution)."""
+    return (f"{hz / 1e6:,.3f}".replace(",", ".") + "MHz") if hz else "—"
 
 
 def _date_it(d: datetime) -> str:
@@ -613,9 +622,10 @@ def _wsjtx_checks_live():
         return
     rows = ui_wsjtx_panel.check_rows(svc, openems_local.load_settings(), band)
     ini = ui_wsjtx_panel.ini_state(openems_local.load_settings())
-    st.caption(stations.band_label(band) + " · " + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu")
-               + (" · " + i18n.tr("(WSJT-X.ini) = dal file salvato alle") + f" {ini['saved']:%H:%M} UTC; "
-                  + i18n.tr("WSJT-X lo riscrive quando chiudi la finestra Astro o WSJT-X") if ini.get("saved") else ""))
+    st.caption(stations.band_label(band) + " · ✅ ⚠️ ❔" + (" · WSJT-X.ini " + f"{ini['saved']:%H:%M} UTC" if ini.get("saved") else ""),
+               help=i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu") + ". "
+               + i18n.tr("(WSJT-X.ini) = dal file salvato alle") + " … UTC; "
+               + i18n.tr("WSJT-X lo riscrive quando chiudi la finestra Astro o WSJT-X"))
     cells = "".join(f"<span class='{'bad' if r['Stato'] == ui_wsjtx_panel.BAD else 'ok' if r['Stato'] == ui_wsjtx_panel.OK else ''}'>"
                     f"<i>{html.escape(i18n.tr(r['Parametro']))}</i><b>{html.escape(str(r['WSJT-X adesso']))}</b> {r['Stato']}</span>"
                     for r in rows)

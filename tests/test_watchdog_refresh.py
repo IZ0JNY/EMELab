@@ -63,3 +63,9 @@ def test_clock_state_reads_in_background(monkeypatch):
             break
         time.sleep(0.02)
     assert p.clock_state()["bkt"]["running"] is False
+
+
+def test_big_frequency_format():
+    assert ui_live.big_mhz(24_048_160_000) == "24.048.160MHz"
+    assert ui_live.big_mhz(10_368_100_000) == "10.368.100MHz"
+    assert ui_live.big_mhz(None) == "—"
