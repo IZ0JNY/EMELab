@@ -518,9 +518,7 @@ def panel_pairs(v: dict, local: str, towards: str, wx: dict | None) -> list:
             ("Distanza Luna", g("dist_km", ",.0f") + " km"), ("Sole–Luna", g("sun_moon", ".0f") + "°"),
             (i18n.tr("Dpol verso") + f" {towards}", g("dpol", "+.0f") + "°"),
             ("Perdita di polarizzazione", g("pol_loss_db", ".1f") + " dB"), ("Spread reciproco", g("spread_mutual_hz", ".0f") + " Hz"),
-            ("Doppler sul percorso", (format(v["dop_path_hz"] / 1000, "+.2f") if "dop_path_hz" in v else "—") + " kHz"),
-            ("Librazione reciproca", g("lib_mutual", ".3f") + "°/min"), ("Spread eco", g("spread_echo_hz", ".0f") + " Hz"), None,
-            *w]
+            ("Librazione reciproca", g("lib_mutual", ".3f") + "°/min"), *w]
 
 
 def _panel(title, color, v, ll, now, band, towards="DX"):
