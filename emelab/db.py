@@ -80,6 +80,14 @@ def default_path() -> Path:
     return config_dir() / "emelab.sqlite"
 
 
+
+def _loc_up(d: dict, *keys) -> dict:
+    """Maidenhead locators always in capitals, all six characters (Ivan: JN61PM, never JN61pm)."""
+    for k in keys:
+        if isinstance(d.get(k), str):
+            d[k] = d[k].strip().upper()
+    return d
+
 class DB:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else default_path()
@@ -91,10 +99,10 @@ class DB:
     # station ---------------------------------------------------------------
     def station(self) -> dict:
         r = self.con.execute("SELECT * FROM station WHERE id = 1").fetchone()
-        return dict(r) if r else {}
+        return _loc_up(dict(r), "locator") if r else {}
 
     def save_station(self, **kw):
-        cur = {**self.station(), **kw, "id": 1}
+        cur = _loc_up({**self.station(), **kw, "id": 1}, "locator")
         keys = ["id", "callsign", "locator", "lat", "lon", "height_m", "notes"]
         self.con.execute(f"INSERT OR REPLACE INTO station ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
                          [cur.get(k) for k in keys])
@@ -177,6 +185,7 @@ class DB:
                 if kw.get(k) not in (None, ""):
                     data.setdefault("orig", {})[k] = kw[k]
                 row[k] = v
+        _loc_up(row, "locator")
         row.update(call=call, data=json.dumps(data, default=str), updated_utc=iso_utc(datetime.now(timezone.utc)))
         keys = ["call", "locator", "name", "qth", "address", "country", "email", "eme", "data", "updated_utc"]
         self.con.execute(f"INSERT OR REPLACE INTO stations ({','.join(keys)}) VALUES ({','.join('?' * len(keys))})",
@@ -189,14 +198,14 @@ class DB:
         r = self.con.execute("SELECT * FROM stations WHERE call = ?", (call.upper(),)).fetchone()
         if not r:
             return None
-        d = dict(r)
+        d = _loc_up(dict(r), "locator")
         d["data"] = json.loads(d["data"] or "{}")
         return d
 
     def stations(self) -> list[dict]:
         out = []
         for r in self.con.execute("SELECT * FROM stations ORDER BY call"):
-            d = dict(r)
+            d = _loc_up(dict(r), "locator")
             d["data"] = json.loads(d["data"] or "{}")
             out.append(d)
         return out
@@ -466,7 +475,7 @@ class DB:
             a.append(call.upper())
         out = []
         for r in self.con.execute(q + " ORDER BY utc", a):
-            d = dict(r)
+            d = _loc_up(dict(r), "locator", "my_locator")
             for k in ("calc", "adif"):
                 d[k] = json.loads(d[k]) if d.get(k) else {}
             d["utc"] = parse_utc(d["utc"])

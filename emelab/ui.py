@@ -1921,8 +1921,15 @@ def _qso_qrz_fill(D, calls):
     sets = openems_local.load_settings()
     user, pw = sets.get("qrz_user", ""), sets.get("qrz_pw", "")
     with st.expander("🔎 QTH, nome e cognome da QRZ.com" + (f" ({len(todo)} " + i18n.tr("da cercare") + ")" if todo else "")):
-        if not (user and pw):
-            st.caption("Salva prima utente e password di QRZ.com nella scheda Stazioni EME (riquadro «🔎 QRZ.com»).")
+        if not (user and pw):     # 0.1.13: the QRZ.com login can be saved here too (Ivan looked for it in the Log)
+            st.caption("Usa il tuo account QRZ.com (servizio XML; per l'indirizzo completo serve l'abbonamento XML Logbook Data). "
+                       "Utente e password restano salvati solo su questo PC.")
+            c = st.columns(3)
+            u = c[0].text_input("Utente QRZ.com", user, key="q_qrz_user")
+            p = c[1].text_input("Password QRZ.com", pw, type="password", key="q_qrz_pw")
+            if c[2].button("💾 Salva accesso", key="q_qrz_save", disabled=not (u and p)):
+                openems_local.save_settings(qrz_user=u.strip(), qrz_pw=p)
+                st.rerun()
             return
         st.caption("Cerca su QRZ.com solo i nominativi del log non ancora cercati; i dati restano nel database delle "
                    "stazioni EME. Nome, cognome e QTH arrivano anche senza abbonamento XML di QRZ.com.")
