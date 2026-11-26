@@ -475,6 +475,8 @@ def _moon_live(D):
         vo = station_view(now, other, me, f_ghz)
         _panel(f"{call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
                towards=stn.get("callsign") or i18n.tr("me"))
+        _heading(f"{stn.get('callsign') or '—'} ↔ {call or '—'}", "#8b949e")
+        kv(common_pairs(v))
         st.caption(i18n.tr("Percorso Terra–Luna–Terra") + f" {v['path_km']:,.0f} km · " + i18n.tr("ritardo")
                    + f" {v['delay_s']:.3f} s · " + i18n.tr("polarizzazioni") + f" {v['pols']}")
     else:
@@ -525,16 +527,25 @@ def panel_pairs(v: dict, local: str, towards: str, wx: dict | None) -> list:
     return [("Ora locale", local), ("Luna Az", g("az", ".1f") + "°"), ("Luna El", g("el", ".1f") + "°"),
             ("Distanza Luna", g("dist_km", ",.0f") + " km"), ("Sole–Luna", g("sun_moon", ".0f") + "°"),
             (i18n.tr("Dpol verso") + f" {towards}", g("dpol", "+.0f") + "°"),
-            ("Perdita di polarizzazione", g("pol_loss_db", ".1f") + " dB"), ("Spread reciproco", g("spread_mutual_hz", ".0f") + " Hz"),
-            ("Librazione reciproca", g("lib_mutual", ".3f") + "°/min"), *w]
+            *w]
+
+
+def common_pairs(v: dict) -> list:
+    """What both stations share (pure): polarisation loss, mutual spread and libration."""
+    g = lambda k, fmt: format(v[k], fmt) if isinstance(v.get(k), (int, float)) else "—"
+    return [("Perdita di polarizzazione", g("pol_loss_db", ".1f") + " dB"), ("Spread reciproco", g("spread_mutual_hz", ".0f") + " Hz"),
+            ("Librazione reciproca", g("lib_mutual", ".3f") + "°/min")]
+
+
+def _heading(title: str, color: str):
+    _html(f"<div style='border-left:6px solid {color};padding:2px 10px;margin:4px 0 2px;font-size:16px;font-weight:700'>"
+          f"{html.escape(title)}</div>")
 
 
 def _panel(title, color, v, ll, now, band, towards="DX"):
     from emelab import tz
     loc, zone, _ = tz.local_time(ll[0], ll[1], now)
-    head = (f"<div style='border-left:6px solid {color};padding:2px 10px;margin:4px 0 2px;font-size:16px;font-weight:700'>"
-            f"{html.escape(title)}</div>")
-    st.html(head) if hasattr(_st, "html") else _st.markdown(head, unsafe_allow_html=True)
+    _heading(title, color)
     pairs = panel_pairs(v, f"{loc:%H:%M} ({zone.split('/')[-1]})", towards, weather_at(*ll))
     kv(pairs)
 
