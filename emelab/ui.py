@@ -2586,6 +2586,8 @@ def _lna_tab(D):
         ("Secondo LNA (stadio dopo con NF 2 dB)", {"nf2": 2.0})]], hide_index=True, width="stretch")
     st.caption("Confronta la NF del datasheet con quella che risulta dal rumore solare (scheda Analisi): la differenza "
                "racconta le perdite nascoste e il fuoco.")
+    from emelab import ui_lna_cool
+    ui_lna_cool.box(D, nf1, g1, nf2, l_pre, t_ant, tphys, gain, float(s["band_ghz"]) if s else None)
     st.divider()
     _catalog_box(D, ("LNA", "SW"), "ln")
 

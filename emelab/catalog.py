@@ -34,6 +34,16 @@ DEVICES = [
          notes="MMIC LNA 24–43.5 GHz", source="datasheet", check=True),
     dict(part="HMC565", maker="Analog Devices", type="LNA", f_lo=6.0, f_hi=20.0, gain_db=21.0, nf_db=2.5, tech="GaAs",
          notes="MMIC LNA 6–20 GHz (secondo stadio a 10 GHz)", source="datasheet", check=True),
+    # cryogenic LNA (noise temperature with the amplifier at about 5 K; cryo_k = physical temperature) ------------
+    dict(part="LNF-LNC6_20SC", maker="Low Noise Factory", type="LNA", f_lo=6.0, f_hi=20.0, gain_db=32.0, nf_db=0.06,
+         tech="InP", cryo_k=5.0, notes="LNA criogenico 6–20 GHz: 3.8 K di rumore raffreddato (dati misurati a 296 K e a 5 K)",
+         source="datasheet LNF 2023-03-03", check=True),
+    dict(part="LNF-LNC23_42B", maker="Low Noise Factory", type="LNA", f_lo=23.0, f_hi=42.0, gain_db=27.0, nf_db=0.12,
+         tech="InP", cryo_k=5.0, notes="LNA criogenico 23–42 GHz: 8.2 K di rumore raffreddato (dati misurati a 296 K e a 5 K)",
+         source="datasheet LNF 2023-03-01", check=True),
+    dict(part="CLNA-30-0800-1200-5P-ND", maker="Narda-MITEQ", type="LNA", f_lo=8.0, f_hi=12.0, gain_db=30.0, nf_db=0.12,
+         tech="InP", cryo_k=4.0, notes="LNA criogenico 8–12 GHz, 8 K tipici (mHEMT/InP fino a 4 K)",
+         source="nardamiteq.com, LNA criogenici", check=True),
     # power ----------------------------------------------------------------------------------------------------
     dict(part="QPA1010", maker="Qorvo", type="PA", f_lo=7.9, f_hi=11.0, psat_dbm=41.8, tech="GaN",
          notes="MMIC GaN su SiC, circa 15 W in banda X; usato a 10 GHz da IZ0JNY", source="datasheet Qorvo", check=True),

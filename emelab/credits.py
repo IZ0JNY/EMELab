@@ -55,12 +55,19 @@ BIBLIOGRAPHY = [   # (author, title, details) — the books behind the calculati
      "EME 2022, aggiornamento n. 3 (7 dicembre 2022): sottomodi Q65 e soglie in funzione dello spread, decodifica AP, "
      "media, spettro di riferimento, modo Echo, metodi Doppler e CFOM — "
      "https://archive.org/details/eme2022_using-wsjt-x-for-microwave-eme"),
+    ("Marian W. Pospieszalski", "Modeling of noise parameters of MESFETs and MODFETs and their frequency and "
+     "temperature dependence", "IEEE Trans. MTT 37(9), 1989 — rumore dei HEMT in funzione della temperatura fisica "
+     "(modello dell'LNA raffreddato)"),
+    ("Sergei RW3BP", "LNA raffreddato ad azoto liquido (CGY2190UH, banda 76 GHz)", "432 and Above EME News, "
+     "novembre 2016 (vol. 44 n. 10): Tsys 100 K, LNA ≈ 90 K (NF 1.2 dB), rumore solare 12.5 dB a 20° — "
+     "https://eme.radio/images/newsletter/pdf/2016-11-vol-044-10-highlight.pdf"),
 ]
 
 
 def render_bibliography(st):
+    from . import i18n
     for who, title, what in BIBLIOGRAPHY:
-        st.markdown(f"- {who}, ***{title}***" + (f" — {what}" if what else ""))
+        st.markdown(f"- {who}, ***{i18n.tr(title)}***" + (f" — {i18n.tr(what)}" if what else ""))
 
 
 def render(st):
