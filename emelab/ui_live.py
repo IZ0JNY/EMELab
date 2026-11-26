@@ -153,7 +153,8 @@ _KV_CSS = """<style>.kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr
 
 def kv(pairs) -> None:
     """Compact grid of label/value pairs (st.metric truncates the longer values)."""
-    cells = "".join(f"<div><i>{html.escape(i18n.tr(k))}</i><b>{html.escape(str(v))}</b></div>" for k, v in pairs)
+    cells = "".join("<div></div>" if p is None else f"<div><i>{html.escape(i18n.tr(p[0]))}</i><b>{html.escape(str(p[1]))}</b></div>"
+                    for p in pairs)
     h = _KV_CSS + f"<div class='kv'>{cells}</div>"
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
 
@@ -469,7 +470,7 @@ def _moon_live(D):
     v = station_view(now, me, other, f_ghz, stn.get("height_m") or 0.0)
     band = stations.band_label(f_ghz)
     _panel(f"{stn.get('callsign') or '—'} · {stn.get('locator') or ''}", "#1f6feb",
-           v, me, now, band, freq=(f"{hz / 1e6:,.3f} MHz".replace(",", " ") if hz else None), towards=call or "DX")
+           v, me, now, band, towards=call or "DX")
     if other:
         vo = station_view(now, other, me, f_ghz)
         _panel(f"{call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
@@ -509,27 +510,26 @@ def _date_it(d: datetime) -> str:
     return f"{days[d.weekday()]} {d.day} {months[d.month - 1]} {d.year}"
 
 
-def _panel(title, color, v, ll, now, band, freq=None, towards="DX"):
+def panel_pairs(v: dict, local: str, towards: str, wx: dict | None) -> list:
+    """The same fields in the same places for both stations (pure): 3 per row, None = empty cell."""
+    g = lambda k, fmt: format(v[k], fmt) if isinstance(v.get(k), (int, float)) else "—"
+    w = weather_pairs(wx) if wx else [("Temperatura", "—"), ("Umidità", "—"), ("Pioggia", "—")]
+    return [("Ora locale", local), ("Luna Az", g("az", ".1f") + "°"), ("Luna El", g("el", ".1f") + "°"),
+            ("Distanza Luna", g("dist_km", ",.0f") + " km"), ("Sole–Luna", g("sun_moon", ".0f") + "°"),
+            (i18n.tr("Dpol verso") + f" {towards}", g("dpol", "+.0f") + "°"),
+            ("Perdita di polarizzazione", g("pol_loss_db", ".1f") + " dB"), ("Spread reciproco", g("spread_mutual_hz", ".0f") + " Hz"),
+            ("Doppler sul percorso", (format(v["dop_path_hz"] / 1000, "+.2f") if "dop_path_hz" in v else "—") + " kHz"),
+            ("Librazione reciproca", g("lib_mutual", ".3f") + "°/min"), ("Spread eco", g("spread_echo_hz", ".0f") + " Hz"), None,
+            *w]
+
+
+def _panel(title, color, v, ll, now, band, towards="DX"):
     from emelab import tz
     loc, zone, _ = tz.local_time(ll[0], ll[1], now)
     head = (f"<div style='border-left:6px solid {color};padding:2px 10px;margin:4px 0 2px;font-size:16px;font-weight:700'>"
             f"{html.escape(title)}</div>")
     st.html(head) if hasattr(_st, "html") else _st.markdown(head, unsafe_allow_html=True)
-    pairs = [("Ora locale", f"{loc:%H:%M} ({zone.split('/')[-1]})")]
-    if freq:
-        pairs.append(("Frequenza WSJT-X", freq))
-    pairs += [("Luna Az", f"{v['az']:.1f}°"), ("Luna El", f"{v['el']:.1f}°"), ("Distanza Luna", f"{v['dist_km']:,.0f} km")]
-    if "dpol" in v:
-        pairs += [(i18n.tr("Dpol verso") + f" {towards}", f"{v['dpol']:+.0f}°"), ("Perdita di polarizzazione", f"{v['pol_loss_db']:.1f} dB"),
-                  ("Spread reciproco", f"{v['spread_mutual_hz']:.0f} Hz"), ("Doppler sul percorso", f"{v['dop_path_hz'] / 1000:+.2f} kHz"),
-                  ("Librazione reciproca", f"{v['lib_mutual']:.3f}°/min")]
-    pairs += [(i18n.tr("Doppler eco") + f" {band}", f"{v['dop_echo_hz'] / 1000:+.2f} kHz"), ("Spread eco", f"{v['spread_echo_hz']:.0f} Hz"),
-              ("Librazione eco", f"{v['lib_echo']:.3f}°/min"), ("Sole–Luna", f"{v['sun_moon']:.0f}°")]
-    wx = weather_at(*ll)
-    if wx:
-        pairs += weather_pairs(wx)
-    else:
-        pairs.append(("Meteo", "—"))
+    pairs = panel_pairs(v, f"{loc:%H:%M} ({zone.split('/')[-1]})", towards, weather_at(*ll))
     kv(pairs)
 
 
