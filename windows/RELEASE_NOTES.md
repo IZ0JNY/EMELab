@@ -1,3 +1,19 @@
+## EMELab 0.1.12 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.12.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.12-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **⏱️ Watchdog più reattivi:** BktTimeSync è controllato ogni 5 s in sottofondo e il GPSDO letto ogni 10 s. WSJT-X viene segnalato muto dopo 40 s e DriverDish si ricollega entro 5 s.
+- **DriverDish** in TRACKING OFF ora è giallo, non più rosso.
+- **📻 WSJT-X:** EMELab lo cambia solo quando premi «⚙️ Applica il preset»; altrimenti segnala soltanto le differenze.
+- **🔴 Live su una sola schermata**, anche con le correzioni al rotore aperte. Orario UTC e frequenza (scritta come 24.048.160MHz) stanno sotto il Controllo di WSJT-X. I pulsanti degli spostamenti a mano sono sempre visibili su una riga e il registro si apre in un riquadro a comparsa.
+
+### 🇬🇧 What's new
+- **⏱️ Faster watchdogs:** BktTimeSync is checked every 5 s in the background and the GPSDO is read every 10 s. WSJT-X is flagged silent after 40 s and DriverDish reconnects within 5 s.
+- **DriverDish** TRACKING OFF is now yellow, no longer red.
+- **📻 WSJT-X:** EMELab changes it only when you press «⚙️ Apply the preset»; otherwise it only flags the differences.
+- **🔴 Live fits one screen**, even with the rotor corrections open. The UTC clock and frequency (shown as 24.048.160MHz) sit under the WSJT-X check. The manual step buttons are always visible on one row and the log opens in a pop-over.
+
 ## EMELab 0.1.11 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.11.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.11-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
