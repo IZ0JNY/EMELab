@@ -1,4 +1,4 @@
-"""⚡ Automatic filling of a Sun / Moon measurement: DriverDish (read only), weather, WSJT-X, GPSDO, with fallbacks."""
+"""⚡ Automatic filling of a Sun / Moon measurement: DriverDish (read only), weather, WSJT-X, with fallbacks."""
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -53,20 +53,6 @@ def test_wsjtx_frequency_and_matching_setup():
     assert autofill.setup_for_band(sets, None, 1) == 1
 
 
-def test_gpsdo_usb_then_confirmation_fallback():
-    ok = lambda: {"gps_ok": True, "pll_ok": True, "loss_count": 0, "model": "mini"}
-    g = autofill.gpsdo_state({}, ok, NOW)
-    assert g["locked"] is True and g["source"] == "usb"
-    broken = lambda: {"error": "nessun GPSDO"}
-    recent = {"gpsdo_ok_utc": (NOW - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    g = autofill.gpsdo_state(recent, broken, NOW)
-    assert g["locked"] is True and g["source"] == "conferma" and g["usb_error"] == "nessun GPSDO"
-    old = {"gpsdo_ok_utc": (NOW - timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    assert autofill.gpsdo_state(old, None, NOW)["locked"] is False
-    assert autofill.gpsdo_state({}, None, NOW)["locked"] is None
-    assert autofill.gpsdo_state({"gpsdo_use": False}, ok, NOW) is None
-
-
 def test_weather_station_first_then_open_meteo():
     now = datetime.now(timezone.utc)
     stn_fn = lambda url: {"t_c": 5.0, "rh": 80.0, "p_hpa": 1010.0, "wx_source": "stazione"}
@@ -90,19 +76,19 @@ def test_collect_every_source_and_fallbacks():
     dd = lambda: {"status": STATUS, "utc": "2026-11-25T12:00:00Z", "via": "telnet"}
     wx = lambda: {"t_c": 7.04, "rh": 70.0, "p_hpa": 1012.0, "cloud_pct": 40.0, "rain_mmh": 0.0,
                   "wx_source": "Open-Meteo", "wx_utc": "2026-11-25T12:00:00Z"}
-    r = autofill.collect(STN, {"gpsdo_ok_utc": "2026-11-25T10:00:00Z"}, NOW, dd_reader=dd, wx_reader=wx,
+    r = autofill.collect(STN, {}, NOW, dd_reader=dd, wx_reader=wx,
                          wsjtx_status={"dial_hz": 10_368_100_000, "mode": "Q65", "submode": "D"},
                          wsjtx_seen=NOW - timedelta(seconds=5), now=NOW)
     f, x = r["fields"], r["extra"]
     assert f["wx_t_c"] == 7.04 and f["wx_cloud_pct"] == 40.0 and f["wx_source"] == "Open-Meteo"
-    assert x["driverdish"]["dish_az"] == 180.25 and x["wsjtx"]["band"] == "10G" and x["gpsdo"]["locked"] is True
+    assert x["driverdish"]["dish_az"] == 180.25 and x["wsjtx"]["band"] == "10G" and "gpsdo" not in x
     assert all(ok for _, ok, _ in r["report"])
 
     def down():
         raise ConnectionRefusedError("connection refused")
-    r = autofill.collect(STN, {"gpsdo_use": False}, NOW, dd_reader=down, wx_reader=lambda: {"tried": [("Open-Meteo", "x")]},
+    r = autofill.collect(STN, {}, NOW, dd_reader=down, wx_reader=lambda: {"tried": [("Open-Meteo", "x")]},
                          now=NOW)
-    assert "driverdish" not in r["extra"] and "gpsdo" not in r["extra"] and not r["fields"]
+    assert "driverdish" not in r["extra"] and not r["fields"]
     rep = {s: ok for s, ok, _ in r["report"]}
     assert rep == {"DriverDish": False, "meteo": False, "WSJT-X": False}
 
@@ -110,7 +96,7 @@ def test_collect_every_source_and_fallbacks():
 def test_saved_with_the_measurement(tmp_path):
     from emelab import db as edb
     D = edb.DB(tmp_path / "m.sqlite")
-    r = autofill.collect(STN, {"gpsdo_use": False}, NOW, dd_reader=lambda: {"status": STATUS, "utc": "x", "via": "monitor"},
+    r = autofill.collect(STN, {}, NOW, dd_reader=lambda: {"status": STATUS, "utc": "x", "via": "monitor"},
                          wx_reader=lambda: {}, now=NOW)
     D.add(utc=NOW, setup_id=1, band_ghz=10.368, kind="sun", y_db=12.0, az_read=180.25, el_read=30.08, extra=r["extra"])
     m = D.measurements()[0]
@@ -137,7 +123,7 @@ def test_new_measurement_tab_fills_itself_from_driverdish(tmp_path, monkeypatch)
                                                                    "cloud_pct": 100.0, "rain_mmh": 0.4,
                                                                    "wx_source": "Open-Meteo", "wx_utc": "2026-11-25T12:00:00Z"})
     _demo_station(tmp_path)
-    settings.save_settings(dd_host="127.0.0.1", dd_port=srv.getsockname()[1], dd_live=False, gpsdo_use=False)
+    settings.save_settings(dd_host="127.0.0.1", dd_port=srv.getsockname()[1], dd_live=False)
     try:
         at = AppTest.from_file(os.path.join(ROOT, "emelab_main.py"), default_timeout=120)
         at.run()

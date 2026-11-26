@@ -7,7 +7,6 @@ At the moment of the measurement EMELab gathers, from what is reachable on the s
   • the weather: the personal station first, Open-Meteo as fallback (temperature, humidity, pressure, wind, rain,
     clouds);
   • WSJT-X (UDP status): dial frequency, band, mode;
-  • the GPSDO (Leo Bodnar on USB): GPS signal and PLL lock, or the last manual confirmation;
   • the ephemeris of Sun and Moon come from analysis.snapshot (distance, Sun–Moon angle, sky temperature) and are
     saved with the measurement as always.
 Every source is optional: when one does not answer, the others still fill their fields, and the report says why.
@@ -22,7 +21,6 @@ from . import ea3hmj, stations
 
 DD_FRESH_S = 15          # a reading of the live DriverDish monitor older than this is not used
 WSJTX_FRESH_S = 90       # WSJT-X sends a status at least every 15 s while it runs
-GPSDO_CONFIRM_H = 12     # a manual «GPSDO locked» confirmation counts for 12 hours
 
 TARGETS = {"sun": "sun", "sole": "sun", "moon": "moon", "luna": "moon"}
 
@@ -109,37 +107,6 @@ def setup_for_band(setups: list[dict], freq_mhz: float | None, current_id=None):
     return fit[0]
 
 
-# ------------------------------------------------------------------ GPSDO
-def gpsdo_state(settings: dict, reader=None, now: datetime | None = None) -> dict | None:
-    """Lock state of the GPSDO: read from the Leo Bodnar on USB when possible, else the last manual confirmation.
-    None when the user does not use a GPSDO."""
-    now = now or datetime.now(timezone.utc)
-    if not settings.get("gpsdo_use", True):
-        return None
-    err = None
-    if reader is not None:
-        try:
-            r = reader()
-        except Exception as e:                      # HID missing, device busy…
-            r = {"error": str(e)}
-        if r and not r.get("error"):
-            return {"locked": bool(r.get("gps_ok") and r.get("pll_ok")), "gps_ok": r.get("gps_ok"),
-                    "pll_ok": r.get("pll_ok"), "loss_count": r.get("loss_count"), "model": r.get("model"),
-                    "source": "usb", "utc": _iso(now)}
-        err = (r or {}).get("error")
-    t = settings.get("gpsdo_ok_utc")
-    if t:
-        try:
-            last = datetime.fromisoformat(t.replace("Z", "+00:00"))
-        except ValueError:
-            last = None
-        if last is not None:
-            age_h = (now - last).total_seconds() / 3600.0
-            return {"locked": age_h <= GPSDO_CONFIRM_H, "source": "conferma", "confirmed_utc": t,
-                    "age_h": round(age_h, 1), "usb_error": err}
-    return {"locked": None, "source": "nessuna", "usb_error": err}
-
-
 # ------------------------------------------------------------------ weather
 def read_weather(lat: float, lon: float, dt: datetime, station_url: str = "", station_fn=None, open_meteo_fn=None) -> dict:
     """Personal station first (only for a measurement within 30 min of now: it gives the present), Open-Meteo after.
@@ -168,7 +135,7 @@ WX_KEYS = ("t_c", "rh", "p_hpa", "wind_ms", "rain_mmh", "cloud_pct")
 
 # ------------------------------------------------------------------ everything together
 def collect(stn: dict, settings: dict, dt: datetime, *, dd_monitor=None, wsjtx_status=None, wsjtx_seen=None,
-            gpsdo_reader=None, dd_reader=None, wx_reader=None, now: datetime | None = None) -> dict:
+            dd_reader=None, wx_reader=None, now: datetime | None = None) -> dict:
     """Read every source in parallel (each one with a short timeout) and return
         {"utc": capture time, "fields": values for the form, "extra": what is saved with the measurement,
          "report": [(source, ok, text)…]}.
@@ -181,10 +148,9 @@ def collect(stn: dict, settings: dict, dt: datetime, *, dd_monitor=None, wsjtx_s
     fields: dict = {}
     extra: dict = {"auto_utc": _iso(now)}
     report: list = []
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=2) as ex:
         f_dd = ex.submit(dd_reader)
         f_wx = ex.submit(wx_reader)
-        f_gp = ex.submit(gpsdo_state, settings, gpsdo_reader, now)
         # DriverDish
         try:
             r = f_dd.result(timeout=8)
@@ -207,14 +173,6 @@ def collect(stn: dict, settings: dict, dt: datetime, *, dd_monitor=None, wsjtx_s
             report.append(("meteo", True, w.get("wx_source") or ""))
         else:
             report.append(("meteo", False, "; ".join(f"{s}: {e}" for s, e in w.get("tried", [])) or "nessun dato"))
-        # GPSDO
-        try:
-            g = f_gp.result(timeout=10)
-        except Exception as e:
-            g = {"locked": None, "source": "nessuna", "usb_error": str(e)}
-        if g is not None:
-            extra["gpsdo"] = {k: v for k, v in g.items() if v is not None}
-            report.append(("GPSDO", g.get("locked") is True, g["source"]))
     # WSJT-X (already in memory, no waiting)
     wj = from_wsjtx(wsjtx_status, wsjtx_seen, now)
     if wj:

@@ -432,8 +432,8 @@ def _wx_fetch(src, stn, dt):
 
 
 def _autofill_cb(D):
-    """⚡ Read DriverDish, weather, WSJT-X and GPSDO now and put the values in the form (they stay editable)."""
-    from emelab import autofill, gpsdo
+    """⚡ Read DriverDish, weather and WSJT-X now and put the values in the form (they stay editable)."""
+    from emelab import autofill
     stn, sets = D.station(), D.setups()
     cfg = openems_local.load_settings()
     mon = None
@@ -441,10 +441,8 @@ def _autofill_cb(D):
         from emelab import ui_tracking
         mon = ui_tracking._monitor(*_st.session_state["ea_mon_key"])
     svc = _wsjtx_service()
-    use_hid = cfg.get("gpsdo_use", True) and cfg.get("gpsdo_autoread", True)
     now = datetime.now(timezone.utc)
-    r = autofill.collect(stn, cfg, now, dd_monitor=mon, wsjtx_status=dict(svc.status or {}), wsjtx_seen=svc.last_seen,
-                         gpsdo_reader=(lambda: gpsdo.read_leo_bodnar(1.5, satellites=False)) if use_hid else None, now=now)
+    r = autofill.collect(stn, cfg, now, dd_monitor=mon, wsjtx_status=dict(svc.status or {}), wsjtx_seen=svc.last_seen, now=now)
     ss = _st.session_state
     ss["em_n_date"], ss["em_n_time"] = now.date(), now.time().replace(second=0, microsecond=0)
     for k, v in r["fields"].items():
@@ -481,8 +479,8 @@ def _autofill_box(D, dt, setup):
     cfg = openems_local.load_settings()
     c = st.columns([1.6, 2.4])
     c[0].button("⚡ Leggi tutto adesso", key="em_af_btn", on_click=_autofill_cb, args=(D,), type="primary",
-                help="Ora UTC, posizione della parabola da DriverDish (EA3HMJ, solo lettura), meteo, frequenza di WSJT-X "
-                     "e stato del GPSDO. I valori restano modificabili prima di registrare.")
+                help="Ora UTC, posizione della parabola da DriverDish (EA3HMJ, solo lettura), meteo, frequenza di WSJT-X. "
+                     "I valori restano modificabili prima di registrare.")
     auto = c[1].checkbox("Leggi in automatico quando apro la scheda", bool(cfg.get("em_autofill", True)), key="em_af_auto")
     if auto != bool(cfg.get("em_autofill", True)):
         openems_local.save_settings(em_autofill=bool(auto))
@@ -490,11 +488,11 @@ def _autofill_box(D, dt, setup):
     if not r:
         st.caption("Solo lettura: a DriverDish EMELab chiede soltanto «status», mai comandi che muovono la parabola.")
         return None
-    ok = {"DriverDish": "🛰️", "meteo": "🌡️", "WSJT-X": "📻", "GPSDO": "⏱️"}
+    ok = {"DriverDish": "🛰️", "meteo": "🌡️", "WSJT-X": "📻"}
     st.caption(" · ".join(f"{ok.get(s, '')} {i18n.tr(s)} {'✅' if good else '⚠️'} {i18n.tr(txt)}" for s, good, txt in r["report"])
                + f" — {r['utc'].replace('T', ' ').replace('Z', '')} UTC")
     x = r["extra"]
-    dd, wj, gp = x.get("driverdish"), x.get("wsjtx"), x.get("gpsdo")
+    dd, wj = x.get("driverdish"), x.get("wsjtx")
     cols = st.columns(4)
     if dd:
         cols[0].metric("Parabola AZ / EL (DriverDish)", f"{_fmt(dd.get('dish_az'), '{:.2f}')}° / {_fmt(dd.get('dish_el'), '{:.2f}')}°",
@@ -511,11 +509,6 @@ def _autofill_box(D, dt, setup):
         if wj.get("band") and stations_band(setup) != wj["band"]:
             st.warning(i18n.tr("WSJT-X è su un'altra banda rispetto alla configurazione scelta") +
                        f": {wj.get('band_label')} ≠ {_bl(setup['band_ghz'])}")
-    if gp:
-        if gp.get("locked") is False:
-            st.warning(i18n.tr("GPSDO non agganciato o non confermato nelle ultime 12 ore: la frequenza potrebbe non essere precisa."))
-        elif gp.get("locked") is None:
-            st.caption("GPSDO: stato sconosciuto (conferma l'aggancio nella scheda GPSDO).")
     a = autofill.age_s(r["utc"], dt)
     if a is not None and a > 300:
         st.warning(i18n.tr("I dati automatici sono stati letti a un'ora diversa da quella della misura") +
@@ -605,7 +598,7 @@ def _new(D, tab_open: bool | None = None):
     opened = (tab_open is True and was is not True) or (tab_open is None and was is None and "em_af" not in _st.session_state)
     if opened:
         if openems_local.load_settings().get("em_autofill", True):
-            with st.spinner("Lettura di DriverDish, meteo, WSJT-X e GPSDO…"):
+            with st.spinner("Lettura di DriverDish, meteo e WSJT-X…"):
                 _autofill_cb(D)
     now = datetime.now(timezone.utc)
     c = st.columns(4)
@@ -704,12 +697,6 @@ def _show_snapshot(c, kind):
 
 
 # ------------------------------------------------------------------ log
-def _gp_cell(g) -> str:
-    if not g:
-        return ""
-    return "✅" if g.get("locked") else "⚠️" if g.get("locked") is False else "?"
-
-
 def _log(D):
     sets = {s["id"]: s for s in D.setups()}
     c = st.columns(2)
@@ -732,7 +719,7 @@ def _log(D):
                         "SNR atteso": _r(ev.get("snr_expected")), "EL": _r(src.get("el")), "AZ": _r(src.get("az")),
                         "AZ letto": r["az_read"], "EL letto": r["el_read"],
                         "Errore punt. (°)": _r((x.get("driverdish") or {}).get("err_deg"), 3),
-                        "MHz": (x.get("wsjtx") or {}).get("freq_mhz"), "GPSDO": _gp_cell(x.get("gpsdo")),
+                        "MHz": (x.get("wsjtx") or {}).get("freq_mhz"),
                         "°C": r["t_c"], "UR %": r["rh"], "hPa": r["p_hpa"], "Meteo": r["wx_source"], "Note": r["notes"] or ""})
         import pandas as pd
         tr = i18n.tr                                   # pandas tables are not translated by the streamlit proxy
