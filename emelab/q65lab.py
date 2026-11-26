@@ -34,7 +34,7 @@ import numpy as np
 FS = 12000                                   # sample rate of the decoder (WSJT-X)
 SUBMODES = "ABCDE"
 TR_OK = (15, 30, 60, 120, 300)
-KEEP_PERIODS = 30                            # recorded periods kept on disk for «decodifica di nuovo»
+KEEP_PERIODS = 120                           # recorded periods kept on disk for «decodifica di nuovo»
 
 
 # ------------------------------------------------------------------ the decoder program
@@ -419,6 +419,19 @@ def pick_device(devs: list[dict], wanted: str | None = None) -> dict | None:
     return best if score(best) >= 40 else None
 
 
+def same_card(devs: list[dict], name: str) -> list[dict]:
+    """The entries of one sound card in the other Windows audio systems (MME cuts names to 31 characters), in the
+    order to try them when one gives only silence: MME, WASAPI, DirectSound (never WDM-KS, which is exclusive)."""
+    key = (name or "").lower()[:31].strip()
+    order = {"MME": 0, "Windows WASAPI": 1, "Windows DirectSound": 2}
+    out = [d for d in devs if d["api"] in order and key and d["name"].lower()[:31].strip() == key]
+    return sorted(out, key=lambda d: order[d["api"]])
+
+
+SILENCE_DBFS = -85.0                          # below this the card gives zeros: blocked, muted or the wrong entry
+BAND_GHZ = {"10G": 10.368, "24G": 24.048, "47G": 47.088, "76G": 76.032, "122G": 122.25, "134G": 134.928}
+
+
 class Capture:
     """Sound card → mono float samples with their UTC time (sounddevice/PortAudio, shared with WSJT-X)."""
 
@@ -694,7 +707,8 @@ class Waterfall:
         z = np.array(self.rows)[::-1][:, cols]
         f = self.freqs[cols]
         if view.use_ref and self.ref is not None:
-            z = z - np.interp(f, self.ref[0], self.ref[1])[None, :]
+            # only the passband shape: never lift by more than 12 dB where the radio filter has cut (noise would light up)
+            z = z - np.maximum(np.interp(f, self.ref[0], self.ref[1]), -12.0)[None, :]
         z = z - np.median(z, axis=1, keepdims=True)                 # same level on every row
         if view.flatten and z.shape[1] > 80:
             base = np.percentile(z, 25, axis=0)                      # the passband shape, smoothed over ~60 bins
@@ -1085,6 +1099,9 @@ def decode_files(files: list[Path], params: dict, exe: Path | None = None, knobs
     exe = exe or find_decoder()
     if not exe:
         raise FileNotFoundError("q65lab non trovato")
+    files = [f for f in files if Path(f).is_file()]          # skip the ones deleted meanwhile (Q65 Lab keeps its last)
+    if not files:
+        return []
     folder = folder or (work_dir() / "files")
     lab = Decoder(exe, folder / "lab", knobs or lab_knobs(params.get("spread_hz")))
     ref = Decoder(exe, folder / "ref", WSJTX_KNOBS)

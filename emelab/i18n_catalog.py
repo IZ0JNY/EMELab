@@ -2317,4 +2317,11 @@ ENTRIES = [
     ('File da decodificare (in ordine di giorno e ora)', 'Files to decode (by day and time)'),
     ('Automatico da ALL.TXT', 'Automatic from ALL.TXT'),
     ("per ogni file prende da ALL.TXT il modo, la frequenza Rx e il DX che WSJT-X aveva a quell'ora; le medie ripartono quando cambiano", 'for each file it takes from ALL.TXT the mode, Rx frequency and DX WSJT-X had at that time; the averages restart when they change'),
+    ('📻 Modo', '📻 Mode'),
+    ('Modo e banda', 'Mode and band'),
+    ('A mano', 'By hand'),
+    ('Come WSJT-X: modo, banda, Rx e F Tol seguono WSJT-X da soli. A mano: solo per Q65 Lab, WSJT-X non viene toccato', 'As WSJT-X: mode, band, Rx and F Tol follow WSJT-X by themselves. By hand: for Q65 Lab only, WSJT-X is not touched'),
+    ('modo e banda a mano', 'mode and band by hand'),
+    ('Solo silenzio dalla scheda audio: provo', 'Only silence from the sound card: trying'),
+    ("Q65 Lab riceve solo silenzio dalla scheda audio (sotto −85 dBFS), anche provando le altre voci della stessa scheda. Se la radio è accesa con l'antenna collegata, controlla: Impostazioni di Windows → Privacy e sicurezza → Microfono → «Consenti alle app desktop di accedere al microfono» acceso (EMELab è un'app desktop Python); il volume di «Microphone (USB Audio CODEC)» in Impostazioni → Sistema → Audio; poi premi ⏹ e ▶️. WSJT-X intanto continua a ricevere normalmente.", 'Q65 Lab gets only silence from the sound card (below −85 dBFS), also on the other entries of the same card. If the radio is on with the antenna connected, check: Windows Settings → Privacy & security → Microphone → «Let desktop apps access your microphone» on (EMELab is a Python desktop app); the volume of «Microphone (USB Audio CODEC)» in Settings → System → Sound; then press ⏹ and ▶️. WSJT-X keeps receiving normally.'),
 ]
