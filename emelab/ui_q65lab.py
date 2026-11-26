@@ -139,7 +139,7 @@ def tab(D=None):
 
 
 def _header(eng: q65lab.Engine, sets: dict):
-    c = st.columns([5.2, 1.25, 1.1, 2.2], vertical_alignment="center")
+    c = st.columns([4.6, 1.25, 1.1, 1.15, 2.2], vertical_alignment="center")
     c[0].markdown("<div class='qx-head'><span class='qx-title'>🧪 Q65 Lab</span><span class='qx-sub'>"
                   + _t("decoder sperimentale accanto a WSJT-X · stesso audio, due decodifiche, nessuna modifica a WSJT-X")
                   + "</span></div>", unsafe_allow_html=True)
@@ -156,7 +156,9 @@ def _header(eng: q65lab.Engine, sets: dict):
                    help="azzera le medie dei due decoder (come «Clear Avg» di WSJT-X)"):
         eng.clear_avg()
         st.toast(i18n.tr("Medie azzerate"), icon="🧹")
-    prof = c[3].selectbox("Profilo Q65 Lab", list(PROFILES), format_func=lambda k: i18n.tr(PROFILES[k]),
+    with c[3].popover("🌊 Waterfall", width="stretch"):
+        _wf_controls(sets)
+    prof = c[4].selectbox("Profilo Q65 Lab", list(PROFILES), format_func=lambda k: i18n.tr(PROFILES[k]),
                           index=list(PROFILES).index(eng.mode), key="qx_profile", label_visibility="collapsed",
                           help="Automatico: metrica di WSJT-X fino a 80 Hz di spread, campana e smussatura 2× fino a "
                                "200 Hz, 3× oltre. Sempre media lineare.")
@@ -166,6 +168,78 @@ def _header(eng: q65lab.Engine, sets: dict):
     if sets.get("q65lab_on") and not eng.running and eng.exe and not S.get("qx_autostart_tried"):
         S["qx_autostart_tried"] = True                  # it was listening when EMELab was closed: starts again
         _start(eng, sets, quiet=True)
+
+
+PALETTE_NAMES = {"wsjtx": "Come WSJT-X", "blue": "Blu", "gray": "Grigio", "warm": "Caldo"}
+WF_KEYS = ("auto", "start", "span", "navg", "gain", "zero", "palette", "flatten", "use_ref", "spectrum")
+
+
+def _wf_saved(sets: dict) -> dict:
+    """The waterfall choices: saved in EMELab, else those of the WSJT-X Wide Graph (read from WSJT-X.ini), automatic."""
+    v = sets.get("q65lab_wf")
+    if isinstance(v, dict) and v:
+        return {"auto": True, **{k: v[k] for k in WF_KEYS if k in v}}
+    return {"auto": True, **q65lab.ini_widegraph(wsjtx_ini.find(sets.get("wsjtx_file") or None))}
+
+
+def _wf_controls(sets: dict):
+    """The controls of the WSJT-X Wide Graph; in «Automatico» Q65 Lab chooses the view and the levels itself."""
+    v = {**q65lab.WfView().__dict__, **_wf_saved(sets)}
+    ref = q65lab.refspec_path(wsjtx_ini.find(sets.get("wsjtx_file") or None))
+    new = {"auto": st.toggle("Automatico", value=bool(v["auto"]), key="qx_wf_auto",
+                             help="zoom da Rx − F Tol alla larghezza del sottomodo + F Tol, livelli dal rumore, "
+                                  "spettro di riferimento di WSJT-X se c'è")}
+    c = st.columns(2)
+    new["start"] = c[0].number_input("Inizio (Hz)", 0, 4500, int(v["start"]), 50, key="qx_wf_start", disabled=new["auto"])
+    new["span"] = c[1].number_input("Larghezza (Hz)", 200, 5000, int(v["span"]), 100, key="qx_wf_span", disabled=new["auto"])
+    new["navg"] = st.slider("N Avg (velocità)", 1, 20, int(v["navg"]), key="qx_wf_navg",
+                            help="una riga ogni N × 0,2 s, come in WSJT-X: più alto = più lento e più pulito")
+    c = st.columns(2)
+    new["gain"] = c[0].slider("Guadagno", -50, 50, int(v["gain"]), key="qx_wf_gain")
+    new["zero"] = c[1].slider("Zero", -50, 50, int(v["zero"]), key="qx_wf_zero")
+    new["palette"] = st.selectbox("Palette", list(PALETTE_NAMES), format_func=lambda k: i18n.tr(PALETTE_NAMES[k]),
+                                  index=list(PALETTE_NAMES).index(v["palette"]) if v["palette"] in PALETTE_NAMES else 0,
+                                  key="qx_wf_palette")
+    c = st.columns([1, 1.25, 1.1])
+    new["flatten"] = c[0].checkbox("Flatten", value=bool(v["flatten"]), key="qx_wf_flatten", disabled=new["auto"])
+    new["use_ref"] = c[1].checkbox("Ref Spec", value=bool(v["use_ref"]) and ref is not None, key="qx_wf_ref",
+                                   disabled=new["auto"] or ref is None,
+                                   help="refspec.dat di WSJT-X (Tools → Measure reference spectrum), letto senza modificarlo"
+                                   if ref else "refspec.dat di WSJT-X non trovato")
+    new["spectrum"] = c[2].checkbox("Spettro", value=bool(v["spectrum"]) or new["auto"], key="qx_wf_spec",
+                                    disabled=new["auto"],
+                                    help="spettro cumulativo del periodo sotto il waterfall")
+    if st.button("↩️ Come la Wide Graph di WSJT-X", key="qx_wf_reset", width="stretch"):
+        openems_local.save_settings(q65lab_wf={})
+        for k in list(S.keys()):
+            if str(k).startswith("qx_wf_"):
+                del S[k]
+        st.rerun()
+    if any(new[k] != v.get(k) for k in new):
+        openems_local.save_settings(q65lab_wf=new)
+
+
+def _wf_view(eng: q65lab.Engine, sets: dict, p: dict) -> tuple[q65lab.WfView, bool]:
+    """The view to draw now (adapted to the situation in «Automatico») and whether the reference spectrum is used."""
+    v = _wf_saved(sets)
+    base = q65lab.WfView(**{k: v[k] for k in WF_KEYS if k != "auto" and k in v})
+    path = q65lab.refspec_path(wsjtx_ini.find(sets.get("wsjtx_file") or None))
+    if path:
+        stamp = (str(path), path.stat().st_mtime)
+        if S.get("qx_ref_stamp") != stamp:
+            eng.waterfall.ref = q65lab.read_refspec(path)
+            S["qx_ref_stamp"] = stamp
+    else:
+        eng.waterfall.ref = None
+    if v.get("auto", True):
+        view = q65lab.auto_view(p, base)
+        view.flatten = True
+        view.use_ref = eng.waterfall.ref is not None
+        view.spectrum = True
+    else:
+        view = base
+    eng.waterfall.step = view.step()
+    return view, bool(v.get("auto", True))
 
 
 def _start(eng: q65lab.Engine, sets: dict, quiet: bool = False):
@@ -239,8 +313,16 @@ def _live(eng: q65lab.Engine):
     with left_c.container(border=True):
         _html(f"<div class='qx-sec'>🌊 {_t('Waterfall')}</div>")
         marks = [(x.utc.timestamp(), x.utc.strftime("%H:%M:%S")) for x in periods[-12:]]
-        img = eng.waterfall.image(p["rx_hz"], p["ftol"], width=1100, height=330, marks=marks, dark=True)
+        view, auto = _wf_view(eng, openems_local.load_settings(), p)
+        img = eng.waterfall.image(p["rx_hz"], p["ftol"], width=1100, height=340, marks=marks, dark=True, view=view,
+                                  spec_rows=int(p["tr"] / max(view.step(), 0.2)), spread_hz=p.get("spread_hz"))
         st.image(img, width="stretch")
+        tr_ = eng.waterfall.trace
+        note = (f"{i18n.tr('automatico')} {view.start}–{view.start + view.span} Hz" if auto else
+                f"{view.start}–{view.start + view.span} Hz") + (" · Ref Spec" if view.use_ref else "")
+        if tr_:
+            note += " · " + i18n.tr("possibile traccia a") + f" {tr_[0]:.0f} Hz, +{tr_[1]:.1f} dB " + i18n.tr("sul rumore")
+        st.caption("🌊 " + note)
         last = next((x for x in reversed(done) if x.lab.get("red")), None)
         if last:
             st.plotly_chart(_sync_fig(last, p), width="stretch", key="qx_sync", config={"displayModeBar": False})
@@ -259,14 +341,17 @@ def _live(eng: q65lab.Engine):
         st.caption("⚠️ " + " · ".join(list(eng.errors)[-3:]))
 
 
-def _table(rows_all, mycall: str, skipped=()) -> str:
+def _table(rows_all, mycall: str, skipped=(), dated: bool = False, limit: int = 40) -> str:
     mycall = (mycall or "").upper()
     head = ("<tr><th>UTC</th><th>dB</th><th>DT</th><th>Freq</th><th>" + _t("Messaggio") + "</th><th></th></tr>")
     body = []
-    for x, rows in rows_all[:40]:
+    for x, rows in rows_all[:limit]:
         navg = x.lab.get("navg") or (0, 0)
         ms = x.lab.get("ms")
-        info = f"{x.utc:%H:%M:%S} · {x.knobs.label()}" + (f" · media {max(navg)}" if max(navg) > 1 else "") \
+        when = f"{x.utc:%d/%m/%Y %H:%M:%S}" if dated else f"{x.utc:%H:%M:%S}"
+        if dated and x.params.get("submode"):
+            when += f" · Q65-{x.params.get('tr', 60)}{x.params['submode']} · Rx {x.params.get('rx_hz')}"
+        info = f"{when} · {x.knobs.label()}" + (f" · media {max(navg)}" if max(navg) > 1 else "") \
             + (f" · {ms / 1000:.1f} s" if ms else "")
         body.append(f"<tr class='per'><td colspan='6'>{html.escape(i18n.tr(info))}</td></tr>")
         if not rows:
@@ -322,62 +407,113 @@ def _sync_fig(period: q65lab.Period, p: dict):
 
 
 # ------------------------------------------------------------------ saved WSJT-X periods
+def _alltxt_path(sets: dict):
+    try:
+        from emelab import alltxt
+        ini = wsjtx_ini.find(sets.get("wsjtx_file") or None)
+        cand = (ini.parent / "ALL.TXT") if ini else None
+        return cand if cand and cand.is_file() else alltxt.find_default()
+    except Exception:
+        return None
+
+
+def _file_label(path) -> str:
+    from pathlib import Path
+    t = q65lab.file_time(path)
+    return f"{t:%d/%m/%Y %H:%M:%S} · {Path(path).name}" if t.year > 1 else Path(path).name
+
+
 def _saved_files(eng: q65lab.Engine, sets: dict):
+    from pathlib import Path
     with st.expander("📂 Periodi salvati da WSJT-X: decodificali con Q65 Lab"):
-        folder = q65lab.save_dir(wsjtx_ini.find(sets.get("wsjtx_file") or None))
-        st.caption("WSJT-X salva ogni periodo con Save → Save all (o Save decoded) nella cartella «save» accanto a "
-                   "WSJT-X.ini. EMELab li legge senza modificarli e li decodifica in ordine con i due decoder, medie "
-                   "comprese: è il confronto più onesto, sullo stesso audio.")
-        files = q65lab.saved_files(folder)
-        up = st.file_uploader("…oppure carica dei .wav", type=["wav"], accept_multiple_files=True, key="qx_up")
-        if folder:
-            st.caption(i18n.tr("Cartella") + f": {folder} · {len(files)} " + i18n.tr("file"))
-        elif not up:
-            st.info("Cartella «save» di WSJT-X non trovata: attiva Save → Save all in WSJT-X, oppure carica i file qui.")
-        names = [f["name"] for f in files]
-        pick = st.multiselect("File da decodificare", names, default=names[:min(10, len(names))], key="qx_pick",
-                              help="i più recenti per primi; vengono decodificati in ordine di tempo")
+        ini = wsjtx_ini.find(sets.get("wsjtx_file") or None)
+        folder = q65lab.save_dir(ini)
+        own = eng.folder / "rx"
+        st.caption("Scegli i .wav salvati da WSJT-X (Save → Save all) o quelli registrati da Q65 Lab mentre ascolta: "
+                   "EMELab li legge senza modificarli, li mette in ordine di giorno e ora e li decodifica con i due "
+                   "decoder, medie comprese. Con ALL.TXT confronta anche quello che ha decodificato WSJT-X.")
+        sel = [Path(x) for x in S.get("qx_sel", [])]
+        c = st.columns([1.3, 1.3, 1.1, 3.3], vertical_alignment="center")
+        start_dir = folder if folder and any(folder.glob("*.wav")) else own
+        if c[0].button("📂 Seleziona wav", key="qx_pickwav", type="primary", width="stretch",
+                       help="apre la finestra di Windows nella cartella «save» di WSJT-X: puoi sceglierne più di uno"):
+            got = q65lab.pick_wav_files(start_dir)
+            if got is None:
+                S["qx_nodialog"] = True
+            elif got:
+                sel = sorted({*sel, *got}, key=lambda f: (q65lab.file_time(f), str(f)))
+                S["qx_sel"] = [str(x) for x in sel]
+        own_files = sorted(own.glob("*.wav")) if own.is_dir() else []
+        if c[1].button("🎙️ Registrati da Q65 Lab", key="qx_own", width="stretch", disabled=not own_files,
+                       help="gli ultimi periodi ascoltati da Q65 Lab (cartella q65lab/rx)"):
+            sel = sorted({*sel, *own_files}, key=lambda f: (q65lab.file_time(f), str(f)))
+            S["qx_sel"] = [str(x) for x in sel]
+        if c[2].button("🗑️ Svuota", key="qx_selclear", width="stretch", disabled=not sel):
+            sel = []
+            S["qx_sel"] = []
+        n_saved = len(list(folder.glob("*.wav"))) if folder else 0
+        c[3].caption(i18n.tr("Cartella") + f": {folder or '—'} · {n_saved} " + i18n.tr("file")
+                     + ("" if n_saved else " · " + i18n.tr("in WSJT-X attiva Save → Save all per registrare i periodi")))
+        up = None
+        if S.get("qx_nodialog"):
+            up = st.file_uploader("…oppure carica dei .wav", type=["wav"], accept_multiple_files=True, key="qx_up")
+        if sel:
+            sel = sorted(sel, key=lambda f: (q65lab.file_time(f), str(f)))
+            keep = st.multiselect("File da decodificare (in ordine di giorno e ora)", [str(x) for x in sel],
+                                  default=[str(x) for x in sel], format_func=_file_label, key="qx_selbox")
+            if len(keep) != len(sel):
+                S["qx_sel"] = keep
+                sel = [Path(x) for x in keep]
         p = eng.current_params()
-        c = st.columns([1.2, 1, 1, 2.5], vertical_alignment="bottom")
-        modes = [f"Q65-{t}{x}" for t in (60, 30, 120) for x in "ABCDE"]
+        rows_all = q65lab.read_alltxt(_alltxt_path(sets))
+        c = st.columns([1.5, 1.2, 1, 1, 2.3], vertical_alignment="bottom")
+        auto = c[0].toggle("Automatico da ALL.TXT", value=bool(rows_all), key="qx_f_auto", disabled=not rows_all,
+                           help="per ogni file prende da ALL.TXT il modo, la frequenza Rx e il DX che WSJT-X aveva a "
+                                "quell'ora; le medie ripartono quando cambiano")
+        modes = [f"Q65-{t}{x}" for t in (60, 30, 120, 15, 300) for x in "ABCDE"]
         cur = f"Q65-{p['tr']}{p['submode']}"
-        sub = c[0].selectbox("Modo", modes, index=modes.index(cur) if cur in modes else 3, key="qx_f_mode")
-        rx = c[1].number_input("Rx (Hz)", 200, 4000, int(p["rx_hz"]), 10, key="qx_f_rx")
-        tol = c[2].number_input("F Tol (Hz)", 10, 1000, int(p["ftol"]), 10, key="qx_f_tol")
-        dx = c[3].text_input("DX Call e locator (per q3)", f"{p.get('dx_call', '')} {p.get('dx_grid', '')}".strip(), key="qx_f_dx")
-        go_ = st.button("🧪 Decodifica con Q65 Lab e come WSJT-X", key="qx_f_go", disabled=not (pick or up) or not eng.exe)
+        sub = c[1].selectbox("Modo", modes, index=modes.index(cur) if cur in modes else 3, key="qx_f_mode", disabled=auto)
+        rx = c[2].number_input("Rx (Hz)", 200, 4000, int(p["rx_hz"]), 10, key="qx_f_rx", disabled=auto)
+        tol = c[3].number_input("F Tol (Hz)", 10, 1000, int(p["ftol"]), 10, key="qx_f_tol")
+        dx = c[4].text_input("DX Call e locator (per q3)", f"{p.get('dx_call', '')} {p.get('dx_grid', '')}".strip(),
+                             key="qx_f_dx", disabled=auto)
+        go_ = st.button("🧪 Decodifica con Q65 Lab e come WSJT-X", key="qx_f_go", disabled=not (sel or up) or not eng.exe)
         if go_:
-            paths = [f["path"] for f in files if f["name"] in pick]
+            paths = list(sel)
             if up:
                 tmp = q65lab.work_dir() / "upload"
                 tmp.mkdir(exist_ok=True)
                 for u in up:
                     (tmp / u.name).write_bytes(u.getvalue())
                     paths.append(tmp / u.name)
-            tr = int(sub[4:-1])
             dxw = dx.split()
-            pp = p | {"tr": tr, "submode": sub[-1], "rx_hz": int(rx), "ftol": int(tol),
+            pp = p | {"tr": int(sub[4:-1]), "submode": sub[-1], "rx_hz": int(rx), "ftol": int(tol),
                       "dx_call": dxw[0].upper() if dxw else "", "dx_grid": dxw[1].upper() if len(dxw) > 1 else ""}
             bar = st.progress(0.0)
             try:
                 S["qx_files_res"] = q65lab.decode_files(paths, pp, eng.exe, eng.knobs_for(pp.get("spread_hz")),
-                                                        progress=lambda i, n: bar.progress(i / n))
+                                                        progress=lambda i, n: bar.progress(i / n),
+                                                        alltxt_rows=rows_all, auto=auto)
             except Exception as e:
                 st.error(f"q65lab: {e}")
         res = S.get("qx_files_res")
         if res:
             n_lab = sum(len(r["lab"]["decodes"]) for r in res)
             n_ref = sum(len(r["ref"]["decodes"]) for r in res)
+            n_wj = sum(1 for r in res for x in r["rows"] if x.get("wsjtx"))
             only = sum(1 for r in res for x in r["rows"] if x["only_lab"])
             lost = sum(1 for r in res for x in r["rows"] if x["only_ref"])
             _html("<div class='qx-cards'>"
                   f"<div class='qx-card'><i>{_t('File')}</i><b>{len(res)}</b></div>"
                   f"<div class='qx-card lab'><i>{_t('Decodifiche Q65 Lab')}</i><b>{n_lab}</b></div>"
-                  f"<div class='qx-card'><i>{_t('Decodifiche come WSJT-X')}</i><b>{n_ref}</b></div>"
+                  f"<div class='qx-card'><i>{_t('Decodifiche come WSJT-X')} / {_t('WSJT-X')}</i><b>{n_ref} / {n_wj}</b></div>"
                   f"<div class='qx-card only'><i>{_t('Solo Q65 Lab')} / {_t('solo WSJT-X')}</i><b>{only} / {lost}</b></div></div>")
-            fake = [(q65lab.Period(r["utc"], 60, None, {}, q65lab.lab_knobs(None), None, lab=r["lab"], ref=r["ref"]), r["rows"])
+            fake = [(q65lab.Period(r["utc"], r.get("params", {}).get("tr", 60), None, r.get("params", {}),
+                                   r.get("knobs") or q65lab.lab_knobs(None), None, lab=r["lab"], ref=r["ref"]), r["rows"])
                     for r in res]
-            _html(_table(fake[::-1], p.get("my_call", "")))
+            tcol, _ = st.columns([1.7, 1])
+            with tcol:
+                _html(_table(fake, p.get("my_call", ""), dated=True, limit=300))     # in order of day and time
 
 
 # ------------------------------------------------------------------ settings

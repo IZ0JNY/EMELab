@@ -122,3 +122,47 @@ def test_engine_listens_and_decodes_each_period(tmp_path):
     got = [d["message"] for p in eng.periods for d in p.lab.get("decodes", [])]
     assert "IZ0JNY OK1KIR JO70" in got, (list(eng.errors), [(p.utc, p.lab, p.skipped) for p in eng.periods])
     assert len(eng.waterfall.rows) >= 1
+
+
+def test_widegraph_from_ini_and_refspec(tmp_path):
+    ini = tmp_path / "WSJT-X.ini"
+    ini.write_text("[WideGraph]\nStartFreq=100\nBinsPerPixel=2\nPlotWidth=1000\nWaterfallAvg=3\nWaterfallPalette=Gray1\n"
+                   "Flatten=false\nUseRef=true\nCumulative=true\n", encoding="utf-8")
+    assert q65lab.ini_widegraph(ini) == {"start": 100, "span": 2929, "navg": 3, "palette": "gray", "flatten": False,
+                                         "use_ref": True, "spectrum": True}
+    ref = tmp_path / "refspec.dat"
+    ref.write_text("  400 2600    5   0.1E+01  -0.1E+00   0.3E-01   0.1E+00   0.6E+00\n"
+                   + "".join(f"{i * 1.736:10.3f}   0.100E+04  {-(i % 7):10.6f}   0.264E-05 -111.577217\n" for i in range(1, 400)),
+                   encoding="utf-8")
+    assert q65lab.refspec_path(ini) == ref
+    f, db = q65lab.read_refspec(ref)
+    assert len(f) == 399 and abs(f[0] - 1.736) < 1e-6 and -6 < db[200] < 0
+
+
+def test_auto_view_covers_the_whole_signal():
+    v = q65lab.auto_view({"rx_hz": 700, "ftol": 200, "tr": 60, "submode": "E", "spread_hz": 260})
+    assert v.start <= 700 - 200 and v.start + v.span >= 700 + q65lab.q65_bandwidth(60, "E") + 200
+    v = q65lab.auto_view({"rx_hz": 1000, "ftol": 50, "tr": 60, "submode": "D"})
+    assert 800 <= v.start <= 950 and 1950 <= v.start + v.span <= 2200
+    assert abs(q65lab.q65_bandwidth(60, "E") - 65 * 12000 / 7200 * 16) < 1e-9
+
+
+def test_find_trace_in_the_spectrum():
+    f = np.arange(0, 3000, q65lab.WF_DF)
+    spec = np.random.default_rng(1).normal(0, 0.3, len(f))
+    assert q65lab.find_trace(spec, f, 700, 100, 50) is None
+    spec[(f > 690) & (f < 740)] += 3
+    hz, db = q65lab.find_trace(spec, f, 700, 100, 50)
+    assert 690 < hz < 740 and db > 2
+
+
+def test_files_with_alltxt():
+    rows = [{"utc": datetime(2026, 9, 26, 18, 50, 0, tzinfo=timezone.utc), "rxtx": "Rx", "mode": "Q65-60D", "snr_db": -17,
+             "dt_s": 2.5, "df_hz": 1277, "message": "CQ IZ2DJP JN55", "band": "10G"},
+            {"utc": datetime(2026, 9, 26, 18, 51, 6, tzinfo=timezone.utc), "rxtx": "Tx", "mode": "Q65-60D", "snr_db": 0,
+             "dt_s": 0.0, "df_hz": 1200, "message": "IZ2DJP IZ0JNY JN61", "band": "10G"}]
+    t = datetime(2026, 9, 26, 18, 50, tzinfo=timezone.utc)
+    assert q65lab.guess_params(rows, t) == {"tr": 60, "submode": "D", "rx_hz": 1200, "dx_call": "IZ2DJP"}
+    assert q65lab.guess_params(rows, datetime(2026, 9, 27, tzinfo=timezone.utc)) == {}
+    assert [d["message"] for d in q65lab.wsjtx_decodes_at(rows, t, 60)] == ["CQ IZ2DJP JN55"]
+    assert q65lab.file_time("260926_1850.wav") == t

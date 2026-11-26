@@ -26,7 +26,7 @@ import time
 import wave
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -282,6 +282,94 @@ def saved_files(folder: Path | str | None, limit: int = 400) -> list[dict]:
     return out[:limit]
 
 
+def pick_wav_files(initial_dir: Path | str | None = None) -> list[Path] | None:
+    """The Windows «Open» dialog (several .wav at once), opened in initial_dir; [] when cancelled, None when no
+    dialog can be shown on this PC (then the page offers an upload box)."""
+    init = str(initial_dir or Path.home()).replace("'", "''")
+    if os.name == "nt":
+        ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8; Add-Type -AssemblyName System.Windows.Forms; "
+              "$f=New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; "
+              "$d=New-Object System.Windows.Forms.OpenFileDialog; $d.Filter='WAV (*.wav)|*.wav'; $d.Multiselect=$true; "
+              f"$d.Title='Q65 Lab'; $d.InitialDirectory='{init}'; "
+              "if($d.ShowDialog($f) -eq 'OK'){ $d.FileNames }")
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, timeout=600,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return [Path(x) for x in r.stdout.decode("utf-8", "replace").splitlines() if x.strip().lower().endswith(".wav")]
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        fs = filedialog.askopenfilenames(initialdir=str(initial_dir or Path.home()), filetypes=[("WAV", "*.wav")])
+        root.destroy()
+        return [Path(x) for x in fs]
+    except Exception:
+        return None
+
+
+def file_time(path: Path | str) -> datetime:
+    """UTC of a period file: from the WSJT-X name, else the file time minus nothing (start unknown)."""
+    p = Path(path)
+    t = saved_time(p.name)
+    if t:
+        return t
+    try:
+        return datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+    except OSError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def read_alltxt(path: Path | str | None) -> list[dict]:
+    """Q65 lines of WSJT-X's ALL.TXT (Rx decodes and own Tx): utc, rxtx, mode ('Q65-60E'), snr_db, dt_s, df_hz,
+    message, band. [] if missing."""
+    if not path:
+        return []
+    try:
+        from emelab import alltxt
+        rows = []
+        for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+            if "Q65" in line:
+                r = alltxt.parse_line(line)
+                if r and str(r.get("mode", "")).startswith("Q65"):
+                    rows.append(r)
+        return rows
+    except Exception:
+        return []
+
+
+def wsjtx_decodes_at(rows: list[dict], utc: datetime, tr: int) -> list[dict]:
+    """What WSJT-X itself decoded in the period starting at utc (from ALL.TXT), in the shape of merge()."""
+    t1 = utc + timedelta(seconds=tr)
+    return [{"message": r["message"], "snr": r["snr_db"], "dt": r["dt_s"], "freq": float(r["df_hz"]), "q": None,
+             "nused": None} for r in rows if r["rxtx"] == "Rx" and utc <= r["utc"] < t1]
+
+
+def guess_params(rows: list[dict], utc: datetime, window_min: float = 30) -> dict:
+    """Mode, Rx frequency and DX of a saved period from the nearest ALL.TXT lines (within window_min): what WSJT-X was
+    doing at that time. {} when nothing is near."""
+    near = [r for r in rows if abs((r["utc"] - utc).total_seconds()) <= window_min * 60]
+    if not near:
+        return {}
+    r = min(near, key=lambda r: abs((r["utc"] - utc).total_seconds()))
+    out = {}
+    m = str(r["mode"])[4:]                                   # '60E'
+    if m[:-1].isdigit() and m[-1:] in SUBMODES and int(m[:-1]) in TR_OK:
+        out["tr"], out["submode"] = int(m[:-1]), m[-1]
+    tx = [x for x in near if x["rxtx"] == "Tx"]
+    if tx:                                                   # Rx = Tx frequency in Q65 EME practice
+        out["rx_hz"] = min(tx, key=lambda x: abs((x["utc"] - utc).total_seconds()))["df_hz"]
+        w = min(tx, key=lambda x: abs((x["utc"] - utc).total_seconds()))["message"].split()
+        if len(w) >= 2 and w[0] not in ("CQ", "QRZ"):
+            out["dx_call"] = w[0]
+    elif r["rxtx"] == "Rx":
+        out["rx_hz"] = r["df_hz"]
+    return out
+
+
 # ------------------------------------------------------------------ sound card
 DEFAULT_DEVICE_HINT = "USB Audio CODEC"     # IC-9700 (and IC-705/7300/7610) built-in codec
 
@@ -447,10 +535,133 @@ class FileSource(Capture):
 
 
 # ------------------------------------------------------------------ waterfall
-class Waterfall:
-    """Rows of the spectrum 200–3000 Hz (WSJT-X «Wide Graph»), newest last, one row per «step» seconds."""
+WF_DF = FS / 8192                              # 1.465 Hz: the bin of the WSJT-X Wide Graph
 
-    def __init__(self, f_lo: float = 200.0, f_hi: float = 3000.0, nfft: int = 8192, step: float = 1.0, rows: int = 600):
+
+@dataclass
+class WfView:
+    """How the waterfall is shown, as the controls of the WSJT-X Wide Graph."""
+    start: int = 200               # Hz at the left edge («Start»)
+    span: int = 2800               # Hz shown («Bins/Pixel» × width)
+    navg: int = 5                  # «N Avg»: one row every navg × 0.2 s (5 = one per second)
+    gain: int = 0                  # contrast −50…50
+    zero: int = 0                  # brightness −50…50
+    palette: str = "wsjtx"         # see PALETTES
+    flatten: bool = True           # «Flatten»: removes the shape of the receiver passband
+    use_ref: bool = False          # «Ref Spec»: divides by the reference spectrum of WSJT-X (refspec.dat)
+    spectrum: bool = True          # cumulative spectrum of the period under the waterfall («Cumulative»)
+
+    def step(self) -> float:
+        return max(0.2, 0.2 * int(self.navg or 5))
+
+
+PALETTES = {   # name → colour stops (position, r, g, b)
+    "wsjtx": [[0.00, 0.03, 0.05, 0.12], [0.35, 0.05, 0.20, 0.55], [0.60, 0.10, 0.65, 0.85],
+              [0.82, 0.98, 0.85, 0.20], [1.00, 1.00, 1.00, 1.00]],
+    "blue": [[0.00, 0.00, 0.02, 0.10], [0.50, 0.05, 0.25, 0.70], [0.85, 0.45, 0.80, 1.00], [1.00, 1.00, 1.00, 1.00]],
+    "gray": [[0.00, 0.04, 0.04, 0.05], [1.00, 1.00, 1.00, 1.00]],
+    "warm": [[0.00, 0.02, 0.01, 0.05], [0.35, 0.40, 0.05, 0.40], [0.65, 0.90, 0.30, 0.10],
+             [0.88, 1.00, 0.80, 0.25], [1.00, 1.00, 1.00, 0.90]],
+}
+INI_PALETTES = {"default": "wsjtx", "blue1": "blue", "blue2": "blue", "blue3": "blue", "gray1": "gray",
+                "gray2": "gray", "fldigi": "warm", "linrad": "warm", "cutesdr": "blue"}
+
+
+def ini_widegraph(ini_path: Path | str | None = None) -> dict:
+    """WfView fields from the [WideGraph] section of WSJT-X.ini (read only; {} if not found)."""
+    try:
+        from emelab import wsjtx_ini
+        p = Path(ini_path) if ini_path else wsjtx_ini.find()
+        if not p or not p.is_file():
+            return {}
+        wg = wsjtx_ini.parse(p.read_text(encoding="utf-8", errors="replace")).get("WideGraph", {})
+    except Exception:
+        return {}
+    num = lambda k, d: int(float(wg[k])) if str(wg.get(k, "")).strip().lstrip("-").replace(".", "", 1).isdigit() else d
+    yes = lambda k, d: str(wg[k]).strip().lower() == "true" if k in wg else d
+    out = {}
+    if "StartFreq" in wg:
+        out["start"] = max(0, min(4500, num("StartFreq", 200)))
+    if "BinsPerPixel" in wg or "PlotWidth" in wg:
+        out["span"] = int(max(200, min(5000 - out.get("start", 0), num("BinsPerPixel", 2) * num("PlotWidth", 1000) * WF_DF)))
+    if "WaterfallAvg" in wg:
+        out["navg"] = max(1, min(50, num("WaterfallAvg", 5)))
+    if "WaterfallPalette" in wg:
+        out["palette"] = INI_PALETTES.get(str(wg["WaterfallPalette"]).strip().lower(), "wsjtx")
+    if "Flatten" in wg:
+        out["flatten"] = yes("Flatten", True)
+    if "UseRef" in wg:
+        out["use_ref"] = yes("UseRef", False)
+    if "Cumulative" in wg:
+        out["spectrum"] = yes("Cumulative", True)
+    return out
+
+
+def refspec_path(ini_path: Path | str | None = None) -> Path | None:
+    """refspec.dat of WSJT-X (Tools → Measure reference spectrum), next to WSJT-X.ini."""
+    try:
+        from emelab import wsjtx_ini
+        p = Path(ini_path) if ini_path else wsjtx_ini.find()
+    except Exception:
+        return None
+    r = p.parent / "refspec.dat" if p else None
+    return r if r and r.is_file() else None
+
+
+def read_refspec(path: Path | str | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """(Hz, dB relative to 1000–2000 Hz) of refspec.dat: a header line, then «freq s ref fil filter» per bin."""
+    if not path:
+        return None
+    f, db = [], []
+    try:
+        for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+            v = line.split()
+            if len(v) == 5 and "." in v[0]:
+                try:
+                    f.append(float(v[0]))
+                    db.append(float(v[2]))
+                except ValueError:
+                    pass
+    except OSError:
+        return None
+    if len(f) <= 100:
+        return None
+    db = np.array(db)
+    k = 41                                     # only the passband shape: the bin-to-bin ripple would draw stripes
+    db = np.convolve(np.pad(db, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
+    return np.array(f), db
+
+
+NSPS = {15: 1800, 30: 3600, 60: 7200, 120: 16000, 300: 41472}       # samples per Q65 symbol at 12 kHz
+
+
+def q65_bandwidth(tr: int, submode: str) -> float:
+    """Hz occupied by a Q65 signal: 65 tones (sync + 64 data) above the Rx frequency."""
+    n = SUBMODES.index(submode) if submode in SUBMODES else 3
+    return 65 * FS / NSPS.get(int(tr or 60), 7200) * 2 ** n
+
+
+def auto_view(p: dict, base: WfView | None = None) -> WfView:
+    """The view adapted to the situation: from Rx − F Tol to the top tone of the submode + F Tol (+ the expected
+    spread), so that the whole signal and nothing else fills the waterfall; the other choices stay those of «base»."""
+    base = base or WfView()
+    rx, ftol = float(p.get("rx_hz") or 1000), float(p.get("ftol") or 100)
+    bw = q65_bandwidth(p.get("tr", 60), p.get("submode", "D"))
+    spread = float(p.get("spread_hz") or 0)
+    lo, hi = rx - ftol - spread / 2, rx + bw + ftol + spread / 2
+    m = max(50.0, 0.08 * (hi - lo))
+    lo, hi = max(0.0, lo - m), min(5000.0, hi + m)
+    if hi - lo < 300:
+        c = (hi + lo) / 2
+        lo, hi = max(0.0, c - 150), min(5000.0, c + 150)
+    return WfView(**{**base.__dict__, "start": int(lo // 10 * 10), "span": int(np.ceil((hi - lo) / 10) * 10)})
+
+
+class Waterfall:
+    """Rows of the spectrum 0–5000 Hz (WSJT-X «Wide Graph»), newest last, one row per «step» seconds; the WfView
+    chooses the part shown and how."""
+
+    def __init__(self, f_lo: float = 0.0, f_hi: float = 5000.0, nfft: int = 8192, step: float = 1.0, rows: int = 600):
         self.f_lo, self.f_hi, self.nfft, self.step = f_lo, f_hi, nfft, step
         f = np.fft.rfftfreq(nfft, 1 / FS)
         self.sel = (f >= f_lo) & (f <= f_hi)
@@ -458,7 +669,8 @@ class Waterfall:
         self.rows = deque(maxlen=rows)
         self.times = deque(maxlen=rows)
         self.win = np.hanning(nfft).astype(np.float32)
-        self.ref = None
+        self.ref = None                                  # (Hz, dB) of refspec.dat
+        self.trace = None                                # (Hz, dB over the noise) of a likely signal in Rx ± F Tol
 
     def add(self, x12k: np.ndarray, t: float):
         """One row from the last samples: average of 4 overlapping FFTs (Welch), smoothed over 3 bins, so that weak
@@ -474,40 +686,66 @@ class Waterfall:
         self.rows.append(db.astype(np.float32))
         self.times.append(t)
 
-    def image(self, rx_hz: float | None = None, ftol: float | None = None, width: int = 1100, height: int = 420,
-              marks: list[tuple[float, str]] | None = None, dark: bool = True):
-        """RGB numpy image, newest row at the top as in WSJT-X, Rx frequency (green) and F Tol band, a line at each
-        T/R period with its UTC."""
-        from PIL import Image, ImageDraw
-        h_axis = 22
-        img = Image.new("RGB", (width, height), (14, 17, 23) if dark else (250, 250, 250))
-        if self.rows:
-            z = np.array(self.rows)[::-1]
-            z = z - np.median(z, axis=1, keepdims=True)                 # same level on every row
-            base = np.percentile(z, 25, axis=0)                          # «Flatten»: the passband shape, smoothed
-            k = 61                                                       # over ~60 bins, so a narrow trace stays
+    def _levels(self, view: WfView):
+        """Rows of the view (newest first), with Ref Spec, row levelling and Flatten applied; and their Hz."""
+        lo = max(self.f_lo, float(view.start))
+        hi = min(self.f_hi, lo + max(100.0, float(view.span)))
+        cols = (self.freqs >= lo) & (self.freqs <= hi)
+        z = np.array(self.rows)[::-1][:, cols]
+        f = self.freqs[cols]
+        if view.use_ref and self.ref is not None:
+            z = z - np.interp(f, self.ref[0], self.ref[1])[None, :]
+        z = z - np.median(z, axis=1, keepdims=True)                 # same level on every row
+        if view.flatten and z.shape[1] > 80:
+            base = np.percentile(z, 25, axis=0)                      # the passband shape, smoothed over ~60 bins
+            k = 61                                                   # so that a narrow trace stays
             base = np.convolve(np.pad(base, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
             z = z - base[None, :]
+        return z, f, lo, hi
+
+    def image(self, rx_hz: float | None = None, ftol: float | None = None, width: int = 1100, height: int = 420,
+              marks: list[tuple[float, str]] | None = None, dark: bool = True, view: WfView | None = None,
+              spec_rows: int = 60, spread_hz: float | None = None):
+        """RGB numpy image: frequency axis, waterfall with the newest row at the top as in WSJT-X, Rx frequency
+        (green) and F Tol band, a line at each T/R period with its UTC; below, the cumulative spectrum of the last
+        «spec_rows» rows."""
+        from PIL import Image, ImageDraw
+        view = view or WfView()
+        h_axis = 22
+        h_spec = int(height * 0.27) if view.spectrum else 0
+        h_wf = height - h_axis - h_spec
+        bg = (14, 17, 23) if dark else (250, 250, 250)
+        img = Image.new("RGB", (width, height), bg)
+        lo, hi = max(self.f_lo, float(view.start)), min(self.f_hi, float(view.start) + max(100.0, float(view.span)))
+        spec = None
+        if self.rows:
+            z, f, lo, hi = self._levels(view)
+            spec = z[:max(1, min(len(z), spec_rows))].mean(axis=0)
             if len(z) >= 3:                                              # a light 3-row blend against speckle
                 z = np.vstack([z[:1], (z[:-2] + 2 * z[1:-1] + z[2:]) / 4, z[-1:]])
-            lo, hi = np.percentile(z, 55), np.percentile(z, 99.9) + 1.0
-            u = np.clip((z - lo) / max(hi - lo, 1e-3), 0, 1) ** 1.4         # calm background, traces bright
-            rgb = (_cmap(u) * 255).astype(np.uint8)
-            wf = Image.fromarray(rgb).resize((width, height - h_axis), Image.NEAREST if len(z) < 50 else Image.BOX)
+            a, b = np.percentile(z, 55), np.percentile(z, 99.9) + 1.0
+            a -= (b - a) * view.zero / 100.0                             # «Zero»: brighter background
+            b = a + (b - a) * 10 ** (-view.gain / 50.0)                  # «Gain»: more contrast
+            u = np.clip((z - a) / max(b - a, 1e-3), 0, 1) ** 1.4         # calm background, traces bright
+            rgb = (_cmap(u, view.palette) * 255).astype(np.uint8)
+            wf = Image.fromarray(rgb).resize((width, h_wf), Image.NEAREST if len(z) < 50 else Image.BOX)
             img.paste(wf, (0, h_axis))
         d = ImageDraw.Draw(img)
-        fx = lambda f: int((f - self.f_lo) / (self.f_hi - self.f_lo) * (width - 1))
+        fx = lambda fr: int((fr - lo) / max(hi - lo, 1) * (width - 1))
         axis = (200, 205, 215) if dark else (40, 40, 40)
-        for f in range(500, int(self.f_hi) + 1, 500):
-            x = fx(f)
-            d.line([(x, h_axis - 6), (x, h_axis)], fill=axis)
-            d.text((x - 14, 3), f"{f}", fill=axis)
-        for f in range(int(self.f_lo // 100 * 100 + 100), int(self.f_hi), 100):
-            d.line([(fx(f), h_axis - 3), (fx(f), h_axis)], fill=axis)
+        span = hi - lo
+        major = 500 if span > 1800 else 200 if span > 700 else 100
+        minor = major // 5
+        for fr in range(int(np.ceil(lo / minor) * minor), int(hi) + 1, minor):
+            x = fx(fr)
+            if fr % major == 0:
+                d.line([(x, h_axis - 6), (x, h_axis)], fill=axis)
+                d.text((max(0, min(width - 30, x - 14)), 3), f"{fr}", fill=axis)
+            else:
+                d.line([(x, h_axis - 3), (x, h_axis)], fill=axis)
         if rx_hz:
             if ftol:
-                a, b = fx(rx_hz - ftol), fx(rx_hz + ftol)
-                d.rectangle([a, 0, b, h_axis - 1], outline=(46, 160, 67))
+                d.rectangle([fx(rx_hz - ftol), 0, fx(rx_hz + ftol), h_axis - 1], outline=(46, 160, 67))
             d.line([(fx(rx_hz), 0), (fx(rx_hz), h_axis - 1)], fill=(46, 200, 80), width=3)
         if self.rows and marks:
             n = len(self.rows)
@@ -516,16 +754,62 @@ class Waterfall:
                 k = next((i for i in range(n - 1, -1, -1) if ts[i] <= t_mark), None)
                 if k is None:
                     continue
-                y = h_axis + int((n - 1 - k) / max(n, 1) * (height - h_axis))
+                y = h_axis + int((n - 1 - k) / max(n, 1) * h_wf)
                 d.line([(0, y), (width, y)], fill=(255, 255, 255) if dark else (0, 0, 0))
                 d.text((4, y + 2), text, fill=(255, 255, 255) if dark else (0, 0, 0))
+        if h_spec:
+            y0 = h_axis + h_wf
+            d.rectangle([0, y0, width, height], fill=(10, 12, 16) if dark else (240, 240, 240))
+            grid = (40, 46, 58) if dark else (210, 210, 210)
+            for fr in range(int(np.ceil(lo / major) * major), int(hi) + 1, major):
+                d.line([(fx(fr), y0), (fx(fr), height)], fill=grid)
+            if rx_hz and ftol:
+                d.rectangle([fx(rx_hz - ftol), y0, fx(rx_hz + ftol), height - 1], fill=(18, 40, 26) if dark else (225, 245, 230))
+                d.line([(fx(rx_hz), y0), (fx(rx_hz), height)], fill=(46, 160, 67))
+            if rx_hz and spread_hz:                                      # where the sync tone is expected
+                a_, b_ = fx(rx_hz - spread_hz / 2), fx(rx_hz + spread_hz / 2)
+                d.rectangle([a_, y0 + 1, max(a_ + 1, b_), y0 + 5], fill=(46, 160, 67))
+            self.trace = None
+            if spec is not None and len(spec) > 10 and rx_hz and ftol:
+                self.trace = find_trace(spec, f, rx_hz, ftol, spread_hz)
+            if spec is not None and len(spec) > 10:
+                k = int(max(9, min(61, (spread_hz or 20) / 2 / WF_DF))) | 1      # ~half the expected spread
+                sm = np.convolve(np.pad(spec, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
+                edges = np.linspace(0, len(sm), width + 1).astype(int)
+                col = np.array([sm[edges[i]:max(edges[i] + 1, edges[i + 1])].mean() for i in range(width)])
+                s_lo, s_hi = np.percentile(col, 2), np.max(col)
+                s_hi = max(s_hi, s_lo + 3.0)                             # at least 3 dB tall: noise stays flat
+                ys = y0 + 6 + (1 - (col - s_lo) / (s_hi - s_lo)) * (h_spec - 12)
+                d.line(list(zip(range(width), np.clip(ys, y0 + 2, height - 2).tolist())), fill=(245, 197, 66), width=2)
+            if self.trace:
+                tx = fx(self.trace[0])
+                d.polygon([(tx - 6, y0 + 3), (tx + 6, y0 + 3), (tx, y0 + 12)], fill=(255, 120, 60))
+                d.text((min(width - 70, tx + 8), y0 + 3), f"+{self.trace[1]:.1f} dB", fill=(255, 160, 110))
+            d.text((6, y0 + 3), "AVG", fill=axis)
         return np.asarray(img)
 
 
-def _cmap(u: np.ndarray) -> np.ndarray:
-    """Dark blue → blue → cyan → yellow → white (readable weak traces, like the WSJT-X default palette)."""
-    stops = np.array([[0.00, 0.03, 0.05, 0.12], [0.35, 0.05, 0.20, 0.55], [0.60, 0.10, 0.65, 0.85],
-                      [0.82, 0.98, 0.85, 0.20], [1.00, 1.00, 1.00, 1.00]])
+def find_trace(spec: np.ndarray, f: np.ndarray, rx_hz: float, ftol: float, spread_hz: float | None = None):
+    """A likely EME signal in the cumulative spectrum: the strongest bump in Rx ± F Tol, smoothed over the expected
+    spread (the sync tone is that wide), clearly above the noise of the rest of the view. (Hz, dB) or None."""
+    df = float(np.median(np.diff(f))) if len(f) > 1 else WF_DF
+    k = int(max(3, min(301, (spread_hz or 20) / df))) | 1
+    sm = np.convolve(np.pad(spec, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
+    inside = (f >= rx_hz - ftol) & (f <= rx_hz + ftol)
+    if inside.sum() < 3 or (~inside).sum() < 3 * k:
+        return None
+    out = sm[~inside]
+    noise = np.median(out)
+    sigma = 1.4826 * np.median(np.abs(out - noise)) + 1e-6
+    i = int(np.argmax(np.where(inside, sm, -np.inf)))
+    excess = float(sm[i] - noise)
+    return (float(f[i]), excess) if excess > max(0.3, 4 * sigma) else None
+
+
+def _cmap(u: np.ndarray, palette: str = "wsjtx") -> np.ndarray:
+    """Colour of each level 0…1 with one of the PALETTES (default: dark blue → cyan → yellow → white, readable weak
+    traces as with the WSJT-X default palette)."""
+    stops = np.array(PALETTES.get(palette, PALETTES["wsjtx"]))
     out = np.empty(u.shape + (3,), dtype=np.float32)
     for c in range(3):
         out[..., c] = np.interp(u, stops[:, 0], stops[:, c + 1])
@@ -701,9 +985,10 @@ class Engine:
     def decode_period(self, utc: datetime, tr: int, wav: Path, p: dict) -> Period:
         lab, ref = self.decoders()
         dx = (p.get("dx_call") or "").upper()
-        if dx != self._last_dx and self._last_dx is not None:
-            self.clear_avg()                            # another station: the averages start again
-        self._last_dx = dx
+        key = (dx, p.get("band"), p.get("submode"), tr, int(p.get("rx_hz") or 0) // 50)
+        if key != self._last_dx and self._last_dx is not None:
+            self.clear_avg()                            # another station, band, mode or Rx: the averages start again
+        self._last_dx = key
         k = self.knobs_for(p.get("spread_hz"))
         lab.set_knobs(k)
         kw = dict(utc=utc, tr=tr, submode=p["submode"], rx_hz=p["rx_hz"], ftol=p["ftol"], depth=p["depth"],
@@ -792,9 +1077,11 @@ def expected_spread(f_ghz: float, station: dict | None, dx_locator: str | None, 
 
 
 def decode_files(files: list[Path], params: dict, exe: Path | None = None, knobs: Knobs | None = None,
-                 folder: Path | None = None, progress=None) -> list[dict]:
+                 folder: Path | None = None, progress=None, alltxt_rows: list[dict] | None = None,
+                 auto: bool = False) -> list[dict]:
     """Saved periods decoded in time order with both profiles (fresh averages): one dict per file
-    {"name", "utc", "lab", "ref", "rows"}."""
+    {"name", "utc", "params", "lab", "ref", "rows"}; with ALL.TXT, the decodes of WSJT-X itself are compared too and,
+    with «auto», each file gets the mode, Rx and DX WSJT-X had at that time (averages restart when they change)."""
     exe = exe or find_decoder()
     if not exe:
         raise FileNotFoundError("q65lab non trovato")
@@ -803,17 +1090,26 @@ def decode_files(files: list[Path], params: dict, exe: Path | None = None, knobs
     ref = Decoder(exe, folder / "ref", WSJTX_KNOBS)
     out = []
     try:
-        files = sorted(files, key=lambda f: (saved_time(Path(f).name) or datetime.min.replace(tzinfo=timezone.utc), str(f)))
+        files = sorted(files, key=lambda f: (file_time(f), str(f)))
+        last = None
         for i, f in enumerate(files):
             f = Path(f)
-            utc = saved_time(f.name) or datetime.fromtimestamp(f.stat().st_mtime, timezone.utc)
+            utc = file_time(f)
+            pp = params | (guess_params(alltxt_rows or [], utc) if auto else {})
+            key = (pp["tr"], pp["submode"], pp["rx_hz"], pp.get("dx_call", ""))
+            if last is not None and key != last:
+                lab.clear()
+                ref.clear()
+            last = key
             w = ensure_12k(f, folder)
-            kw = dict(utc=utc, tr=params["tr"], submode=params["submode"], rx_hz=params["rx_hz"], ftol=params["ftol"],
-                      depth=params["depth"], mycall=params.get("my_call", ""), dxcall=params.get("dx_call", ""),
-                      dxgrid=params.get("dx_grid", ""), max_drift=params.get("max_drift", 0),
-                      eme_delay=params.get("eme_delay", True))
+            kw = dict(utc=utc, tr=pp["tr"], submode=pp["submode"], rx_hz=pp["rx_hz"], ftol=pp["ftol"],
+                      depth=pp["depth"], mycall=pp.get("my_call", ""), dxcall=pp.get("dx_call", ""),
+                      dxgrid=pp.get("dx_grid", ""), max_drift=pp.get("max_drift", 0),
+                      eme_delay=pp.get("eme_delay", True))
             a, b = lab.decode(w, **kw), ref.decode(w, **kw)
-            out.append({"name": f.name, "utc": utc, "lab": a, "ref": b, "rows": merge(a["decodes"], b["decodes"])})
+            wj = wsjtx_decodes_at(alltxt_rows, utc, pp["tr"]) if alltxt_rows else None
+            out.append({"name": f.name, "utc": utc, "params": pp, "knobs": lab.knobs, "lab": a, "ref": b,
+                        "rows": merge(a["decodes"], b["decodes"], wj)})
             if progress:
                 progress(i + 1, len(files))
     finally:
