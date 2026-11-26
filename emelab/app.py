@@ -11,7 +11,9 @@ import streamlit as _st
 import emelab
 from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
-from emelab import stallwatch
+from emelab import stallwatch, wsqueue
+
+wsqueue.lift()                               # Streamlit drops sessions whose send queue passes 500 messages
 
 stallwatch.run_started()                     # writes the thread stacks to server.log if this run gets stuck
 
