@@ -323,8 +323,9 @@ def corrections(off: dict | None, prefix: str = "live"):
     if why:
         st.caption("⏸️ " + i18n.tr(why))
     with st.expander(i18n.tr("Spostamenti a mano e registro")):
-        c = st.columns(5)
-        step = c[0].selectbox("Passo (°)", rotor.STEPS, index=1, key=f"{prefix}_step")
+        c = st.columns([1.5, 1, 1, 1, 1], vertical_alignment="bottom")
+        step = c[0].selectbox("Passo (°)", rotor.STEPS, index=1, key=f"{prefix}_step",
+                              format_func=lambda v: f"{v:g}".replace(".", ",") + "°")
         for i, (lbl, ax, sg) in enumerate((("⬅️ Az−", "az", -1), ("➡️ Az+", "az", 1), ("⬆️ El+", "el", 1), ("⬇️ El−", "el", -1))):
             if c[i + 1].button(lbl, key=f"{prefix}_mv{i}", disabled=bool(why), width="stretch"):
                 r = rotor.apply(sg * step if ax == "az" else 0.0, sg * step if ax == "el" else 0.0, d, host, port, reason="passo")
