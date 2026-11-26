@@ -171,7 +171,7 @@ def tab(D):
     sets = openems_local.load_settings()
     cfg = ui_camera.cfg_from_settings(D, sets)
     _html(_PAGE_CSS)
-    q = st.columns([1.15, 1, 1.25])      # camera + corrections · DriverDish, watchdog, strip · me, DX, WSJT-X checks
+    q = st.container(key="lvgrid").columns([1.15, 1, 1.25])      # camera + corrections · DriverDish, watchdog, strip · me, DX, WSJT-X checks
     with q[0].container(border=True):
         _camera_quadrant(D, sets, cfg)
     with q[0].container(border=True):
@@ -191,6 +191,8 @@ def tab(D):
 _PAGE_CSS = """<style>
 .block-container{padding-top:3.9rem !important;padding-bottom:1rem !important}
 [data-testid='stVerticalBlockBorderWrapper']{padding:.55rem .75rem !important}
+.st-key-lvgrid [data-testid=stColumn]>[data-testid=stVerticalBlock]>[data-testid=stLayoutWrapper]:last-child{flex-grow:1}
+.st-key-lvgrid [data-testid=stColumn]>[data-testid=stVerticalBlock]>[data-testid=stLayoutWrapper]:last-child>div{height:100%}
 .badge{padding:3px 10px;border-radius:6px;font-weight:600;font-size:14px;margin:2px 0;border:1px solid rgba(127,127,127,.35)}
 .badge.ok{background:rgba(46,160,67,.10);border-color:#2ea043;color:#1a7f37}
 .badge.warn{background:rgba(210,153,34,.12);border-color:#d29922;color:#9a6700}
@@ -504,12 +506,12 @@ def _clock_live():
     hz = stt.get("dial_hz")
     mode = next((v for k, v, _ in strip_items(stt, None, None, None, None, 0, None) if k == "Modo"), "—")
     mono = "font-family:ui-monospace,Consolas,monospace;font-weight:700"
-    _html("<div style='display:grid;grid-template-columns:1fr 1.25fr;gap:10px;align-items:center;text-align:center'>"
-          f"<div><div style='{mono};font-size:32px;line-height:1.1'>{now:%H:%M:%S}</div>"
-          f"<div style='font-size:14px;opacity:.75'>UTC · {html.escape(_date_it(now))}</div></div>"
-          f"<div style='border-left:1px solid rgba(127,127,127,.35)'><div style='{mono};font-size:30px;line-height:1.1;white-space:nowrap'>"
+    _html("<div style='display:grid;grid-template-columns:1fr 1.35fr;gap:8px;align-items:center;text-align:center;padding:6px 0'>"
+          f"<div><div style='{mono};font-size:38px;line-height:1.1'>{now:%H:%M:%S}</div>"
+          f"<div style='font-size:17px;opacity:.75'>UTC · {html.escape(_date_it(now))}</div></div>"
+          f"<div style='border-left:1px solid rgba(127,127,127,.35)'><div style='{mono};font-size:32px;line-height:1.1;white-space:nowrap'>"
           f"{_mhz(hz)[:-3] if hz else '—'}<span style='font-size:15px;opacity:.75'> MHz</span></div>"
-          f"<div style='{mono};font-size:18px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
+          f"<div style='{mono};font-size:24px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
 
 
 def _date_it(d: datetime) -> str:
