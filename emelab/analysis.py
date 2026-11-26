@@ -32,7 +32,9 @@ def tsys_cold(setup: dict, t_sky: float, t_ground: float = 290.0) -> dict:
     ta = spill * t_sky + (1 - spill) * (gf * t_ground + (1 - gf) * t_sky)
     line = 10 ** (-float(setup.get("line_loss_db", 0.0)) / 10)
     trx = t_rx(float(setup.get("nf_db", 1.5)))
-    return {"t_ant": ta, "ant": ta * line, "line": (1 - line) * T0, "rx": trx, "sys": ta * line + (1 - line) * T0 + trx}
+    t_line = float(setup.get("line_t_phys", T0))           # physical temperature of the feed → LNA loss (cooled LNA box)
+    return {"t_ant": ta, "ant": ta * line, "line": (1 - line) * t_line, "rx": trx,
+            "sys": ta * line + (1 - line) * t_line + trx}
 
 
 def snapshot(station: dict, setup: dict, dt: datetime, wx: dict | None = None, flux_sfu: float | None = None) -> dict:
