@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_moon, ui_wsjtx_panel
+from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_moon, ui_q65lab, ui_wsjtx_panel
 from emelab import settings as openems_local
 from emelab import stallwatch, wsqueue
 
@@ -119,7 +119,7 @@ with st.sidebar:
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("live", "🔴 Live", ui_live.tab), ("moon", "🌙 Luna", ui_moon.tab), ("setups", "🛰️ Configurazioni", ui._setups),
-    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ RF Power", ui._power_tab),
@@ -133,7 +133,7 @@ _saved = openems_local.load_settings().get("tabs")
 if "tabs_on" not in S and _saved is not None and not openems_local.load_settings().get("tabs_defaults_0110"):
     _saved = [k for k in DEFAULT_ON if k != "station"]               # once: the new defaults also on PCs already set up
     openems_local.save_settings(tabs=_saved, tabs_order=DEFAULT_ORDER, tabs_defaults_0110=True,
-                                tabs_gpsdo_offered=True, tabs_moon_offered=True)
+                                tabs_gpsdo_offered=True, tabs_moon_offered=True, tabs_q65lab_offered=True)
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
         _saved = [k for k in _saved if k not in ("sspa", "twt")] + ["power"]
@@ -145,6 +145,9 @@ if "tabs_on" not in S:
     if _saved is not None and "moon" not in _saved and not openems_local.load_settings().get("tabs_moon_offered"):
         _saved = list(_saved) + ["moon"]                              # new Moon tab shown once by default
         openems_local.save_settings(tabs=_saved, tabs_moon_offered=True)
+    if _saved is not None and "q65lab" not in _saved and not openems_local.load_settings().get("tabs_q65lab_offered"):
+        _saved = list(_saved) + ["q65lab"]                            # 0.1.17: new Q65 Lab tab shown once (Ivan asked for it)
+        openems_local.save_settings(tabs=_saved, tabs_q65lab_offered=True)
     if _saved is None and os.environ.get("EMELAB_TABS") == "all":     # tests: every tab on a fresh PC
         _saved = [k for k, _, _ in TABS[2:]]
     S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k in DEFAULT_ON) or (_saved and k in _saved)]
@@ -157,7 +160,8 @@ if "tabs_order" not in S:
 def _save_tabs():
     try:
         openems_local.save_settings(tabs=S["tabs_on"], tabs_order=S["tabs_order"], tabs_defaults_0110=True,
-                                    tabs_gpsdo_offered=True, tabs_moon_offered=True)   # a choice: no more offers
+                                    tabs_gpsdo_offered=True, tabs_moon_offered=True,
+                                    tabs_q65lab_offered=True)                          # a choice: no more offers
     except Exception:
         pass
 

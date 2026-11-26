@@ -26,7 +26,7 @@ import time
 import wave
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -93,9 +93,15 @@ class Decoder:
         self.set_knobs(knobs)
 
     def _start(self):
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # below normal priority: WSJT-X always gets the CPU first, Q65 Lab never slows it down
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
         self.p = subprocess.Popen([self.exe], cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1, creationflags=flags)
+        if not flags and hasattr(os, "setpriority"):
+            try:
+                os.setpriority(os.PRIO_PROCESS, self.p.pid, 10)
+            except OSError:
+                pass
         if self.knobs:
             k, self.knobs = self.knobs, None
             self.set_knobs(k)
@@ -455,9 +461,15 @@ class Waterfall:
         self.ref = None
 
     def add(self, x12k: np.ndarray, t: float):
+        """One row from the last samples: average of 4 overlapping FFTs (Welch), smoothed over 3 bins, so that weak
+        traces stand out of the speckle as in WSJT-X («Avg»)."""
         if x12k is None or len(x12k) < self.nfft:
             return
-        s = np.abs(np.fft.rfft(x12k[-self.nfft:] * self.win)) ** 2
+        x = np.asarray(x12k, dtype=np.float32)
+        hop = max(1, min(self.nfft // 2, (len(x) - self.nfft) // 3)) if len(x) > self.nfft else 0
+        segs = [x[len(x) - self.nfft - k * hop: len(x) - k * hop] for k in range(4 if hop else 1)]
+        s = np.mean([np.abs(np.fft.rfft(g * self.win)) ** 2 for g in segs], axis=0)
+        s = np.convolve(s, np.ones(3) / 3, mode="same")
         db = 10 * np.log10(s[self.sel] + 1e-12)
         self.rows.append(db.astype(np.float32))
         self.times.append(t)
@@ -476,10 +488,12 @@ class Waterfall:
             k = 61                                                       # over ~60 bins, so a narrow trace stays
             base = np.convolve(np.pad(base, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
             z = z - base[None, :]
-            lo, hi = np.percentile(z, 30), np.percentile(z, 99.7) + 1.0
-            u = np.clip((z - lo) / max(hi - lo, 1e-3), 0, 1)
+            if len(z) >= 3:                                              # a light 3-row blend against speckle
+                z = np.vstack([z[:1], (z[:-2] + 2 * z[1:-1] + z[2:]) / 4, z[-1:]])
+            lo, hi = np.percentile(z, 55), np.percentile(z, 99.9) + 1.0
+            u = np.clip((z - lo) / max(hi - lo, 1e-3), 0, 1) ** 1.4         # calm background, traces bright
             rgb = (_cmap(u) * 255).astype(np.uint8)
-            wf = Image.fromarray(rgb).resize((width, height - h_axis), Image.NEAREST if len(z) < 50 else Image.BILINEAR)
+            wf = Image.fromarray(rgb).resize((width, height - h_axis), Image.NEAREST if len(z) < 50 else Image.BOX)
             img.paste(wf, (0, h_axis))
         d = ImageDraw.Draw(img)
         fx = lambda f: int((f - self.f_lo) / (self.f_hi - self.f_lo) * (width - 1))
@@ -625,7 +639,7 @@ class Engine:
     def _wf_loop(self):
         while not self._stop.wait(self.waterfall.step):
             try:
-                x = self.source.latest(self.waterfall.nfft / FS + 0.05) if self.source else None
+                x = self.source.latest(self.waterfall.nfft * 2.5 / FS) if self.source else None
                 self.waterfall.add(x, time.time())
             except Exception as e:
                 self.errors.append(f"waterfall: {e}")
