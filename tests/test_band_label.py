@@ -47,3 +47,26 @@ def test_live_locators_and_short_checks(tmp_path):
     assert ui_live.short_check({"Parametro": "Doppler tracking (finestra Astro)",
                                 "WSJT-X adesso": "CFOM (Constant Frequency On Moon) (WSJT-X.ini)"}) == ("Doppler", "CFOM")
     assert ui_live.short_check({"Parametro": "Split Operation", "WSJT-X adesso": "Rig (WSJT-X.ini)"}) == ("Split", "Rig")
+
+
+def test_db_waits_for_another_writer(tmp_path):
+    """Two connections (UI and WSJT-X listener): the second writer waits instead of «database is locked»."""
+    import threading, time
+    from emelab import db
+    a, b = db.DB(tmp_path / "t.sqlite"), db.DB(tmp_path / "t.sqlite")
+    a.upsert_station("IK3GHY", locator="JN65DM")          # write transaction left open, as during a QRZ.com lookup
+    threading.Timer(1.0, a.commit).start()
+    t0 = time.time()
+    b.save_station(callsign="IZ0JNY", locator="JN61PM")
+    assert time.time() - t0 < 10 and b.station()["locator"] == "JN61PM"
+    assert b.station_of("IK3GHY")["locator"] == "JN65DM"
+
+
+def test_qrz_not_found_is_not_asked_again(tmp_path):
+    from emelab import db, qrz
+    D = db.DB(tmp_path / "t.sqlite")
+    assert qrz.missing(D, ["W1XYZ", "IK3GHY"]) == ["W1XYZ", "IK3GHY"]
+    qrz.mark_not_found(D, "W1XYZ")
+    qrz.store(D, {"call": "IK3GHY", "fname": "Mario", "lname": "Rossi", "qth": "Venezia"})
+    D.commit()
+    assert qrz.missing(D, ["W1XYZ", "IK3GHY"]) == []

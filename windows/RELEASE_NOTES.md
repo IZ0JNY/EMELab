@@ -1,3 +1,15 @@
+## EMELab 0.1.14 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.14.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.14-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🔎 QRZ.com senza «database is locked»:** la ricerca di molti nominativi non si blocca più mentre WSJT-X e i watchdog scrivono nel database. EMELab aspetta il suo turno invece di fermarsi.
+- **🔎 QRZ.com:** barra di avanzamento; un nominativo non trovato non ferma più gli altri e viene elencato alla fine.
+
+### 🇬🇧 What's new
+- **🔎 QRZ.com without «database is locked»:** looking up many callsigns no longer stops while WSJT-X and the watchdogs write to the database. EMELab waits its turn instead of giving up.
+- **🔎 QRZ.com:** progress bar; a callsign not found no longer stops the others and is listed at the end.
+
 ## EMELab 0.1.13 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.13.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.13-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

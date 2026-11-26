@@ -92,7 +92,14 @@ class DB:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.con = sqlite3.connect(str(self.path), check_same_thread=False)   # Streamlit reruns on other threads
+        # Streamlit reruns on other threads; the WSJT-X listener and the watchdogs write from their own connections, so a
+        # writer waits up to 30 s for the others instead of failing at once with "database is locked" (0.1.14).
+        self.con = sqlite3.connect(str(self.path), check_same_thread=False, timeout=30)
+        try:
+            self.con.execute("PRAGMA journal_mode=WAL")       # readers no longer block the writer (and vice versa)
+            self.con.execute("PRAGMA busy_timeout=30000")
+        except sqlite3.DatabaseError:
+            pass
         self.con.row_factory = sqlite3.Row
         self.con.executescript(SCHEMA)
 

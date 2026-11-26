@@ -84,6 +84,13 @@ def missing(D, calls) -> list[str]:
     return out
 
 
+def mark_not_found(D, call: str):
+    """Remember that QRZ.com does not know this callsign, so «look up the missing ones» skips it next time."""
+    q = ((D.station_of(call) or {}).get("data") or {}).get("qrz") or {}
+    if "fname" not in q:
+        D.upsert_station(call, data={"qrz": {**q, "fname": "", "lname": "", "not_found": True}})
+
+
 def store(D, r: dict, locator: bool = True):
     """Save one QRZ.com answer in the EME stations database."""
     D.upsert_station(r["call"], name=r.get("name"), address=r.get("address"), qth=r.get("qth"),

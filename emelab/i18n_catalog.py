@@ -456,6 +456,8 @@ ENTRIES = [
     ('🔎 Cerca i mancanti su QRZ.com', '🔎 Look up the missing ones on QRZ.com'),
     ('🔄 Aggiorna tutti da QRZ.com', '🔄 Update all from QRZ.com'),
     ('Non trovati su QRZ.com', 'Not found on QRZ.com'),
+    ('Oppure scegli i nominativi da cercare (anche già cercati)', 'Or pick the callsigns to look up (also those already looked up)'),
+    ("un clic per tutti i nominativi non ancora cercati; ognuno viene salvato appena arriva, quelli non trovati non vengono richiesti di nuovo", 'one click for all the callsigns not looked up yet; each one is saved as soon as it arrives, those not found are not asked again'),
     ('EL Luna', 'Moon EL'),
     ('EL Luna mediana', 'Median Moon EL'),
     ('EME Directory non raggiungibile', 'EME Directory not reachable'),

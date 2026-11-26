@@ -1741,6 +1741,7 @@ def _stations_quick_clear(D):
 
 
 def _qrz_box(D, calls):
+    from emelab import qrz
     sets = openems_local.load_settings()
     with st.expander("🔎 QRZ.com: nome, indirizzo e QTH per le etichette QSL"):
         st.caption("Usa il tuo account QRZ.com (servizio XML; per l'indirizzo completo serve l'abbonamento XML Logbook Data). "
@@ -1751,18 +1752,46 @@ def _qrz_box(D, calls):
         if c[2].button("💾 Salva accesso", key="qrz_save"):
             openems_local.save_settings(qrz_user=user, qrz_pw=pw)
             st.success("Salvato su questo PC.")
-        pick = st.multiselect("Nominativi da cercare", calls, key="qrz_pick")
+        todo = qrz.missing(D, calls)
+        c = st.columns([1.4, 1])
+        go_all = c[0].button(f"🔎 Cerca tutti i mancanti su QRZ.com ({len(todo)})", key="qrz_go_all", type="primary",
+                             disabled=not (todo and user and pw),
+                             help="un clic per tutti i nominativi non ancora cercati; ognuno viene salvato appena arriva, "
+                                  "quelli non trovati non vengono richiesti di nuovo")
+        pick = st.multiselect("Oppure scegli i nominativi da cercare (anche già cercati)", calls, key="qrz_pick")
         if pick and st.button("🔎 Cerca su QRZ.com", key="qrz_go"):
-            from emelab import qrz
-            try:
-                q = qrz.QRZ(user, pw)
-                for call in pick:
-                    qrz.store(D, {**q.lookup(call), "call": call})
-                D.commit()
-                D.log_station_import("qrz", ", ".join(pick)[:200], len(pick))
-                st.success(i18n.tr("Aggiornati da QRZ.com") + f": {len(pick)}")
-            except Exception as e:
+            _qrz_run(D, user, pw, pick)
+        elif go_all:
+            _qrz_run(D, user, pw, todo)
+
+
+def _qrz_run(D, user, pw, pick, locator=True):
+    """Look up the callsigns one by one with a progress bar: network first, then a short write and commit, so the
+    WSJT-X listener and the watchdogs are never locked out (0.1.14: «database is locked» with many callsigns).
+    A callsign not found is remembered and not asked again by «Cerca tutti i mancanti»."""
+    from emelab import qrz
+    q, ok, bad = qrz.QRZ(user, pw), 0, []
+    bar = st.progress(0.0, text=i18n.tr("QRZ.com") + f": 0/{len(pick)}")
+    for k, call in enumerate(pick):
+        try:
+            r = q.lookup(call)
+            qrz.store(D, {**r, "call": call}, locator=locator)
+            D.commit()
+            ok += 1
+        except Exception as e:
+            if not q.key:                                    # login refused: no point trying the others
                 st.error(f"QRZ.com: {e}")
+                break
+            qrz.mark_not_found(D, call)
+            D.commit()
+            bad.append(call)
+        bar.progress((k + 1) / len(pick), text=f"QRZ.com: {k + 1}/{len(pick)} · {call}")
+    if ok:
+        D.log_station_import("qrz", ", ".join(pick)[:200], ok)
+        st.success(i18n.tr("Aggiornati da QRZ.com") + f": {ok}")
+    if bad:
+        st.warning(i18n.tr("Non trovati su QRZ.com") + ": " + ", ".join(bad))
+    return ok, bad
 
 
 # ------------------------------------------------------------------ logbook
@@ -1939,24 +1968,7 @@ def _qso_qrz_fill(D, calls):
         if not (go or again):
             return
         pick = todo if go else list(dict.fromkeys(calls))
-        q, ok, bad = qrz.QRZ(user, pw), 0, []
-        bar = st.progress(0.0)
-        for k, call in enumerate(pick):
-            try:
-                qrz.store(D, {**q.lookup(call), "call": call}, locator=False)
-                ok += 1
-            except Exception as e:
-                if not q.key:                                    # login refused: no point trying the others
-                    st.error(f"QRZ.com: {e}")
-                    break
-                bad.append(call)
-            bar.progress((k + 1) / len(pick))
-        D.commit()
-        if ok:
-            D.log_station_import("qrz", ", ".join(pick)[:200], ok)
-            st.success(i18n.tr("Aggiornati da QRZ.com") + f": {ok}")
-        if bad:
-            st.warning(i18n.tr("Non trovati su QRZ.com") + ": " + ", ".join(bad))
+        _qrz_run(D, user, pw, pick, locator=False)
 
 
 def _qsos_manage(D, n_qsos):
