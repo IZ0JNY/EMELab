@@ -172,7 +172,7 @@ def solve(method: str, p_diss_w: float, n_dev: int, rth_jc: float, rth_cs: float
 
     t_ref_c is the air temperature (passive, fan) or the coolant inlet temperature (water). The sink carries
     n_dev devices, each dissipating p_diss_w; every junction adds its own P·(R_jc + R_cs)."""
-    p_tot = p_diss_w * max(int(n_dev), 1)
+    p_tot = p_diss_w * max(int(n_dev), 1) + kw.get("extra_w", 0.0)       # extra_w: driver on the same cooling
     if method == "passivo":
         r = r_passive(kw["sink"], p_tot * duty, t_ref_c)
     elif method == "ventilato":
@@ -261,7 +261,7 @@ def simulate(method: str, p_diss_w: float, n_dev: int, rth_jc: float, rth_cs: fl
     duty = sum(d for d, tx in seq if tx) / max(sum(d for d, _ in seq), 1e-9)
     base = solve(method, p_diss_w, n_dev, rth_jc, rth_cs, t_ref_c, max(duty, 1e-3), 120.0, **kw)
     r, tau = base["r_kw"], max(base["tau_s"], 1e-6)
-    p_tot = p_diss_w * max(int(n_dev), 1)
+    p_tot = p_diss_w * max(int(n_dev), 1) + kw.get("extra_w", 0.0)
     a = math.exp(-dt_s / tau)
     t, ts = 0.0, t_ref_c
     out_t, out_j, out_s = [0.0], [t_ref_c], [t_ref_c]
@@ -283,11 +283,14 @@ def device_thermal(dev: dict | None) -> dict:
     import re
     dev = dev or {}
     tech = TECH_ALIAS.get(dev.get("tech") or "", dev.get("tech"))
-    out = {"tech": tech if tech in LIFE else None, "rth_jc": None, "tj_max": None, "pae_pct": None}
+    out = {"tech": tech if tech in LIFE else None, "rth_jc": None, "tj_max": None, "pae_pct": None, "die_mm": None}
+    m = re.search(r"\bdie_mm\s*=\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)", dev.get("notes") or "")
+    if m:
+        out["die_mm"] = (float(m.group(1)), float(m.group(2)))
     for k in ("rth_jc", "tj_max", "pae_pct"):
         v = dev.get(k)
         if v is None:
-            m = re.search(rf"\b{k}\s*=\s*([0-9.]+)", dev.get("notes") or "")
+            m = re.search(rf"\b{k}\s*=\s*(\d+(?:\.\d+)?)", dev.get("notes") or "")
             v = float(m.group(1)) if m else None
         out[k] = float(v) if v is not None else None
     return out

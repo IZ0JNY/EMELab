@@ -60,5 +60,5 @@ def test_arrhenius():
 
 def test_device_thermal_from_notes():
     d = c.device_thermal({"tech": "LDMOS", "notes": "datasheet; rth_jc=0.35, tj_max=200"})
-    assert d == {"tech": "LDMOS / MOSFET", "rth_jc": 0.35, "tj_max": 200.0, "pae_pct": None}
+    assert d == {"tech": "LDMOS / MOSFET", "rth_jc": 0.35, "tj_max": 200.0, "pae_pct": None, "die_mm": None}
     assert c.device_thermal({"tech": "TWT"})["tech"] is None

@@ -76,6 +76,8 @@ CATALOG = [
     dict(cat="chiller", part="Mini chiller Peltier (generico)", maker="—", kind="compressore", cap_w=70.0, h_max_m=2.0,
          q_max_lmin=4.0, t_set_min_c=15.0, notes="cella di Peltier: poca potenza, bene solo per MMIC piccoli"),
     # thermal interface materials: conductivity, typical bond line / pad thickness
+    dict(cat="tim", part="DM6030Hk-F954 (colla all'argento)", maker="Diemat (NAMICS)", k_wmk=60.0, t_um=25, rc_m2kw=3e-6,
+         insulating=False, notes="die attach per die GaN nudi (progetto YPA 47 GHz, usata da RW3BP); conduce corrente"),
     dict(cat="tim", part="MX-4", maker="Arctic", k_wmk=8.5, t_um=30, rc_m2kw=4e-6, insulating=True),
     dict(cat="tim", part="Kryonaut", maker="Thermal Grizzly", k_wmk=12.5, t_um=30, rc_m2kw=4e-6, insulating=True),
     dict(cat="tim", part="NT-H2", maker="Noctua", k_wmk=8.0, t_um=30, rc_m2kw=4e-6, insulating=True,
