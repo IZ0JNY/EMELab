@@ -20,7 +20,7 @@ import streamlit as _st
 import os
 import time
 
-from emelab import gpsdo, i18n, stations, timesync, wsjtx_check, wsjtx_ini
+from emelab import gpsdo, i18n, refspec, stations, timesync, wsjtx_check, wsjtx_ini
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -29,6 +29,22 @@ CONFIRM_HOURS = 12.0
 OK, BAD, ASK = "✅", "⚠️", "❔"
 PROC_EVERY_S, NTP_EVERY_S = 5, 600            # BktTimeSync process check / NTP offset measurement
 _CLOCK = {"bkt": None, "t_proc": 0.0, "ntp": None, "t_ntp": 0.0, "busy": False}
+_SESSION = {"start": None}                    # first WSJT-X status since EMELab started: the operating session
+
+
+def session_start(svc) -> datetime | None:
+    """When this operating session started (first live WSJT-X status since EMELab started)."""
+    if _SESSION["start"] is None and _live(svc):
+        _SESSION["start"] = datetime.now(timezone.utc)
+    return _SESSION["start"]
+
+
+def refspec_state(sets: dict, svc=None) -> dict:
+    """{"path", "measured" (UTC), "due"}: the WSJT-X reference spectrum and whether to measure it again now."""
+    path = refspec.find(wsjtx_ini.find(sets.get("wsjtx_file") or None))
+    m = refspec.measured_utc(path)
+    return {"path": path, "measured": m,
+            "due": refspec.due(m, session_start(svc) if svc is not None else _SESSION["start"], sets.get("refspec_ok_utc"))}
 
 
 def _clock_poll():
@@ -165,6 +181,10 @@ def alerts(svc, sets: dict) -> list[dict]:
             out.append({"key": f"doppler@{band}", "msg": "Doppler tracking da confermare",
                         "detail": wsjtx_check.DOPPLER.get(pre["doppler"], pre["doppler"]) + " " +
                         i18n.tr("nella finestra Astro di WSJT-X"), "action": "doppler"})
+        if refspec_state(sets, svc)["due"]:
+            out.append({"key": "refspec", "msg": "Spettro di riferimento (Ref Spec) da rifare",
+                        "detail": i18n.tr("radio appena accesa: Tools → Measure reference spectrum, antenna fuori dalla Luna"),
+                        "action": "refspec"})
         if gpsdo.reminder_due(sets):
             out.append({"key": "gpsdo", "msg": "GPSDO: controlla che sia acceso e agganciato",
                         "detail": "GPS signal OK · PLL lock OK", "action": "gpsdo"})
@@ -201,6 +221,10 @@ def _dialog_body(svc, items):
             c[1].success("Inviato a WSJT-X.") if svc.apply_preset(band) else c[1].error("WSJT-X non raggiungibile.")
         elif a["action"] == "doppler" and c[1].button("✅ Attivo in WSJT-X", key=f"wjp_dop_{k}"):
             confirm("doppler", band)
+            S.setdefault("wj_popup_done", set()).add(a["key"])
+            S.setdefault("wj_conf_now", set()).add(a["key"])
+        elif a["action"] == "refspec" and c[1].button("✅ Ref Spec fatto", key=f"wjp_ref_{k}"):
+            refspec.confirm()
             S.setdefault("wj_popup_done", set()).add(a["key"])
             S.setdefault("wj_conf_now", set()).add(a["key"])
         elif a["action"] == "gpsdo" and c[1].button("✅ GPSDO agganciato", key=f"wjp_gps_{k}"):
@@ -436,6 +460,29 @@ def _advice_box(svc, sets):
                "Sono solo consigli: EMELab non cambia WSJT-X.")
 
 
+def _refspec_box(svc, sets):
+    """The reference spectrum procedure (DL3WDG), the date of refspec.dat and the «done» button."""
+    r = refspec_state(sets, svc)
+    title = "📐 " + i18n.tr("Spettro di riferimento (Ref Spec): da rifare a ogni accensione della radio")
+    with st.expander(("⚠️ " if r["due"] else "") + title, expanded=r["due"]):
+        if r["measured"]:
+            st.caption(i18n.tr("Ultimo spettro di riferimento (refspec.dat)") + f": {r['measured']:%Y-%m-%d %H:%M} UTC"
+                       + (" · ⚠️ " + i18n.tr("da rifare in questa sessione") if r["due"] else " · ✅"))
+        else:
+            st.caption("refspec.dat non trovato: lo spettro di riferimento non è mai stato misurato in WSJT-X.")
+        st.markdown("\n".join(f"{i}. {i18n.tr(t)}" for i, t in enumerate(refspec.STEPS, 1)))
+        ini = ini_state(sets)
+        if ini.get("flatten") is False or ini.get("use_ref") is False:
+            st.info(i18n.tr("Adesso in WSJT-X.ini") + f": Flatten {'sì' if ini.get('flatten') else 'no'}, "
+                    f"Ref Spec {'sì' if ini.get('use_ref') else 'no'}")
+        if r["due"] and st.button("✅ Ref Spec fatto", key="wj_ref_ok"):
+            refspec.confirm()
+            _st.rerun()
+        st.caption("Rifallo anche quando cambi banda passante, guadagno o altre impostazioni del ricevitore (DL3WDG). "
+                   "EMELab legge solo la data di refspec.dat: il promemoria sparisce quando il file è più nuovo "
+                   "dell'inizio della sessione o quando premi «✅ Ref Spec fatto».")
+
+
 def no_decode_rows(status: dict, ini: dict, clock: dict, sets: dict) -> list[dict]:
     """«I see the signal but there is no decode»: the causes listed by DL3WDG, each with its state where EMELab can
     tell (✅ fine, ⚠️ likely, ❔ check it yourself) and what to do."""
@@ -554,6 +601,7 @@ def render(svc, sets):
         _check_table(svc, sets, band)
     else:
         st.info("Il controllo parte quando WSJT-X è collegato e su una banda da 10 GHz in su.")
+    _refspec_box(svc, sets)
     _advice_box(svc, sets)
     _no_decode_box(svc, sets)
     _preset_editors(band)
