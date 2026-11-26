@@ -12,4 +12,4 @@ analysis measured vs expected, derived G/T, pointing offsets, trends
 planner  Moon windows, mutual windows with another station, best days
 """
 
-__version__ = "0.1.17"
+__version__ = "0.1.18"

@@ -2681,7 +2681,7 @@ def _power_save_cb(D, band):
     kind = {"SSPA": "PA", "TWT": "TWT"}.get(kind, "")
     rows = _power_rows(D, band, kind) if kind else []
     i = ss.get(f"pw_dev_{kind}")
-    if not isinstance(i, int) or i >= len(rows):      # the selector was not on screen: saved device, else the first one
+    if not isinstance(i, int) or not 0 <= i < len(rows):      # the selector was not on screen: saved device, else the first one
         old = _power_devices().get(f"{band:g}", {})
         i = next((j for j, r in enumerate(rows) if r["part"] == old.get("part")), 0)
     dev = rows[i] if rows else None
@@ -2715,13 +2715,17 @@ def _power_tab(D):
     kind = "PA" if kind_l == "SSPA" else "TWT"
     rows = _power_rows(D, band, kind)
     if rows:
-        if ss.get(f"pw_dev_{kind}", 0) >= len(rows):
-            ss[f"pw_dev_{kind}"] = 0
+        cur_i = ss.get(f"pw_dev_{kind}", 0)
+        if not isinstance(cur_i, int) or not 0 <= cur_i < len(rows):
+            # Streamlit can hand back the shown label (a string) instead of the index after a rerun in which the
+            # options changed: go back to the saved device, else the first one
+            ss[f"pw_dev_{kind}"] = next((j for j, r in enumerate(rows) if r["part"] == cur.get("part")), 0)
         i = c[2].selectbox("Il tuo dispositivo", range(len(rows)), key=f"pw_dev_{kind}",
                            format_func=lambda i: f"{rows[i]['part']} — {i18n.tr(rows[i]['maker'])}" +
-                                                 (" ⚠️" if rows[i].get("check") else " ✅" if rows[i].get("verified") else ""),
+                                                 (" ⚠️" if rows[i].get("check") else " ✅" if rows[i].get("verified") else "")
+                                                 if isinstance(i, int) and 0 <= i < len(rows) else str(i),
                            on_change=_power_save_cb, args=(D, band))
-        dev = rows[i]
+        dev = rows[i if isinstance(i, int) and 0 <= i < len(rows) else 0]
         if ("sp_psat" if kind == "PA" else "tw_ps") not in ss:     # numbers not on screen yet: from the device
             _power_apply(dev, kind)
         info = [f"Psat {dev['psat_dbm']:.1f} dBm ({10 ** ((dev['psat_dbm'] - 30) / 10):.1f} W)" if dev.get("psat_dbm") else None,

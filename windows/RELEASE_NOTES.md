@@ -1,3 +1,13 @@
+## EMELab 0.1.18 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.18.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.18-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **⚡ RF Power:** corretto il blocco della scheda all'apertura («TypeError: '>=' not supported between instances of 'str' and 'int'»). Se la scelta del dispositivo salvata non è valida, EMELab torna al dispositivo salvato per la banda o al primo del catalogo.
+
+### 🇬🇧 What's new
+- **⚡ RF Power:** fixed the tab crashing when opened («TypeError: '>=' not supported between instances of 'str' and 'int'»). When the stored device choice is not valid, EMELab goes back to the device saved for the band or to the first one in the catalogue.
+
 ## EMELab 0.1.17 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.17.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.17-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
