@@ -1550,6 +1550,7 @@ def _stations_tab(D):
         for kind, msg in st.session_state.pop("st_flash", None) or []:
             getattr(st, kind)(msg)
         _station_edit_box(D, rows)
+        _hb9q_box(D, rows)
         _qrz_box(D, [r["call"] for r in rows])
     if rows or D.station_imports():
         _stations_manage(D, [r["call"] for r in rows])
@@ -1633,6 +1634,46 @@ def _station_edit_box(D, rows):
             D.set_station_manual(call, {k: "" for k in D.MANUAL_FIELDS}, {b: None for b in man.get("bands") or {}})
             st.success(i18n.tr("Tornati i dati importati") + f": {call}")
             st.rerun()
+
+
+def _hb9q_box(D, rows):
+    """Dish and power per band from the HB9Q logger profiles (CSV file): compare, then write the ticked rows as
+    corrections by hand (✏️), which «↩️ Togli le correzioni a mano» takes away again."""
+    from emelab import hb9q
+    with st.expander("📡 Parabole e potenze dal logger HB9Q"):
+        st.caption("Carica il file CSV con i profili HB9Q (nominativo, banda, antenna, potenza). EMELab lo confronta con "
+                   "la tabella e scrive come correzioni a mano (✏️) solo le righe che spunti. Solo 10, 24, 47 e 76 GHz.")
+        up = st.file_uploader("File CSV di HB9Q", type=["csv"], key="st_hb9q_up")
+        if up is None:
+            return
+        import pandas as pd
+        cur = {r["call"]: D.directory_of(r.get("data", {})) for r in rows}
+        cmp_ = [r for r in hb9q.compare(hb9q.parse_csv(up.getvalue().decode("utf-8", "replace")), cur) if r["known"]]
+        n = {k: sum(r["state"] == k for r in cmp_) for k in ("nuovo", "manca", "diverso", "uguale")}
+        st.info(i18n.tr("Stazioni trovate su HB9Q") + f": {len({r['call'] for r in cmp_})} · "
+                + i18n.tr("bande nuove") + f": {n['nuovo']} · " + i18n.tr("dati mancanti") + f": {n['manca']} · "
+                + i18n.tr("diversi") + f": {n['diverso']} · " + i18n.tr("uguali") + f": {n['uguale']}")
+        todo = [r for r in cmp_ if r["state"] != "uguale"]
+        if not todo:
+            return
+        state_txt = {"nuovo": i18n.tr("banda nuova"), "manca": i18n.tr("completa"), "diverso": i18n.tr("diverso")}
+        df = pd.DataFrame([{"✔": r["state"] != "diverso", "Nominativo": r["call"], "Banda": _bl(r["band"]),
+                            "Cosa": state_txt[r["state"]],
+                            "Ora in EMELab": _station_text({"": {"antenna": r["cur_antenna"], "power_w": r["cur_power_w"]}})[2:],
+                            "HB9Q": _station_text({"": hb9q.merged(r)})[2:], "Profilo HB9Q": r["hb9q"]} for r in todo])
+        cols = list(df.columns)
+        df.columns = [i18n.tr(c) for c in cols]
+        st.caption("Spuntate già le bande nuove e i dati che mancano; quelle «diverso» spuntale tu se HB9Q è più aggiornato.")
+        ed = st.data_editor(df, hide_index=True, width="stretch", key="st_hb9q_tab" + _lang_key(),
+                            disabled=[c for c in df.columns if c != "✔"])
+        if st.button("💾 Applica le righe spuntate", key="st_hb9q_go"):
+            by_call = {}
+            for r, tick in zip(todo, ed["✔"]):
+                if tick:
+                    by_call.setdefault(r["call"], {})[r["band"]] = hb9q.merged(r)
+            for call, bands in by_call.items():
+                D.set_station_manual(call, None, bands)
+            st.success(i18n.tr("Stazioni corrette con HB9Q") + f": {len(by_call)}")
 
 
 def _blank(v):
