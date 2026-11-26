@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emelab"
-version = "0.1.10"
+version = "0.1.11"
 description = "EMELab — EME measurements, planning, log and station design from 10 to 134 GHz (companion of FeedLab)"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
