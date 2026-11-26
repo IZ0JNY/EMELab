@@ -11,17 +11,28 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 DD_GRACE_S = 10.0
+GPSDO_LOSS_WARN_S = 600.0
 WSJTX_SILENT_S = 90.0
 CAM_STALE_S = 5.0
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 TOAST_PREFIX = "🚨 Watchdog: "
+CAM_NOT_REAL = {"sim": "simulatore: la telecamera vera non è in uso",
+                "still": "immagine da file: la telecamera vera non è in uso"}
+TELNET_HINT = "in DriverDish accendi Setup → Telnet server, porta 9999, «Run»"
+
+
+def refused(err: str | None) -> bool:
+    """Connection refused: DriverDish (or its telnet server) is not listening."""
+    e = (err or "").lower()
+    return "10061" in e or "refused" in e or "errno 111" in e
 
 
 def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: bool = False,
            dd: dict | None = None, dd_err: str | None = None, dd_on: bool = False, dd_err_since: datetime | None = None,
            wsjtx_on: bool = False, wsjtx_last: datetime | None = None, wsjtx_problems: list | None = None,
            bkt: dict | None = None, ntp: dict | None = None, dt: float | None = None,
-           cam_on: bool = False, cam_age_s: float | None = None, cam_error: str | None = None) -> list[dict]:
+           cam_on: bool = False, cam_age_s: float | None = None, cam_error: str | None = None,
+           cam_kind: str = "asi") -> list[dict]:
     """[{"key", "name", "state": ok/warn/bad, "msg"}] for the parts in use."""
     now = now or datetime.now(timezone.utc)
     out = []
@@ -37,12 +48,15 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
         elif not (gpsdo.get("gps_ok") and gpsdo.get("pll_ok")):
             add("gpsdo", "GPSDO", "bad", f"GPSDO non agganciato (GPS {'OK' if gpsdo.get('gps_ok') else 'NO'}, "
                                           f"PLL {'OK' if gpsdo.get('pll_ok') else 'NO'})")
+        elif gpsdo.get("loss_utc") and (now - gpsdo["loss_utc"]).total_seconds() < GPSDO_LOSS_WARN_S:
+            add("gpsdo", "GPSDO", "warn", "aggancio perso e ritrovato negli ultimi 10 minuti")
         else:
             add("gpsdo", "GPSDO", "ok", "GPS e PLL agganciati")
     if dd_on:
         if not dd:
             late = dd_err_since is None or (now - dd_err_since).total_seconds() >= DD_GRACE_S
-            add("driverdish", "DriverDish", "bad" if late else "warn", "DriverDish non risponde" + (f": {dd_err}" if dd_err else ""))
+            add("driverdish", "DriverDish", "bad" if late else "warn", "DriverDish non risponde" + (f": {dd_err}" if dd_err else "")
+                + (" · " + TELNET_HINT if refused(dd_err) else ""))
         elif dd.get("tracking") is False:
             add("driverdish", "DriverDish", "bad", "DriverDish non insegue (TRACKING OFF)")
         else:
@@ -70,7 +84,9 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
         st = "ok" if abs(dt) <= DT_WARN_S else "warn" if abs(dt) <= DT_BAD_S else "bad"
         add("dt", "DT", st, f"DT medio {dt:+.1f} s")
     if cam_on:
-        if cam_error and (cam_age_s is None or cam_age_s > CAM_STALE_S):
+        if cam_kind in CAM_NOT_REAL:
+            add("camera", "Telecamera", "warn", CAM_NOT_REAL[cam_kind])
+        elif cam_error and (cam_age_s is None or cam_age_s > CAM_STALE_S):
             add("camera", "Telecamera", "bad", "telecamera: " + cam_error)
         elif cam_age_s is None:
             add("camera", "Telecamera", "warn", "in attesa del primo fotogramma")

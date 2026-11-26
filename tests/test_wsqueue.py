@@ -16,3 +16,4 @@ def test_lift_sets_module_constant():
     from streamlit.web.server.starlette import starlette_websocket as ws
     wsqueue.lift()
     assert ws.WEBSOCKET_MAX_SEND_QUEUE_SIZE == 0
+

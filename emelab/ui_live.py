@@ -20,7 +20,7 @@ from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
 S = _st.session_state
-GPSDO_EVERY_S = 60
+GPSDO_EVERY_S = 20
 CAM_MAX_H = 300
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 
@@ -57,7 +57,18 @@ def dd_status():
         return None, str(e)
 
 
-_GPSDO = {"last": None, "t": 0.0, "busy": False}
+_GPSDO = {"last": None, "t": 0.0, "busy": False, "loss": None, "loss_utc": None}
+
+
+def note_loss(prev: int | None, prev_utc, reading: dict | None, now: datetime | None = None):
+    """(loss counter, UTC of the last lock loss): the Leo Bodnar counts its lock losses, so a loss that came and
+    went between two reads still shows as a counter that moved."""
+    n = (reading or {}).get("loss_count")
+    if not isinstance(n, int):
+        return prev, prev_utc
+    if prev is not None and n != prev:
+        return n, now or datetime.now(timezone.utc)
+    return n, prev_utc
 
 
 def gpsdo_state() -> dict | None:
@@ -71,7 +82,9 @@ def gpsdo_state() -> dict | None:
         def run():
             try:
                 from emelab import gpsdo
-                _GPSDO["last"] = gpsdo.read_leo_bodnar(seconds=2.5, satellites=False)
+                r = gpsdo.read_leo_bodnar(seconds=2.5, satellites=False)
+                _GPSDO["loss"], _GPSDO["loss_utc"] = note_loss(_GPSDO["loss"], _GPSDO["loss_utc"], r)
+                _GPSDO["last"] = {**r, "loss_utc": _GPSDO["loss_utc"]} if isinstance(r, dict) else r
             except Exception as e:
                 _GPSDO["last"] = {"error": str(e)}
             finally:
@@ -214,10 +227,29 @@ def badge(text: str, state: str = "none"):
     _html(f"<div class='badge {state}'>{html.escape(i18n.tr(text))}</div>")
 
 
+def dd_target_is_sun(d: dict | None) -> bool:
+    """DriverDish is following the Sun (its «status» target)."""
+    return str((d or {}).get("target", "")).strip().lower() in ("sun", "sole")
+
+
+def _cam_toggled():
+    on = bool(S.get("lv_cam_on"))
+    openems_local.save_settings(cam_enabled=on)
+    if not on:
+        mt.stop()
+
+
 def _camera_quadrant(D, sets, cfg):
-    st.markdown("**" + i18n.tr("📷 Luna dalla telecamera") + "**")
+    sun = dd_target_is_sun(dd_status()[0])
+    t = st.columns([3, 1.2], vertical_alignment="center")
+    t[0].markdown("**" + i18n.tr("☀️ Sole dalla telecamera" if sun else "📷 Luna dalla telecamera") + "**")
+    S["lv_cam_on"] = bool(sets.get("cam_enabled"))          # follows the setting, also when changed in the camera tab
+    t[1].toggle("Accesa", key="lv_cam_on", on_change=_cam_toggled,
+                help="Accende o spegne la telecamera (come nella scheda 📷 Telecamera Astronomica); spenta, resta libera per ASICap")
+    if sun:
+        badge("Filtro solare sul cercatore prima di inquadrare il Sole: senza filtro il sensore si danneggia", "bad")
     if not sets.get("cam_enabled"):
-        st.info("Telecamera spenta: accendila nella scheda 📷 Telecamera Astronomica.")
+        st.info("Telecamera spenta: accendila con l'interruttore qui sopra.")
         return
     if ui_camera.start_from_settings(sets) is None:
         st.warning("Telecamera non disponibile: controlla la scheda 📷 Telecamera Astronomica.")
@@ -226,6 +258,10 @@ def _camera_quadrant(D, sets, cfg):
 
 
 def _camera_live(cfg):
+    from emelab import watchdog
+    kind = openems_local.load_settings().get("cam_source", "asi")
+    if kind in watchdog.CAM_NOT_REAL:
+        badge(i18n.tr(watchdog.CAM_NOT_REAL[kind]), "warn")
     m = ui_camera.measure(cfg)
     if not m or m.get("frame") is None:
         st.info("In attesa del primo fotogramma dalla telecamera…")
@@ -310,7 +346,9 @@ def _driverdish_live():
         st.info("Lettura di DriverDish spenta: accendi «🔴 Leggi in tempo reale» nella scheda 🎯 Tracking.")
         return
     if not d:
-        st.warning(i18n.tr("DriverDish non risponde") + (f": {err}" if err else ""))
+        from emelab import watchdog
+        st.warning(i18n.tr("DriverDish non risponde") + (f": {err}" if err else "")
+                   + (" · " + i18n.tr(watchdog.TELNET_HINT) if watchdog.refused(err) else ""))
         return
     tracking = d.get("tracking")
     badge(f"{d.get('target', '—')} · " + ("TRACKING ON" if tracking else "TRACKING OFF")
@@ -347,7 +385,8 @@ def watchdog_items(D=None) -> list[dict]:
                            dd=d, dd_err=None if err == "off" else err, dd_on=bool(sets.get("dd_live")), dd_err_since=mon_since,
                            wsjtx_on=bool(svc and svc.running), wsjtx_last=getattr(svc, "last_seen", None), wsjtx_problems=probs,
                            bkt=clock.get("bkt") if svc and svc.running else None, ntp=clock.get("ntp"), dt=dt if n >= 3 else None,
-                           cam_on=cam_on, cam_age_s=age, cam_error=getattr(src, "error", None) if src else None)
+                           cam_on=cam_on, cam_age_s=age, cam_error=getattr(src, "error", None) if src else None,
+                           cam_kind=sets.get("cam_source", "asi"))
 
 
 _ICON = {"ok": "🟢", "warn": "🟡", "bad": "🔴"}
@@ -369,7 +408,7 @@ def _watchdog_live():
          "font-size:14px}.wd b{min-width:110px}.wd i{font-style:normal;opacity:.85}.wd.bad{background:#3a141622;"
          "border:1px solid #f85149}.wd.warn{border:1px solid #d29922}.wd.ok{border:1px solid #2ea04366}</style>" + rows)
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
-    st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni minuto.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
+    st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni 20 s.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
 
 
 def watchdog_sidebar(D):
@@ -572,7 +611,10 @@ def _wsjtx_checks_live():
         st.caption("WSJT-X non è su una banda EME (10 GHz e oltre).")
         return
     rows = ui_wsjtx_panel.check_rows(svc, openems_local.load_settings(), band)
-    st.caption(stations.band_label(band) + " · " + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu"))
+    ini = ui_wsjtx_panel.ini_state(openems_local.load_settings())
+    st.caption(stations.band_label(band) + " · " + i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu")
+               + (" · " + i18n.tr("(WSJT-X.ini) = dal file salvato alle") + f" {ini['saved']:%H:%M} UTC; "
+                  + i18n.tr("WSJT-X lo riscrive quando chiudi la finestra Astro o WSJT-X") if ini.get("saved") else ""))
     cells = "".join(f"<span class='{'bad' if r['Stato'] == ui_wsjtx_panel.BAD else 'ok' if r['Stato'] == ui_wsjtx_panel.OK else ''}'>"
                     f"<i>{html.escape(i18n.tr(r['Parametro']))}</i><b>{html.escape(str(r['WSJT-X adesso']))}</b> {r['Stato']}</span>"
                     for r in rows)

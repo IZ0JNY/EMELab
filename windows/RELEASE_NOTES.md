@@ -1,3 +1,21 @@
+## EMELab 0.1.11 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.11.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.11-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🔴 Live:** c'è un interruttore per accendere e spegnere la telecamera accanto al titolo del riquadro. Un avviso chiaro dice quando la telecamera è in simulatore o su un'immagine da file.
+- **☀️ Sole:** quando DriverDish insegue il Sole il riquadro si chiama «Sole dalla telecamera» e ricorda di usare il filtro solare.
+- **🛰️ GPSDO:** viene letto ogni 20 s. Una perdita di aggancio tra due letture resta segnalata per 10 minuti.
+- **DriverDish:** se rifiuta la connessione, il messaggio dice di accendere il suo server Telnet.
+- **📻 WSJT-X:** il controllo mostra l'ora in cui WSJT-X.ini è stato salvato.
+
+### 🇬🇧 What's new
+- **🔴 Live:** a camera on/off switch sits next to the box title. A clear notice says when the camera is on the simulator or on an image file.
+- **☀️ Sun:** when DriverDish follows the Sun the box is called «Sun from the camera» and reminds you to use the solar filter.
+- **🛰️ GPSDO:** read every 20 s. A lock loss between two reads stays flagged for 10 minutes.
+- **DriverDish:** if it refuses the connection, the message says to switch on its Telnet server.
+- **📻 WSJT-X:** the check shows when WSJT-X.ini was saved.
+
 ## EMELab 0.1.10 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.10.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.10-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
