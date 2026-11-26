@@ -156,6 +156,7 @@ _CSS = """<style>
 .lv b{margin-left:4px;font-family:ui-monospace,Consolas,monospace}.lv i{opacity:.65;font-style:normal}
 .lv .ok{border-color:#2ea04399;background:rgba(46,160,67,.08)}.lv .warn{border-color:#d29922;background:rgba(210,153,34,.12)}
 .lv .bad{border-color:#f85149;background:rgba(248,81,73,.12)}
+.lvc{gap:3px;font-size:12px}.lvc span{padding:1px 6px;white-space:nowrap}
 </style>"""
 
 
@@ -446,10 +447,10 @@ def dx_of(svc, D) -> tuple[str, str]:
     when WSJT-X has none."""
     s = (svc.status or {}) if _wsjtx_live(svc) else {}
     call = (s.get("dx_call") or "").strip().upper()
-    grid = (s.get("dx_grid") or "").strip()
+    grid = (s.get("dx_grid") or "").strip().upper()
     if call and len(grid) < 4:
         try:
-            grid = ((D.station_of(call) or {}).get("locator") or grid)
+            grid = ((D.station_of(call) or {}).get("locator") or grid).upper()
         except Exception:
             pass
     return call, grid
@@ -521,7 +522,7 @@ def _moon_live(D):
             other = None
     v = station_view(now, me, other, f_ghz, stn.get("height_m") or 0.0)
     band = stations.band_label(f_ghz)
-    _panel(f"{stn.get('callsign') or '—'} · {stn.get('locator') or ''}", "#1f6feb",
+    _panel(f"{stn.get('callsign') or '—'} · {(stn.get('locator') or '').upper()}", "#1f6feb",
            v, me, now, band, towards=call or "DX")
     if other:
         vo = station_view(now, other, me, f_ghz)
@@ -602,9 +603,9 @@ def _heading(title: str, color: str):
 
 def _panel(title, color, v, ll, now, band, towards="DX"):
     from emelab import tz
-    loc, zone, _ = tz.local_time(ll[0], ll[1], now)
+    loc = tz.local_time(ll[0], ll[1], now)[0]
     _heading(title, color)
-    pairs = panel_pairs(v, f"{loc:%H:%M} ({zone.split('/')[-1]})", towards, weather_at(*ll))
+    pairs = panel_pairs(v, f"{loc:%H:%M}", towards, weather_at(*ll))    # Ivan: only the time, no zone or city
     kv(pairs)
 
 
@@ -626,11 +627,31 @@ def _wsjtx_checks_live():
                help=i18n.tr("✅ come il preset · ⚠️ diverso dal preset · ❔ WSJT-X non lo manda: confermalo tu") + ". "
                + i18n.tr("(WSJT-X.ini) = dal file salvato alle") + " … UTC; "
                + i18n.tr("WSJT-X lo riscrive quando chiudi la finestra Astro o WSJT-X"))
-    cells = "".join(f"<span class='{'bad' if r['Stato'] == ui_wsjtx_panel.BAD else 'ok' if r['Stato'] == ui_wsjtx_panel.OK else ''}'>"
-                    f"<i>{html.escape(i18n.tr(r['Parametro']))}</i><b>{html.escape(str(r['WSJT-X adesso']))}</b> {r['Stato']}</span>"
-                    for r in rows)
-    h = _CSS + f"<div class='lv'>{cells}</div>"
+    cells = "".join(f"<span title='{html.escape(i18n.tr(r['Parametro']) + ': ' + str(r['WSJT-X adesso']), quote=True)}' "
+                    f"class='{'bad' if r['Stato'] == ui_wsjtx_panel.BAD else 'ok' if r['Stato'] == ui_wsjtx_panel.OK else ''}'>"
+                    f"<i>{html.escape(a)}</i><b>{html.escape(b)}</b> {r['Stato']}</span>"
+                    for r in rows for a, b in [short_check(r)])
+    h = _CSS + f"<div class='lv lvc'>{cells}</div>"
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
+
+
+_SHORT = {"Doppler tracking (finestra Astro)": "Doppler", "Configurazione": "Config", "Split Operation": "Split"}
+
+
+def short_check(r: dict) -> tuple[str, str]:
+    """Short label and value of a WSJT-X check for the Live chips (pure): "Doppler CFOM", "Split Rig", without
+    "(WSJT-X.ini)" and the long explanations, so the box takes fewer rows (Ivan: Live must not scroll). The full text
+    stays in the tooltip and in the 📻 WSJT-X tab."""
+    label = str(r.get("Parametro") or "")
+    label = _SHORT.get(label, label)
+    value = str(r.get("WSJT-X adesso") or "—").replace(" (WSJT-X.ini)", "")
+    from emelab import wsjtx_check
+    value = {v: k for k, v in wsjtx_check.DOPPLER.items() if k != "None"}.get(value, value)
+    if value == i18n.tr("non inviato via UDP") or value == "non inviato via UDP":
+        value = "—"
+    if " (" in value and value.endswith(")"):
+        value = value[:value.index(" (")]
+    return i18n.tr(label), value
 
 
 def _bottom_strip():

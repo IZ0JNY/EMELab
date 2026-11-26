@@ -34,3 +34,16 @@ def test_wsjtx_log_path_cleaning(tmp_path):
     assert clean_path(f'"{f}"') == str(f)                 # Windows «Copy as path» adds quotes
     assert clean_path(str(tmp_path)) == str(f)            # the folder of File → Open log directory
     assert clean_path("  ") == ""
+
+
+def test_live_locators_and_short_checks(tmp_path):
+    """Locators always in capitals (JN61PM); the Live WSJT-X chips are short."""
+    from emelab import db, ui_live
+    D = db.DB(tmp_path / "t.sqlite")
+    D.save_station(callsign="IZ0JNY", locator="jn61pm")
+    assert D.station()["locator"] == "JN61PM"
+    D.upsert_station("ik3ghy", locator="jn65dm")
+    assert D.station_of("IK3GHY")["locator"] == "JN65DM"
+    assert ui_live.short_check({"Parametro": "Doppler tracking (finestra Astro)",
+                                "WSJT-X adesso": "CFOM (Constant Frequency On Moon) (WSJT-X.ini)"}) == ("Doppler", "CFOM")
+    assert ui_live.short_check({"Parametro": "Split Operation", "WSJT-X adesso": "Rig (WSJT-X.ini)"}) == ("Split", "Rig")

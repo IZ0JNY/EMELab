@@ -1,3 +1,19 @@
+## EMELab 0.1.13 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.13.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.13-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **Locator sempre in maiuscolo**, tutti e sei i caratteri (JN61PM), anche quelli già salvati.
+- **🔴 Live:** l'ora locale delle stazioni è scritta senza «(Rome)», che sembrava una città: era solo il nome del fuso orario italiano.
+- **🔴 Live:** il Controllo di WSJT-X è più compatto (Doppler CFOM, Split Rig…), così la pagina non scorre più. Il testo completo resta nel suggerimento e nella scheda 📻 WSJT-X.
+- **📡 Log QSO:** utente e password di QRZ.com si possono salvare anche qui, nel riquadro «🔎 QTH, nome e cognome da QRZ.com».
+
+### 🇬🇧 What's new
+- **Locators always in capitals**, all six characters (JN61PM), the saved ones too.
+- **🔴 Live:** the stations' local time no longer shows «(Rome)», which looked like a town: it was only the name of the Italian time zone.
+- **🔴 Live:** the WSJT-X check is more compact (Doppler CFOM, Split Rig…), so the page no longer scrolls. The full text stays in the tooltip and in the 📻 WSJT-X tab.
+- **📡 Log QSO:** the QRZ.com username and password can be saved here too, in the «🔎 QTH, name and surname from QRZ.com» box.
+
 ## EMELab 0.1.12 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.12.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.12-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
