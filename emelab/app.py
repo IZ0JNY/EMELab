@@ -11,6 +11,9 @@ import streamlit as _st
 import emelab
 from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_moon, ui_wsjtx_panel
 from emelab import settings as openems_local
+from emelab import stallwatch
+
+stallwatch.run_started()                     # writes the thread stacks to server.log if this run gets stuck
 
 st = i18n.wrap(_st)
 S = st.session_state
@@ -219,3 +222,4 @@ for tab, (k, _, fn) in zip(tabs, shown):
 
 nav.toast_hook()
 _show_counters()                            # QSO/measurements added or deleted in this run (ADIF import, WSJT-X…)
+stallwatch.run_finished()

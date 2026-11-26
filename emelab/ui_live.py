@@ -380,7 +380,7 @@ def watchdog_sidebar(D):
 def _watchdog_bg(D):
     from emelab import watchdog
     sets = openems_local.load_settings()
-    if sets.get("cam_enabled") and ui_camera.start_from_settings(sets) is not None:
+    if sets.get("cam_enabled") and mt.current() is not None:     # only a camera already open: never opened from here
         cfg = ui_camera.cfg_from_settings(D, sets)
         ui_camera.alarm_feedback(ui_camera.measure(cfg), cfg)       # the out-of-tracking alarm with any tab open
     items = watchdog_items(D)
