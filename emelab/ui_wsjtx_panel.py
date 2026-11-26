@@ -196,10 +196,23 @@ def _dialog_body(svc, items):
             S.setdefault("wj_conf_now", set()).add(a["key"])
     st.caption("Puoi cambiare i parametri in WSJT-X mentre operi: EMELab avvisa soltanto. Un avviso chiuso due volte "
                "non riappare più (si riattiva nella scheda 📻 WSJT-X).")
-    if st.button("Chiudi", type="primary", key="wjp_close"):
+    c = st.columns(2)
+    if c[0].button("Chiudi", type="primary", key="wjp_close"):
         _closed([a["key"] for a in items if a["key"] not in S.get("wj_conf_now", set())])
         S["wj_conf_now"] = set()
         _st.rerun()
+    from emelab import nav
+    if nav.button(_kind(items), key="wjp_go", container=c[1],
+                  on_click=lambda: S.setdefault("wj_popup_done", set()).update(a["key"] for a in items)):
+        _st.rerun()                                 # seen: back only if the problem goes away and returns
+
+
+def _kind(items) -> str:
+    """Alert kind for the «➡️ Apri» button: GPSDO, PC clock or the WSJT-X settings."""
+    keys = [a["key"] for a in items]
+    if any(not k.startswith(("gpsdo", "clock", "bktsync")) for k in keys):
+        return "wsjtx"
+    return "gpsdo" if any(k.startswith("gpsdo") for k in keys) else "clock"
 
 
 def _on_dismiss():

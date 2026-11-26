@@ -3144,6 +3144,8 @@ def _wsjtx_banner():
         st.warning(i18n.tr("⚠️ Impostazioni di WSJT-X da controllare") + ": " +
                    " · ".join(i18n.tr(p["msg"]) + (f" ({p['detail']})" if p.get("detail") else "") for p in probs)
                    + " — " + i18n.tr("dettagli nella scheda 📻 WSJT-X"))
+        from emelab import nav
+        nav.button("wsjtx", key="wj_banner_go")
 
 
 def _wsjtx_save_pos(path, offset):
