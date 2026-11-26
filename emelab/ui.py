@@ -3392,7 +3392,7 @@ def _wsjtx_autostart():
     svc.auto_log = bool(sets.get("wsjtx_autolog", True))
     svc.eme_only = bool(sets.get("wsjtx_eme_only", True))
     svc.strict_eme = bool(sets.get("wsjtx_strict_eme", False))
-    svc.auto_fix = bool(sets.get("wsjtx_autofix", True))
+    svc.auto_fix = False                         # WSJT-X is changed only by «⚙️ Applica il preset»
     if sets.get("wsjtx_on") and not svc.running:
         try:
             svc.start(sets.get("wsjtx_host", "127.0.0.1"), int(sets.get("wsjtx_port", 2237)), sets.get("wsjtx_mcast") or None)

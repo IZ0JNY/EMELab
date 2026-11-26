@@ -61,10 +61,8 @@ def test_configure_rx_df_and_service_fix(tmp_path, monkeypatch):
     s.set_q65 = lambda code, **kw: sent.append((code, kw)) or True
     st = {"type": "status", "id": "WSJT-X", "dial_hz": 10_368_100_000, "mode": "Q65", "submode": "D", "tr_period": 60,
           "tx_df": 1000, "rx_df": 1300, "freq_tolerance": 200}
-    s.on_message(st, None)                       # first status of the band: Rx goes to the preset
-    assert sent == [(None, {"rx_df": 1000})]
-    s.on_message(st, None)                       # same band: the moved Rx is only noted
-    assert len(sent) == 1 and any(p["code"] == "rx_df" for p in s.problems)
+    s.on_message(st, None)                       # Ivan: never sent by itself, only flagged (Rx goes only with «Applica il preset»)
+    assert sent == [] and any(p["code"] == "rx_df" for p in s.problems)
 
 
 def test_gpsdo_catalogue_and_phase_noise(tmp_path, monkeypatch):
