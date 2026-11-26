@@ -11,11 +11,11 @@
 !   SET SMO <percent>     spectral smoothing, 100 = WSJT-X
 !   SET NTC <n>           averaging time constant in sequences, 4 = WSJT-X
 !   CLEAR                 clear the averages before the next decode
-!   DECODE <wav> <hhmm> <TRs> <submode A-E> <rx Hz> <ftol Hz> <depth> <mycall|-> <dxcall|-> <dxgrid|-> <maxdrift>
+!   DECODE "<wav>" <hhmm|hhmmss> <TRs> <submode A-E> <rx Hz> <ftol Hz> <depth> <mycall|-> <dxcall|-> <dxgrid|-> <maxdrift>
 !          <emedelay 0|1> <average 0|1>
 !   QUIT
-! and writes one line per decode
-!   D <hhmm> <snr> <dt> <freq> <q> <nused> <message>
+! (the path in double quotes; hhmm for T/R of 60 s and more, hhmmss below) and writes one line per decode
+!   D <hhmmss> <snr> <dt> <freq> <q> <nused> <message>
 ! then "E <navg even> <navg odd> <ms>" when the decode is over ("E ERR <text>" if the file cannot be read).
 ! The sync curve of the last decode (frequency, average, this period) goes to q65lab_red.dat in the current folder.
 
@@ -35,7 +35,7 @@ contains
     integer, intent(in) :: nused
     integer, intent(in) :: ntrperiod
     if(idec.lt.0) return
-    write(*,'(a,i4.4,i5,f6.2,f9.1,i3,i4,1x,a)') 'D ',nutc,nsnr,dt,freq,idec,nused,trim(decoded)
+    write(*,'(a,i6.6,i5,f6.2,f9.1,i3,i4,1x,a)') 'D ',nutc,nsnr,dt,freq,idec,nused,trim(decoded)
     call flush(6)
   end subroutine q65lab_decoded
 end module q65lab_cb
