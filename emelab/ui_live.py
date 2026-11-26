@@ -227,10 +227,29 @@ def badge(text: str, state: str = "none"):
     _html(f"<div class='badge {state}'>{html.escape(i18n.tr(text))}</div>")
 
 
+def dd_target_is_sun(d: dict | None) -> bool:
+    """DriverDish is following the Sun (its «status» target)."""
+    return str((d or {}).get("target", "")).strip().lower() in ("sun", "sole")
+
+
+def _cam_toggled():
+    on = bool(S.get("lv_cam_on"))
+    openems_local.save_settings(cam_enabled=on)
+    if not on:
+        mt.stop()
+
+
 def _camera_quadrant(D, sets, cfg):
-    st.markdown("**" + i18n.tr("📷 Luna dalla telecamera") + "**")
+    sun = dd_target_is_sun(dd_status()[0])
+    t = st.columns([3, 1.2], vertical_alignment="center")
+    t[0].markdown("**" + i18n.tr("☀️ Sole dalla telecamera" if sun else "📷 Luna dalla telecamera") + "**")
+    S["lv_cam_on"] = bool(sets.get("cam_enabled"))          # follows the setting, also when changed in the camera tab
+    t[1].toggle("Accesa", key="lv_cam_on", on_change=_cam_toggled,
+                help="Accende o spegne la telecamera (come nella scheda 📷 Telecamera Astronomica); spenta, resta libera per ASICap")
+    if sun:
+        badge("Filtro solare sul cercatore prima di inquadrare il Sole: senza filtro il sensore si danneggia", "bad")
     if not sets.get("cam_enabled"):
-        st.info("Telecamera spenta: accendila nella scheda 📷 Telecamera Astronomica.")
+        st.info("Telecamera spenta: accendila con l'interruttore qui sopra.")
         return
     if ui_camera.start_from_settings(sets) is None:
         st.warning("Telecamera non disponibile: controlla la scheda 📷 Telecamera Astronomica.")

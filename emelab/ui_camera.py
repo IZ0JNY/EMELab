@@ -73,11 +73,9 @@ def tab(D):
                "montata sulla parabola: una griglia mostra il centro e EMELab avvisa quando la Luna esce dalla tolleranza, "
                "cioè quando vai fuori tracking. La telecamera viene solo letta: EMELab non muove nulla.")
     S["_cam_sets"] = sets = openems_local.load_settings()
-    on = st.toggle("Abilita la telecamera", bool(sets.get("cam_enabled", False)), key="cam_on",
+    S["cam_on"] = bool(sets.get("cam_enabled", False))     # follows the setting, also when switched from the 🔴 Live tab
+    on = st.toggle("Abilita la telecamera", key="cam_on", on_change=lambda: _set(cam_enabled=bool(S.get("cam_on"))),
                    help="spenta, EMELab non apre la telecamera e la lascia libera per ASICap o altri programmi")
-    if on != bool(sets.get("cam_enabled", False)):
-        _set(cam_enabled=on)
-        sets["cam_enabled"] = on
     if not on:
         mt.stop()
         st.info("Telecamera spenta. Accendila con l'interruttore qui sopra quando ti serve il controllo del tracking.")

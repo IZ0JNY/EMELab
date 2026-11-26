@@ -34,3 +34,8 @@ def test_camera_simulator_is_flagged_not_ok():
     item = watchdog.checks(now=NOW, cam_on=True, cam_age_s=0.5, cam_kind="sim")[0]
     assert item["state"] == "warn" and "simulatore" in item["msg"]
     assert watchdog.checks(now=NOW, cam_on=True, cam_age_s=0.5)[0]["state"] == "ok"
+
+
+def test_dd_target_sun():
+    assert ui_live.dd_target_is_sun({"target": "Sun"}) and not ui_live.dd_target_is_sun({"target": "Moon"})
+    assert not ui_live.dd_target_is_sun(None)
