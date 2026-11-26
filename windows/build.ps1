@@ -51,6 +51,15 @@ Copy-Item "$root\emelab_main.py", "$root\README.md", "$root\LICENSE" "$build\app
 Copy-Item "$root\LICENSE" "$build\LICENSE.txt"
 Copy-Item "$root\windows\emelab.ico" "$build\"
 Get-ChildItem -Recurse -Directory -Filter "__pycache__" "$build\app" | Remove-Item -Recurse -Force
+# Q65 Lab: the experimental decoder (WSJT-X Q65 code, GPLv3), built by the "decoder" job; its sources go with it
+$q65 = Join-Path $root "build\q65lab\q65lab.exe"
+if (Test-Path $q65) {
+  New-Item -ItemType Directory -Force "$build\q65lab" | Out-Null
+  Copy-Item $q65 "$build\q65lab\"
+  Copy-Item "$root\decoder\q65lab\*" "$build\q65lab\"
+} else {
+  Write-Warning "q65lab.exe non trovato: Q65 Lab funzionerà solo con un decoder indicato a mano."
+}
 
 # 4. launchers. The Python interpreters are used exactly as published by python.org, with the Python
 # Software Foundation's digital signature intact (a modified copy is what antivirus heuristics flag). The
