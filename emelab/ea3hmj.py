@@ -284,7 +284,7 @@ class DriverDishMonitor:
                     self.error_since = datetime.now(timezone.utc)
                 self.error = str(e) or e.__class__.__name__
                 self._stop.wait(backoff)
-                backoff = min(backoff * 2, 15.0)
+                backoff = min(backoff * 2, 5.0)
 
 
 def _read_until_quiet(s, quiet: float = 0.25, total: float = 2.0) -> bytes:

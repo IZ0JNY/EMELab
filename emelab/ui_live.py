@@ -20,7 +20,7 @@ from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
 S = _st.session_state
-GPSDO_EVERY_S = 20
+GPSDO_EVERY_S = 15
 CAM_MAX_H = 300
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 
@@ -82,7 +82,7 @@ def gpsdo_state() -> dict | None:
         def run():
             try:
                 from emelab import gpsdo
-                r = gpsdo.read_leo_bodnar(seconds=2.5, satellites=False)
+                r = gpsdo.read_leo_bodnar(seconds=2.5, satellites=True)    # the fix: the lock bit stays on in holdover
                 _GPSDO["loss"], _GPSDO["loss_utc"] = note_loss(_GPSDO["loss"], _GPSDO["loss_utc"], r)
                 _GPSDO["last"] = {**r, "loss_utc": _GPSDO["loss_utc"]} if isinstance(r, dict) else r
             except Exception as e:
@@ -408,7 +408,7 @@ def _watchdog_live():
          "font-size:14px}.wd b{min-width:110px}.wd i{font-style:normal;opacity:.85}.wd.bad{background:#3a141622;"
          "border:1px solid #f85149}.wd.warn{border:1px solid #d29922}.wd.ok{border:1px solid #2ea04366}</style>" + rows)
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
-    st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni 20 s.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
+    st.caption(i18n.tr("Controllo ogni 5 s; GPSDO letto ogni 15 s.") + f" {datetime.now(timezone.utc):%H:%M:%S} UTC")
 
 
 def watchdog_sidebar(D):

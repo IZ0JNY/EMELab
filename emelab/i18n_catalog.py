@@ -1830,7 +1830,7 @@ ENTRIES = [
     ('Antenna El', 'Dish El'),
     ('Errore Az', 'Error Az'),
     ('Errore El', 'Error El'),
-    ('Controllo ogni 5 s; GPSDO letto ogni 20 s.', 'Checked every 5 s; GPSDO read every 20 s.'),
+    ('Controllo ogni 5 s; GPSDO letto ogni 15 s.', 'Checked every 5 s; GPSDO read every 15 s.'),
     ('☀️ Sole dalla telecamera', '☀️ Sun from the camera'),
     ('Accesa', 'On'),
     ('Accende o spegne la telecamera (come nella scheda 📷 Telecamera Astronomica); spenta, resta libera per ASICap', 'Switches the camera on or off (as in the 📷 Astronomical Camera tab); when off it stays free for ASICap'),

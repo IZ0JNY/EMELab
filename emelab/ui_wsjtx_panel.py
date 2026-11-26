@@ -27,23 +27,38 @@ st = i18n.wrap(_st)
 S = _st.session_state
 CONFIRM_HOURS = 12.0
 OK, BAD, ASK = "✅", "⚠️", "❔"
-PROC_EVERY_S, NTP_EVERY_S = 60, 600           # BktTimeSync process check / NTP offset measurement
+PROC_EVERY_S, NTP_EVERY_S = 5, 600            # BktTimeSync process check / NTP offset measurement
+_CLOCK = {"bkt": None, "t_proc": 0.0, "ntp": None, "t_ntp": 0.0, "busy": False}
+
+
+def _clock_poll():
+    """Background read (tasklist takes up to a second on Windows): the page never waits for it."""
+    try:
+        now = time.monotonic()
+        if now - _CLOCK["t_proc"] >= PROC_EVERY_S or _CLOCK["bkt"] is None:
+            _CLOCK["bkt"], _CLOCK["t_proc"] = timesync.bkt_running(), time.monotonic()
+        if os.name == "nt" and (_CLOCK["ntp"] is None or now - _CLOCK["t_ntp"] >= NTP_EVERY_S):
+            _CLOCK["ntp"], _CLOCK["t_ntp"] = timesync.ntp_offset(), time.monotonic()
+    finally:
+        _CLOCK["busy"] = False
 
 
 # ------------------------------------------------------------------ PC clock (BktTimeSync)
 def clock_state(measure: bool = False) -> dict:
-    """{"bkt": bkt_running(), "ntp": ntp_offset() or None}, cached: process every minute, NTP every 10 minutes on
-    Windows (elsewhere only on request). Read-only: EMELab never changes the clock nor BktTimeSync."""
-    now = time.monotonic()
-    t, bkt = S.get("ts_proc", (None, None))
-    if bkt is None or now - t > PROC_EVERY_S:
-        bkt = timesync.bkt_running()
-        S["ts_proc"] = (now, bkt)
-    t, ntp = S.get("ts_ntp", (None, None))
-    if measure or (os.name == "nt" and (ntp is None or now - t > NTP_EVERY_S)):
-        ntp = timesync.ntp_offset()
-        S["ts_ntp"] = (now, ntp)
-    return {"bkt": bkt, "ntp": ntp}
+    """{"bkt": bkt_running(), "ntp": ntp_offset() or None}: process checked every 5 s, NTP every 10 minutes on
+    Windows (elsewhere only on request), both in the background. Read-only: EMELab never changes the clock nor
+    BktTimeSync."""
+    import threading
+    if measure:
+        _CLOCK["bkt"], _CLOCK["t_proc"] = timesync.bkt_running(), time.monotonic()
+        _CLOCK["ntp"], _CLOCK["t_ntp"] = timesync.ntp_offset(), time.monotonic()
+    elif _CLOCK["bkt"] is None:                     # first call: read once now, so the page starts with real values
+        _CLOCK["busy"] = True
+        _clock_poll()
+    elif not _CLOCK["busy"] and time.monotonic() - _CLOCK["t_proc"] >= PROC_EVERY_S:
+        _CLOCK["busy"] = True
+        threading.Thread(target=_clock_poll, daemon=True, name="emelab-clock").start()
+    return {"bkt": _CLOCK["bkt"] or {"running": None, "process": None}, "ntp": _CLOCK["ntp"]}
 
 
 def clock_alerts(state: dict) -> list[dict]:
@@ -64,8 +79,6 @@ def _clock_box():
     c = st.columns([3, 3, 1])
     measure = c[2].button("🔄 Misura", key="ts_measure", help="Una richiesta SNTP al server NTP (UDP 123). EMELab "
                           "non cambia l'ora del PC né le impostazioni di BktTimeSync.")
-    if measure:
-        S.pop("ts_proc", None)
     stt = clock_state(measure)
     bkt, ntp = stt["bkt"], stt["ntp"]
     if bkt.get("running"):

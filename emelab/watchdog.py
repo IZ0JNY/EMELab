@@ -12,13 +12,21 @@ from datetime import datetime, timezone
 
 DD_GRACE_S = 10.0
 GPSDO_LOSS_WARN_S = 600.0
-WSJTX_SILENT_S = 90.0
+WSJTX_SILENT_S = 40.0                # WSJT-X sends a heartbeat every 15 s
 CAM_STALE_S = 5.0
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 TOAST_PREFIX = "🚨 Watchdog: "
 CAM_NOT_REAL = {"sim": "simulatore: la telecamera vera non è in uso",
                 "still": "immagine da file: la telecamera vera non è in uso"}
 TELNET_HINT = "in DriverDish accendi Setup → Telnet server, porta 9999, «Run»"
+
+
+def no_fix(pvt: dict | None) -> bool:
+    """The GPS receiver of the GPSDO has no 3D fix (UBX-NAV-PVT). The Leo Bodnar «GPS lock» bit stays on for a long
+    time after the antenna is lost (holdover), so the fix is the reliable sign."""
+    if not pvt:
+        return False
+    return not pvt.get("fix_ok") or (pvt.get("fix_type") or 0) < 3 or (pvt.get("sats_used") or 0) < 4
 
 
 def refused(err: str | None) -> bool:
@@ -45,6 +53,9 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
             add("gpsdo", "GPSDO", "warn", "lettura in corso")
         elif gpsdo.get("error"):
             add("gpsdo", "GPSDO", "bad", "GPSDO non letto: " + gpsdo["error"])
+        elif no_fix(gpsdo.get("pvt")):
+            add("gpsdo", "GPSDO", "bad", f"GPS senza fix ({gpsdo['pvt'].get('sats_used', 0)} satelliti): antenna staccata o "
+                                          "cielo coperto, il GPSDO va in holdover")
         elif not (gpsdo.get("gps_ok") and gpsdo.get("pll_ok")):
             add("gpsdo", "GPSDO", "bad", f"GPSDO non agganciato (GPS {'OK' if gpsdo.get('gps_ok') else 'NO'}, "
                                           f"PLL {'OK' if gpsdo.get('pll_ok') else 'NO'})")

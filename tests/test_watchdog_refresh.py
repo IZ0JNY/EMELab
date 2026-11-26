@@ -39,3 +39,27 @@ def test_camera_simulator_is_flagged_not_ok():
 def test_dd_target_sun():
     assert ui_live.dd_target_is_sun({"target": "Sun"}) and not ui_live.dd_target_is_sun({"target": "Moon"})
     assert not ui_live.dd_target_is_sun(None)
+
+
+def test_gpsdo_without_fix_is_bad_even_if_lock_bit_is_on():
+    g = {"gps_ok": True, "pll_ok": True, "pvt": {"fix_type": 0, "fix_ok": False, "sats_used": 0}}
+    item = watchdog.checks(now=NOW, gpsdo=g, gpsdo_on=True)[0]
+    assert item["state"] == "bad" and "senza fix" in item["msg"]
+    g["pvt"] = {"fix_type": 3, "fix_ok": True, "sats_used": 9}
+    assert watchdog.checks(now=NOW, gpsdo=g, gpsdo_on=True)[0]["state"] == "ok"
+
+
+def test_clock_state_reads_in_background(monkeypatch):
+    import time
+    from emelab import timesync, ui_wsjtx_panel as p
+    calls = []
+    monkeypatch.setattr(timesync, "bkt_running", lambda: calls.append(1) or {"running": len(calls) == 1, "process": "x"})
+    monkeypatch.setattr(p, "_CLOCK", {"bkt": None, "t_proc": 0.0, "ntp": None, "t_ntp": 0.0, "busy": False})
+    assert p.clock_state()["bkt"]["running"] is True            # first call reads at once
+    p._CLOCK["t_proc"] -= p.PROC_EVERY_S + 1                     # 5 s later: BktTimeSync closed
+    p.clock_state()
+    for _ in range(50):
+        if not p._CLOCK["busy"]:
+            break
+        time.sleep(0.02)
+    assert p.clock_state()["bkt"]["running"] is False
