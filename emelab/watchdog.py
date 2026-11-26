@@ -11,10 +11,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 DD_GRACE_S = 10.0
+GPSDO_LOSS_WARN_S = 600.0
 WSJTX_SILENT_S = 90.0
 CAM_STALE_S = 5.0
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 TOAST_PREFIX = "🚨 Watchdog: "
+TELNET_HINT = "in DriverDish accendi Setup → Telnet server, porta 9999, «Run»"
+
+
+def refused(err: str | None) -> bool:
+    """Connection refused: DriverDish (or its telnet server) is not listening."""
+    e = (err or "").lower()
+    return "10061" in e or "refused" in e or "errno 111" in e
 
 
 def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: bool = False,
@@ -37,12 +45,15 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
         elif not (gpsdo.get("gps_ok") and gpsdo.get("pll_ok")):
             add("gpsdo", "GPSDO", "bad", f"GPSDO non agganciato (GPS {'OK' if gpsdo.get('gps_ok') else 'NO'}, "
                                           f"PLL {'OK' if gpsdo.get('pll_ok') else 'NO'})")
+        elif gpsdo.get("loss_utc") and (now - gpsdo["loss_utc"]).total_seconds() < GPSDO_LOSS_WARN_S:
+            add("gpsdo", "GPSDO", "warn", "aggancio perso e ritrovato negli ultimi 10 minuti")
         else:
             add("gpsdo", "GPSDO", "ok", "GPS e PLL agganciati")
     if dd_on:
         if not dd:
             late = dd_err_since is None or (now - dd_err_since).total_seconds() >= DD_GRACE_S
-            add("driverdish", "DriverDish", "bad" if late else "warn", "DriverDish non risponde" + (f": {dd_err}" if dd_err else ""))
+            add("driverdish", "DriverDish", "bad" if late else "warn", "DriverDish non risponde" + (f": {dd_err}" if dd_err else "")
+                + (" · " + TELNET_HINT if refused(dd_err) else ""))
         elif dd.get("tracking") is False:
             add("driverdish", "DriverDish", "bad", "DriverDish non insegue (TRACKING OFF)")
         else:
