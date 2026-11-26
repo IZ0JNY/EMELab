@@ -1,3 +1,19 @@
+## EMELab 0.1.17 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.17.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.17-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🧪 Q65 Lab (decoder sperimentale):** nuova scheda che ascolta lo stesso audio di WSJT-X (IC-9700 USB Audio CODEC, in condivisione) e decodifica ogni periodo con due decoder: Q65 Lab, con modello di spread a campana, smussatura adattiva e media lineare scelti dallo spread di librazione previsto, e lo stesso decoder con le regolazioni di WSJT-X. Una tabella confronta periodo per periodo cosa hanno preso Q65 Lab, «come WSJT-X» e il tuo WSJT-X (★ = solo Q65 Lab). WSJT-X e la radio non vengono mai toccati: niente CAT, sola lettura di WSJT-X.ini e dei messaggi UDP, decoder a priorità bassa.
+- **🌊 Waterfall e spettro come la Wide Graph:** inizio, larghezza, N Avg, guadagno, zero, palette, Flatten e Ref Spec (il tuo refspec.dat), con i valori iniziali presi da WSJT-X.ini. In «Automatico» inquadra Rx ± F Tol e tutta la larghezza del sottomodo, regola i livelli sul rumore e segnala una possibile traccia nello spettro cumulativo.
+- **📂 Seleziona wav:** sceglie i periodi salvati da WSJT-X (Save → Save all) o registrati da Q65 Lab, li ordina per giorno e ora e li decodifica con i due decoder; con ALL.TXT prende per ogni file modo, Rx e DX di quell'ora e mostra anche cosa aveva decodificato WSJT-X.
+- Il decoder di Q65 Lab è il codice Q65 di WSJT-X v3.0.2 (K1JT e WSJT Development Group, GPLv3) con tre regolazioni; non è WSJT-X e non è approvato dai suoi autori. Sorgenti nella cartella `q65lab` dell'installazione.
+
+### 🇬🇧 What's new
+- **🧪 Q65 Lab (experimental decoder):** a new tab that listens to the same audio as WSJT-X (IC-9700 USB Audio CODEC, shared) and decodes every period with two decoders: Q65 Lab, with a bell-shaped spread model, adaptive smoothing and linear averaging chosen from the expected libration spread, and the same decoder with the WSJT-X settings. A table compares period by period what Q65 Lab, «as WSJT-X» and your WSJT-X decoded (★ = only Q65 Lab). WSJT-X and the radio are never touched: no CAT, read-only WSJT-X.ini and UDP messages, decoder at low priority.
+- **🌊 Waterfall and spectrum like the Wide Graph:** start, width, N Avg, gain, zero, palette, Flatten and Ref Spec (your refspec.dat), starting from the values in WSJT-X.ini. In «Automatic» it frames Rx ± F Tol and the whole submode width, sets the levels from the noise and flags a possible trace in the cumulative spectrum.
+- **📂 Select wav:** picks the periods saved by WSJT-X (Save → Save all) or recorded by Q65 Lab, sorts them by day and time and decodes them with both decoders; with ALL.TXT each file gets the mode, Rx and DX of that time and what WSJT-X decoded is shown too.
+- The Q65 Lab decoder is the Q65 code of WSJT-X v3.0.2 (K1JT and the WSJT Development Group, GPLv3) with three adjustments; it is not WSJT-X and is not endorsed by its authors. Sources in the `q65lab` folder of the installation.
+
 ## EMELab 0.1.16 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.16.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.16-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
