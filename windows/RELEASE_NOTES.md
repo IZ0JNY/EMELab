@@ -1,3 +1,23 @@
+## EMELab 0.1.15 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.15.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.15-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🔁 Modo Echo di WSJT-X** (scheda 📻 WSJT-X): EMELab legge `all_echo.txt`, divide le misure, prende il valore finale quando SNR e dBerr sono stabili e lo confronta con l'eco calcolata per la tua configurazione. Un clic la registra nel diario come misura d'eco.
+- **📘 Consigli di DL3WDG** (scheda 📻 WSJT-X): controlla da WSJT-X.ini media, Auto Clear Avg, Deep, Single decode, Decode after EME delay, locator a 6 caratteri, Ref Spec con Flatten, DX Call e DX Grid per la decodifica AP. Sono solo note: niente pop-up, WSJT-X non viene toccato.
+- **🤔 «Vedo il segnale ma non decodifica: perché?»**: le cause elencate da DL3WDG, con lo stato che EMELab sa verificare (orologio, GPSDO, Deep, Doppler).
+- **💡 60D o 60E a 10 GHz:** nel Pianificatore e nella scheda WSJT-X una nota dice quanti dB guadagnerebbe l'altro sottomodo con lo spread del momento. Il modo della banda resta quello scelto da te.
+- **📡 Log QSO:** nota sui rapporti a 700 Hz con 60E, che possono sembrare migliori del vero.
+- **📚 Bibliografia:** la guida di Charlie Suckling DL3WDG «Using WSJT-X for Microwave EME (Q65 and Echo mode)», EME 2022.
+
+### 🇬🇧 What's new
+- **🔁 WSJT-X Echo mode** (📻 WSJT-X tab): EMELab reads `all_echo.txt`, splits the measurements, takes the final value once SNR and dBerr are stable and compares it with the echo computed for your configuration. One click saves it in the diary as an echo measurement.
+- **📘 DL3WDG's advice** (📻 WSJT-X tab): checks in WSJT-X.ini averaging, Auto Clear Avg, Deep, Single decode, Decode after EME delay, the 6-character locator, Ref Spec with Flatten, DX Call and DX Grid for AP decoding. Notes only: no pop-up, WSJT-X is not touched.
+- **🤔 «I see the signal but it does not decode: why?»**: the causes listed by DL3WDG, with the state EMELab can check (clock, GPSDO, Deep, Doppler).
+- **💡 60D or 60E at 10 GHz:** in the Planner and the WSJT-X tab a note tells how many dB the other submode would gain with the current spread. The band keeps the mode you chose.
+- **📡 QSO log:** note on reports at 700 Hz with 60E, which can look better than they are.
+- **📚 Bibliography:** Charlie Suckling DL3WDG's guide «Using WSJT-X for Microwave EME (Q65 and Echo mode)», EME 2022.
+
 ## EMELab 0.1.14 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.14.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.14-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

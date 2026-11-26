@@ -1173,6 +1173,19 @@ def _planner_detail(D, stn, setup, smp, row, dxs, step_min: int = 30):
                       **_planner_help()})
     st.caption("Righe verdi: i momenti migliori del passaggio (entro 1 dB dal margine di QSO più alto, o dalle eco più "
                "forti se non hai scelto una stazione). Solo i momenti con la Luna sopra il tuo orizzonte libero.")
+    if dxs and ctx:
+        _mode_hint_note(ctx[4], max(s["spread_hz"] for s in pts))
+
+
+def _mode_hint_note(mode: str, spread_hz: float, container=None):
+    """Note when the other 60 s submode would decode a weaker signal at this spread (DL3WDG); the band keeps its mode."""
+    from emelab import dx
+    h = dx.mode_hint(mode, spread_hz)
+    if h:
+        (container or st).caption("💡 " + i18n.tr("Con questo spread") + f" ({spread_hz:.0f} Hz) Q65-{h['mode']} "
+                                  + i18n.tr("avrebbe una soglia più bassa di") + f" {h['gain_db']:.1f} dB "
+                                  + i18n.tr("rispetto a") + f" Q65-{mode} (DL3WDG: "
+                                  + i18n.tr("sopra circa 70 Hz di spread il 60E rende più del 60D") + ").")
 
 
 def _planner_table(data: list[dict], sun_close: list[bool], best: list[bool]):
@@ -1928,6 +1941,9 @@ def _logbook_tab(D):
         st.markdown(f"<span style='color:{ASSUMED_COLOR}'>Q65-60D</span> = " + i18n.tr(
             "sottomodo presunto: non è scritto nel log (WSJT-X non lo mette nell'ADIF), è il modo standard della banda "
             "(60D a 10 GHz, 60E da 24 GHz in su) o quello scelto nel Pianificatore."), unsafe_allow_html=True)
+    st.caption("ℹ️ Rapporti in dB su 2500 Hz. Con i sottomodi larghi (60E) e Rx/Tx a 700 Hz il SNR può sembrare migliore "
+               "del vero, secondo il taglio basso dell'audio: due stazioni uguali possono leggere valori diversi per lo "
+               "stesso segnale. La decodifica non cambia (DL3WDG).")
     cols = lb.BAND_COLORS
     paths = [(*lb.latlon(q["my_locator"] or my_loc), *lb.latlon(q["locator"]), cols.get(q.get("band"), "#555"),
               f"{q['call']} {_bl(q.get('band'))}") for q in qs if q.get("locator") and lb.latlon(q["locator"])]
@@ -3558,8 +3574,9 @@ def _wsjtx_tab(D):
             with st.expander("⚠️ Messaggi"):
                 for e in list(svc.errors)[-10:]:
                     st.text(e)
-        from emelab import ui_wsjtx_panel
+        from emelab import ui_echo, ui_wsjtx_panel
         ui_wsjtx_panel._preset_editors(None)        # presets can be written also with WSJT-X closed
+        ui_echo.render(D)                           # all_echo.txt is a file: readable with WSJT-X closed too
         return
     s = svc.status
     if not svc.last_seen:
@@ -3593,6 +3610,7 @@ def _wsjtx_tab(D):
                 c[0].info(i18n.tr("Con") + f" {s['dx_call']}: mutual spread {spread:.0f} Hz · " + i18n.tr("modo della banda") +
                           f" **Q65-{mode}** (" + i18n.tr("soglia") + f" {thr:.1f} dB)" +
                           ("" if dx.spread_ok(mode, spread) else " ⚠️ " + i18n.tr("spread oltre la tolleranza")))
+                _mode_hint_note(mode, spread, c[0])
                 if c[1].button(f"⚙️ Imposta Q65-{mode} in WSJT-X", key="wj_setmode"):
                     st.success("Inviato a WSJT-X.") if svc.set_q65(mode) else st.error("WSJT-X non raggiungibile.")
             except Exception:
@@ -3609,6 +3627,8 @@ def _wsjtx_tab(D):
             for call in {r["call"] for r in rec if r["call"]}:
                 n += svc.highlight(call, "#c8e6c9" if call not in worked else "#e0e0e0")
             st.success(i18n.tr("Nominativi colorati") + f": {n}")
+    from emelab import ui_echo
+    ui_echo.render(D)
     if svc.errors:
         with st.expander("⚠️ Messaggi"):
             for e in list(svc.errors)[-10:]:

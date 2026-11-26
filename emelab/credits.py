@@ -51,6 +51,10 @@ BIBLIOGRAPHY = [   # (author, title, details) — the books behind the calculati
      "diagrammi, polarizzazione, riflettori"),
     ("Miroslav Kasal OK2AQ", "Weak Radio Signals from Space", "ricezione di segnali deboli: rumore, temperatura "
      "d'antenna, G/T, EME"),
+    ("Charlie Suckling DL3WDG", "Using WSJT-X for Microwave EME (Q65 and Echo mode)", "presentazione alla conferenza "
+     "EME 2022, aggiornamento n. 3 (7 dicembre 2022): sottomodi Q65 e soglie in funzione dello spread, decodifica AP, "
+     "media, spettro di riferimento, modo Echo, metodi Doppler e CFOM — "
+     "https://archive.org/details/eme2022_using-wsjt-x-for-microwave-eme"),
 ]
 
 

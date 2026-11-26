@@ -114,6 +114,17 @@ def band_mode(band: str, settings: dict | None = None) -> str:
     return m if m in Q65_MODES else Q65_STANDARD.get(band, "60E")
 
 
+def mode_hint(mode: str, spread_hz: float, min_gain_db: float = 0.3) -> dict | None:
+    """The other 60 s submode when it would decode a weaker signal at this spread (DL3WDG, EME 2022: at 10 GHz
+    60E beats 60D whenever the spread is above about 70 Hz): {"mode": "60E", "gain_db": 1.2}, else None. Only a
+    note: the band keeps the submode the user chose."""
+    if mode not in ("60D", "60E"):
+        return None
+    other = "60E" if mode == "60D" else "60D"
+    gain = q65_threshold_db(mode, spread_hz) - q65_threshold_db(other, spread_hz)
+    return {"mode": other, "gain_db": gain} if gain >= min_gain_db else None
+
+
 def best_mode(spread_hz: float) -> tuple[str, float]:
     """The submode with the lowest threshold (for comparison only: EMELab uses the band's mode, see band_mode)."""
     return min(((m, q65_threshold_db(m, spread_hz)) for m in Q65_MODES), key=lambda x: x[1])
