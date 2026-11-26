@@ -68,7 +68,7 @@ def test_tab_with_simulator(tmp_path, monkeypatch, lang):
     pytest.importorskip("erfa")
     monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
     monkeypatch.setenv("EMELAB_LANG", lang)
-    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["camera"], "cam_enabled": True, "cam_source": "sim",
+    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["camera"], "tabs_defaults_0110": True, "cam_enabled": True, "cam_source": "sim",
                                                         "language": lang}))
     mt.stop()
     from streamlit.testing.v1 import AppTest
@@ -146,7 +146,7 @@ def test_alignment_band_and_rf_centre():
 def test_sun_wizard_steps_in_english(tmp_path, monkeypatch, step):
     pytest.importorskip("erfa")
     monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
-    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["camera"], "cam_enabled": True, "cam_source": "sim",
+    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["camera"], "tabs_defaults_0110": True, "cam_enabled": True, "cam_source": "sim",
                                                         "language": "en"}))
     mt.stop()
     from emelab import ui_sunalign

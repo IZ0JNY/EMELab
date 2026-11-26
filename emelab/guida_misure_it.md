@@ -2,7 +2,7 @@
 
 Ogni misura va registrata **in UTC** (sincronizza il PC con NTP o GPS), con la **configurazione** usata e il **meteo** dello stesso momento. Usa sempre le stesse impostazioni del ricevitore (banda, tempo di integrazione, AGC spento) e fai **3 letture**, poi la media.
 
-Nella scheda **➕ Nuova misura** il pulsante **⚡ Leggi tutto adesso** (e l'apertura della scheda) compila da solo ora UTC, AZ/EL e offset della parabola da DriverDish (solo lettura, «status»), errore di puntamento, meteo (la tua stazione, altrimenti Open-Meteo), e frequenza di WSJT-X. Premilo quando sei sul picco, poi scrivi Y e registra: i valori restano modificabili.
+Nella scheda **➕ Nuova misura** il pulsante **⚡ Leggi tutto adesso** (e l'apertura della scheda) compila da solo ora UTC, AZ/EL e offset della parabola da DriverDish (solo lettura, «status»), errore di puntamento, meteo (la tua stazione, altrimenti Open-Meteo), e frequenza di WSJT-X. Premilo quando sei sul picco, poi scrivi Y e registra: i valori restano modificabili. Per Y puoi anche esportare il CSV del modo Continuum di SDR Console: EMELab trova da solo la finestra di cielo freddo e quella sulla sorgente (spostabili sul grafico) e calcola Y con la sua incertezza.
 
 #### 1. Rumore solare (Y sole / cielo freddo) — la misura principale
 - **Cosa misura:** il G/T reale della stazione. EMELab lo confronta con quello atteso dal tuo feed e dalla tua parabola.

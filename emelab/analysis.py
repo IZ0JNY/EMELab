@@ -108,9 +108,9 @@ def evaluate_measurement(m: dict, setup: dict) -> dict:
     if not c:
         return out
     if m["kind"] in ("sun", "moon") and m.get("y_db") is not None:
-        exp = c[m["kind"]]["y_db"]
+        exp = (c.get(m["kind"]) or {}).get("y_db")
         out["y_expected"] = exp
-        out["y_delta"] = m["y_db"] - exp
+        out["y_delta"] = m["y_db"] - exp if exp is not None else None
         if m["kind"] == "sun":
             out["gt_measured"] = sun_gt_from_y(m["y_db"], setup, c)
             out["gt_expected"] = c.get("gt_expected")
