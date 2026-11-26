@@ -27,6 +27,8 @@ def _frag(run_every):
 
 
 def _html(h: str):
+    if "qx-" in h and "<style>" not in h:
+        h = _CSS + h                    # the style travels with every block: a lone <style> block can get lost
     st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
 
 
@@ -107,6 +109,14 @@ def _params_fn(eng: q65lab.Engine):
             man = sets.get("q65lab_manual", {})
             p.update({k: man[k] for k in ("submode", "rx_hz", "ftol", "tr") if man.get(k)})
             p["manual"] = True
+        ov = sets.get("q65lab_override") or {}
+        if ov.get("on"):                                   # «Modo e banda» chosen by hand in this tab (WSJT-X untouched)
+            p.update({k: ov[k] for k in ("submode", "tr", "rx_hz", "ftol") if ov.get(k)})
+            if ov.get("band") in q65lab.BAND_GHZ:
+                p["band"] = ov["band"]
+                p["spread_hz"] = q65lab.expected_spread(q65lab.BAND_GHZ[ov["band"]], edb.DB().station(), p.get("dx_grid"))
+            p["override"] = True
+            p["mode_ok"] = True
         return p
     return fn
 
@@ -139,7 +149,7 @@ def tab(D=None):
 
 
 def _header(eng: q65lab.Engine, sets: dict):
-    c = st.columns([4.6, 1.25, 1.1, 1.15, 2.2], vertical_alignment="center")
+    c = st.columns([3.5, 1.25, 1.1, 1.15, 1.2, 2.2], vertical_alignment="center")
     c[0].markdown("<div class='qx-head'><span class='qx-title'>🧪 Q65 Lab</span><span class='qx-sub'>"
                   + _t("decoder sperimentale accanto a WSJT-X · stesso audio, due decodifiche, nessuna modifica a WSJT-X")
                   + "</span></div>", unsafe_allow_html=True)
@@ -156,9 +166,11 @@ def _header(eng: q65lab.Engine, sets: dict):
                    help="azzera le medie dei due decoder (come «Clear Avg» di WSJT-X)"):
         eng.clear_avg()
         st.toast(i18n.tr("Medie azzerate"), icon="🧹")
-    with c[3].popover("🌊 Waterfall", width="stretch"):
+    with c[3].popover("📻 Modo", width="stretch"):
+        _mode_controls(sets)
+    with c[4].popover("🌊 Waterfall", width="stretch"):
         _wf_controls(sets)
-    prof = c[4].selectbox("Profilo Q65 Lab", list(PROFILES), format_func=lambda k: i18n.tr(PROFILES[k]),
+    prof = c[5].selectbox("Profilo Q65 Lab", list(PROFILES), format_func=lambda k: i18n.tr(PROFILES[k]),
                           index=list(PROFILES).index(eng.mode), key="qx_profile", label_visibility="collapsed",
                           help="Automatico: metrica di WSJT-X fino a 80 Hz di spread, campana e smussatura 2× fino a "
                                "200 Hz, 3× oltre. Sempre media lineare.")
@@ -168,6 +180,31 @@ def _header(eng: q65lab.Engine, sets: dict):
     if sets.get("q65lab_on") and not eng.running and eng.exe and not S.get("qx_autostart_tried"):
         S["qx_autostart_tried"] = True                  # it was listening when EMELab was closed: starts again
         _start(eng, sets, quiet=True)
+
+
+def _mode_controls(sets: dict):
+    """Mode, band, Rx and F Tol for Q65 Lab only: «come WSJT-X» follows WSJT-X by itself; «a mano» is for tests and
+    for listening on another mode. WSJT-X is never changed."""
+    ov = {"on": False, "band": "24G", "submode": "E", "tr": 60, "rx_hz": 700, "ftol": 200, **(sets.get("q65lab_override") or {})}
+    follow = st.radio("Modo e banda", ["wsjtx", "manual"], index=1 if ov["on"] else 0, key="qx_ov_on", horizontal=True,
+                      format_func=lambda k: i18n.tr({"wsjtx": "Come WSJT-X", "manual": "A mano"}[k]),
+                      help="Come WSJT-X: modo, banda, Rx e F Tol seguono WSJT-X da soli. A mano: solo per Q65 Lab, "
+                           "WSJT-X non viene toccato")
+    man = follow == "manual"
+    c = st.columns(2)
+    modes = [f"{t}{x}" for t in (60, 30, 120, 15, 300) for x in "ABCDE"]
+    cur = f"{ov['tr']}{ov['submode']}"
+    m = c[0].selectbox("Modo Q65", modes, index=modes.index(cur) if cur in modes else 4, key="qx_ov_mode",
+                       format_func=lambda x: f"Q65-{x}", disabled=not man)
+    bands = list(q65lab.BAND_GHZ)
+    b = c[1].selectbox("Banda", bands, index=bands.index(ov["band"]) if ov["band"] in bands else 1, key="qx_ov_band",
+                       format_func=stations.band_label, disabled=not man)
+    c = st.columns(2)
+    rx = c[0].number_input("Rx (Hz)", 200, 4000, int(ov["rx_hz"]), 10, key="qx_ov_rx", disabled=not man)
+    tol = c[1].number_input("F Tol (Hz)", 10, 1000, int(ov["ftol"]), 10, key="qx_ov_tol", disabled=not man)
+    new = {"on": man, "band": b, "submode": m[-1], "tr": int(m[:-1]), "rx_hz": int(rx), "ftol": int(tol)}
+    if new != {k: ov.get(k) for k in new}:
+        openems_local.save_settings(q65lab_override=new)
 
 
 PALETTE_NAMES = {"wsjtx": "Come WSJT-X", "blue": "Blu", "gray": "Grigio", "warm": "Caldo"}
@@ -258,6 +295,9 @@ def _start(eng: q65lab.Engine, sets: dict, quiet: bool = False):
         eng.start(q65lab.Capture(dev["index"], ch, rate=48000 if dev["rate"] >= 44100 else dev["rate"]))
         openems_local.save_settings(q65lab_on=True)
         S["qx_dev_label"] = f"{dev['name']} · {dev['api']}"
+        S["qx_dev_obj"], S["qx_ch_used"] = dev, ch
+        S.pop("qx_silent_since", None)
+        S["qx_tried"] = []
         st.rerun()
     except Exception as e:
         if not quiet:
@@ -278,7 +318,8 @@ def _live(eng: q65lab.Engine):
     src = eng.source
     lvl = getattr(src, "level_db", None) if src else None
     if eng.running:
-        lvl_state = "ok" if lvl is not None and -45 < lvl < -6 else "warn"
+        lvl_state = "ok" if lvl is not None and -45 < lvl < -6 else ("bad" if lvl is not None and lvl < q65lab.SILENCE_DBFS
+                                                                      else "warn")
         audio = (S.get("qx_dev_label") or "IC-9700 · USB Audio CODEC", lvl_state)
     else:
         audio = ("fermo", "none")
@@ -290,7 +331,9 @@ def _live(eng: q65lab.Engine):
               ("Rx", f"{p['rx_hz']} Hz", "none"), ("F Tol", f"{p['ftol']} Hz", "none"),
               ("DX", (p.get("dx_call") or "—") + (f" {p['dx_grid']}" if p.get("dx_grid") else ""),
                "ok" if p.get("dx_call") else "warn")]
-    if p.get("manual"):
+    if p.get("override"):
+        items.append(("📻", "modo e banda a mano", "assumed"))
+    elif p.get("manual"):
         items.append(("WSJT-X", "non collegato: valori di questa scheda", "warn"))
     sp = p.get("spread_hz")
     items.append(("Spread previsto", f"{sp:.0f} Hz" if sp else "—", "none" if sp else "assumed"))
@@ -298,6 +341,7 @@ def _live(eng: q65lab.Engine):
     if eng.running:
         items.append(("Decodifica tra", f"{int(left)//60:d}:{int(left)%60:02d}" + (" · ⏳" if eng.busy else ""), "none"))
     _html(_strip(items))
+    _silence_watch(eng, lvl)
     periods = list(eng.periods)
     done = [x for x in periods if not x.skipped]
     n_lab = sum(len(x.lab.get("decodes", [])) for x in done)
@@ -331,7 +375,7 @@ def _live(eng: q65lab.Engine):
                        "periodo intero.")
     with right_c.container(border=True):
         _html(f"<div class='qx-sec'>📋 {_t('Attività in banda')}</div>")
-        _html(_table(rows_all[::-1], p.get("my_call", ""), skipped=[x for x in periods if x.skipped][-3:]))
+        _html(_table(rows_all[::-1], p.get("my_call", ""), skipped=[x for x in periods if x.skipped][-3:], limit=20))
         _html("<div class='qx-legend'>" + " ".join([
             f"<span class='qx-tag lab'>LAB</span> {_t('Q65 Lab')}",
             f"<span class='qx-tag ref'>REF</span> {_t('come WSJT-X, stesso audio')}",
@@ -339,6 +383,42 @@ def _live(eng: q65lab.Engine):
             f"<span class='qx-tag new'>★</span> {_t('solo Q65 Lab')}"]) + "</div>")
     if eng.errors:
         st.caption("⚠️ " + " · ".join(list(eng.errors)[-3:]))
+
+
+def _silence_watch(eng: q65lab.Engine, lvl):
+    """The card gives only zeros (blocked by Windows, muted or the wrong entry of the card): after 20 s Q65 Lab tries
+    the same card in the other Windows audio systems by itself, then says what to check."""
+    if not (eng.running and isinstance(eng.source, q65lab.Capture)) or lvl is None:
+        return
+    now = time.time()
+    if lvl >= q65lab.SILENCE_DBFS:
+        S.pop("qx_silent_since", None)
+        return
+    since = S.setdefault("qx_silent_since", now)
+    if now - since < 20:
+        return
+    cur = S.get("qx_dev_obj")
+    tried = S.setdefault("qx_tried", [])
+    if cur:
+        tried.append((cur["name"], cur["api"]))
+        cands = [d for d in q65lab.same_card(q65lab.input_devices(), cur["name"]) if (d["name"], d["api"]) not in tried]
+        if cands:
+            d = cands[0]
+            try:
+                eng.start(q65lab.Capture(d["index"], S.get("qx_ch_used") or "Mono",
+                                         rate=48000 if d["api"] != "Windows WASAPI" else d["rate"]))
+                S["qx_dev_obj"] = d
+                S["qx_dev_label"] = f"{d['name']} · {d['api']}"
+                S.pop("qx_silent_since", None)
+                st.toast(i18n.tr("Solo silenzio dalla scheda audio: provo") + f" {d['api']}", icon="🔁")
+                return
+            except Exception as e:
+                eng.errors.append(f"audio {d['api']}: {e}")
+    st.warning(i18n.tr(
+        "Q65 Lab riceve solo silenzio dalla scheda audio (sotto −85 dBFS), anche provando le altre voci della stessa "
+        "scheda. Se la radio è accesa con l'antenna collegata, controlla: Impostazioni di Windows → Privacy e sicurezza → Microfono → «Consenti alle app desktop di "
+        "accedere al microfono» acceso (EMELab è un'app desktop Python); il volume di «Microphone (USB Audio CODEC)» in "
+        "Impostazioni → Sistema → Audio; poi premi ⏹ e ▶️. WSJT-X intanto continua a ricevere normalmente."))
 
 
 def _table(rows_all, mycall: str, skipped=(), dated: bool = False, limit: int = 40) -> str:
@@ -432,7 +512,7 @@ def _saved_files(eng: q65lab.Engine, sets: dict):
         st.caption("Scegli i .wav salvati da WSJT-X (Save → Save all) o quelli registrati da Q65 Lab mentre ascolta: "
                    "EMELab li legge senza modificarli, li mette in ordine di giorno e ora e li decodifica con i due "
                    "decoder, medie comprese. Con ALL.TXT confronta anche quello che ha decodificato WSJT-X.")
-        sel = [Path(x) for x in S.get("qx_sel", [])]
+        sel = [Path(x) for x in S.get("qx_sel", []) if Path(x).is_file()]    # Q65 Lab keeps its last periods only
         c = st.columns([1.3, 1.3, 1.1, 3.3], vertical_alignment="center")
         start_dir = folder if folder and any(folder.glob("*.wav")) else own
         if c[0].button("📂 Seleziona wav", key="qx_pickwav", type="primary", width="stretch",

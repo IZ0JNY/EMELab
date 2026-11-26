@@ -166,3 +166,14 @@ def test_files_with_alltxt():
     assert q65lab.guess_params(rows, datetime(2026, 9, 27, tzinfo=timezone.utc)) == {}
     assert [d["message"] for d in q65lab.wsjtx_decodes_at(rows, t, 60)] == ["CQ IZ2DJP JN55"]
     assert q65lab.file_time("260926_1850.wav") == t
+
+
+def test_same_card_entries_and_missing_files(tmp_path):
+    devs = [{"index": 0, "name": "Microphone (USB Audio CODEC )", "api": "MME", "rate": 44100},
+            {"index": 1, "name": "Microphone (USB Audio CODEC )", "api": "Windows WDM-KS", "rate": 48000},
+            {"index": 2, "name": "Microphone (USB Audio CODEC )", "api": "Windows DirectSound", "rate": 48000},
+            {"index": 3, "name": "Microphone (USB Audio CODEC )", "api": "Windows WASAPI", "rate": 48000},
+            {"index": 4, "name": "Microfono (Realtek)", "api": "MME", "rate": 44100}]
+    assert [d["index"] for d in q65lab.same_card(devs, "Microphone (USB Audio CODEC )")] == [0, 3, 2]
+    out = q65lab.decode_files([tmp_path / "gone.wav"], q65lab.DEFAULT_PARAMS, exe=EXE or tmp_path / "x", folder=tmp_path)
+    assert out == []
