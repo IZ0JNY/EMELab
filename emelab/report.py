@@ -139,12 +139,12 @@ def diary_pdf(rows: list[dict], station: str = "", advice: list[str] | None = No
     from . import db as edb
     plt = _plt()
     buf = io.BytesIO()
-    head = ["Data UTC", "Banda", "Tipo", "Y (dB)", "Y atteso", "ΔY", "SNR", "EL", "°C", "UR %", "Note"]
+    head = ["Data UTC", "Banda", "Tipo", "Y (dB)", "Y atteso", "ΔY", "SNR", "EL", "T Luna (K)", "°C", "UR %", "Note"]
     tab = []
     for r in rows:
         tab.append([r["utc"].replace("T", " ").replace("Z", "")[:16], band_label(r.get("band_ghz")), _tr(edb.KINDS.get(r["kind"], r["kind"]))[:28],
                     _fmt(r.get("y_db"), 2), _fmt(r.get("_y_exp"), 2), _fmt(r.get("_y_delta"), 2), _fmt(r.get("snr_db")),
-                    _fmt(r.get("_el")), _fmt(r.get("t_c")), _fmt(r.get("rh"), 0), (r.get("notes") or "")[:30]])
+                    _fmt(r.get("_el")), _fmt(r.get("_tb"), 0), _fmt(r.get("t_c")), _fmt(r.get("rh"), 0), (r.get("notes") or "")[:30]])
     with PdfPages(buf) as pdf:
         if advice:
             fig = plt.figure(figsize=A4, dpi=100)
@@ -156,7 +156,7 @@ def diary_pdf(rows: list[dict], station: str = "", advice: list[str] | None = No
                     fig.text(0.06, y, line, fontsize=9); y -= 0.022
                 y -= 0.01
             pdf.savefig(fig); plt.close(fig)
-        _table_pages(pdf, "Diario delle misure", station, head, tab, [0.12, 0.06, 0.20, 0.06, 0.07, 0.05, 0.05, 0.05, 0.05, 0.05, 0.24])
+        _table_pages(pdf, "Diario delle misure", station, head, tab, [0.12, 0.06, 0.19, 0.06, 0.07, 0.05, 0.05, 0.05, 0.06, 0.05, 0.05, 0.19])
     return buf.getvalue()
 
 
