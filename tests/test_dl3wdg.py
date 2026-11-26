@@ -99,3 +99,21 @@ def test_no_decode_rows():
     assert by["Decodifica Fast o Normal"]["Stato"] == p.BAD
     assert by["Doppler tracking spento o diverso dal corrispondente"]["Stato"] == p.OK
     assert by["Segnale che deriva o instabile"]["Stato"] == p.OK
+
+
+def test_refspec_due(tmp_path):
+    from datetime import datetime, timezone
+    from emelab import refspec
+    (tmp_path / "WSJT-X.ini").write_text("[General]\n")
+    assert refspec.find(tmp_path / "WSJT-X.ini") is None
+    (tmp_path / "refspec.dat").write_text("x")
+    f = refspec.find(tmp_path / "WSJT-X.ini")
+    m = refspec.measured_utc(f)
+    assert f and m
+    before, after = m - timedelta(hours=1), m + timedelta(hours=1)
+    assert not refspec.due(m, None)                       # WSJT-X not heard yet: no session
+    assert not refspec.due(m, before)                     # measured after the session started
+    assert refspec.due(m, after)                          # older than the session
+    assert refspec.due(None, after)
+    assert not refspec.due(m, after, (after + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    assert refspec.due(m, after, (after - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))
