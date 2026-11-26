@@ -1099,12 +1099,15 @@ def decode_files(files: list[Path], params: dict, exe: Path | None = None, knobs
     exe = exe or find_decoder()
     if not exe:
         raise FileNotFoundError("q65lab non trovato")
+    files = [f for f in files if Path(f).is_file()]          # skip the ones deleted meanwhile (Q65 Lab keeps its last)
+    if not files:
+        return []
     folder = folder or (work_dir() / "files")
     lab = Decoder(exe, folder / "lab", knobs or lab_knobs(params.get("spread_hz")))
     ref = Decoder(exe, folder / "ref", WSJTX_KNOBS)
     out = []
     try:
-        files = sorted((f for f in files if Path(f).is_file()), key=lambda f: (file_time(f), str(f)))   # skip deleted ones
+        files = sorted(files, key=lambda f: (file_time(f), str(f)))
         last = None
         for i, f in enumerate(files):
             f = Path(f)
