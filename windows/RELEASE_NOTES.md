@@ -1,3 +1,21 @@
+## EMELab 0.1.19 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.19.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.19-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **⚡ SSPA a più stadi:** stadio pilota, divisore, moduli in parallelo e combinatore, con la catena in dBm, consumo dalla PAE o da Vd × Id e calore per modulo. Nuovo die **YPA47-4653C1** (46–53 GHz, 41.3 dBm): a 47 GHz compila da solo il pilota con 2 moduli in parallelo.
+- **🌡️ Raffreddamento con catalogo:** schema cliccabile delle resistenze termiche (Tj → Rjc → flangia → pasta → dissipatore → aria o liquido); paste e pad comuni con la R calcolata sulla superficie di contatto; dissipatori, ventole, piastre, pompe, radiatori e chiller (VEVOR CW-3000) con i dati del datasheet; datasheet PDF e correzioni a mano salvati come ✅ e ripristinabili.
+- **💧 Circuito ad acqua:** portata dal punto di lavoro della pompa o del chiller, pressione in ingresso e in uscita dalla piastra, temperatura del liquido; il calore del pilota sullo stesso raffreddamento e la sua temperatura di giunzione.
+- **«Tj massima che accetti»** modificabile (parte da 125 °C) al posto di «obiettivo».
+- **🧪 Q65 Lab:** correzioni dopo la prima prova (file registrati, 📻 Modo, tabella).
+
+### 🇬🇧 What's new
+- **⚡ Multi-stage SSPA:** driver stage, splitter, modules in parallel and combiner, with the chain in dBm, DC from the PAE or from Vd × Id and heat per module. New **YPA47-4653C1** die (46–53 GHz, 41.3 dBm): at 47 GHz it fills in the driver with 2 modules in parallel.
+- **🌡️ Cooling with a catalogue:** clickable thermal resistance diagram (Tj → Rjc → flange → paste → heat sink → air or coolant); common pastes and pads with the R for the contact area; heat sinks, fans, cold plates, pumps, radiators and chillers (VEVOR CW-3000) with datasheet values; datasheet PDFs and hand corrections saved as ✅ and revertible.
+- **💧 Water loop:** flow from the pump or chiller operating point, cold plate inlet and outlet pressure, coolant temperature; the driver's heat on the same cooling and its junction temperature.
+- Editable **«Highest Tj you accept»** (starts at 125 °C) instead of «target».
+- **🧪 Q65 Lab:** fixes after the first test (recorded files, 📻 Mode, table).
+
 ## EMELab 0.1.18 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.18.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.18-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
