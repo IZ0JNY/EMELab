@@ -3291,7 +3291,7 @@ def _a(label):
 
 def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     import pandas as pd
-    from emelab import cooling
+    from emelab import cooling, cooling_parts as cp
     st.subheader("🌡️ Raffreddamento del dispositivo di potenza")
     st.caption("Tre modi di raffreddare lo stesso dispositivo: dissipatore passivo, lo stesso dissipatore con una ventola, "
                "piastra ad acqua. La giunzione segue la trasmissione in millisecondi, il dissipatore con la sua costante di "
@@ -3299,7 +3299,7 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
                "Resistenza termica giunzione–case dal datasheet del dispositivo.")
     th = cooling.device_thermal(dev)
     dk = f"{key}_{(dev or {}).get('part') or 'x'}".replace(" ", "_")          # new device → its own defaults
-    c = st.columns(5)
+    c = st.columns(4)
     techs = list(cooling.LIFE)
     tech = c[0].selectbox("Tecnologia" if th["tech"] else _a("Tecnologia"), techs,
                           index=techs.index(th["tech"]) if th["tech"] else 0, key=f"{dk}_tech",
@@ -3311,17 +3311,16 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     rjc = c[3].number_input("R giunzione–case (K/W)" if th["rth_jc"] else _a("R giunzione–case (K/W)"), 0.05, 50.0, rjc0, 0.05,
                             key=f"{dk}_hj_{tech if not th['rth_jc'] else ''}",
                             help="«thermal resistance, channel to case» nel datasheet")
-    rcs = c[4].number_input(_a("R case–dissipatore (K/W)"), 0.0, 5.0, 0.2, 0.05, key=f"{key}_hc",
-                            help="pasta termica o indio: 0.1–0.3 K/W; con isolante di più")
     c = st.columns(6)
     ndev = c[5].number_input("Dispositivi sullo stesso dissipatore", 1, 16, int(n_dev), key=f"{key}_hn")
     tamb = c[0].number_input(_a("Temperatura dell'aria (°C)"), -20.0, 60.0, 35.0, 1.0, key=f"{key}_ha",
                              help="al fuoco d'estate, al sole, la scatola si scalda: meglio abbondare")
     tjmax = th["tj_max"] or cooling.TJ_MAX[tech]
-    tjt = c[1].number_input("Temperatura di giunzione obiettivo (°C)", 60.0, 250.0, min(150.0, tjmax - 25), 5.0,
-                            key=f"{dk}_ht_{tech}",
+    tjt = c[1].number_input(_a("Tj massima che accetti (°C)"), 60.0, 250.0, min(125.0, tjmax - 25), 5.0,
+                            key=f"{dk}_tjmax_{tech}",
                             help=i18n.tr("massimo assoluto tipico") + f" {tech}: {tjmax:.0f} °C; " +
-                                 i18n.tr("ogni grado in meno allunga la vita: vedi MTBF qui sotto"))
+                                 i18n.tr("ogni grado in meno allunga la vita: vedi MTBF qui sotto") + ". " +
+                                 i18n.tr("Margine, Pout massima e frazione TX massima sono calcolati rispetto a questa temperatura."))
     tr_s = c[2].selectbox("Periodo T/R (s)", [15, 30, 60, 120, 300], index=2, key=f"{key}_htr",
                           help="Q65-60: 60 s; Q65-120: 120 s")
     duty = c[3].number_input("Frazione in trasmissione", 0.05, 1.0, 0.5, 0.05, key=f"{key}_hd",
@@ -3335,40 +3334,166 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
                    ("" if th["tj_max"] else " (" + i18n.tr("tipica della tecnologia") + ")") + " · R giunzione–case " +
                    (i18n.tr("dal dispositivo") if th["rth_jc"] else i18n.tr("tipica della tecnologia, presunta")))
 
+    lib = openems_local.load_settings().get("cool_lib") or []
+    diag = st.container()                                  # thermal chain diagram, filled once the numbers are known
+    st.markdown('<div id="raff-dispositivo"></div>', unsafe_allow_html=True)
+    show = diag.radio("Schema delle resistenze termiche per", list(_COOL_NAMES), key=f"{key}_dg", horizontal=True,
+                      index=2, format_func=lambda m: i18n.tr(_COOL_NAMES[m]))
+
+    def pick(cat, label, sk, default=None, none_label=None):
+        """Selector of a catalogue/library part; returns the part dict (or None for «none_label»)."""
+        opts = cp.parts(cat, lib)
+        names = ([none_label] if none_label else []) + [o["part"] + (f" — {o['maker']}" if o["maker"] != "—" else "") +
+                                                         (" ✅" if o.get("verified") else " ⚠️") for o in opts]
+        idx = 0
+        if default:
+            idx = next((i for i, o in enumerate(opts) if (o["part"], o["maker"]) == default), -1) + (1 if none_label else 0)
+            idx = max(idx, 0)
+        j = st.selectbox(label, range(len(names)), index=idx, key=sk, format_func=lambda i: i18n.tr(names[i]))
+        j = j if isinstance(j, int) and 0 <= j < len(names) else 0
+        if none_label:
+            return None if j == 0 else opts[j - 1]
+        return opts[j]
+
+    def facts(p, cat):
+        if p:
+            vals = " · ".join(f"{i18n.tr(lab)} {p[k]:g}" for k, lab in cp.NUM_FIELDS[cat] if p.get(k) is not None)
+            st.caption(("✅ " + i18n.tr("verificato da te") if p.get("verified") else "⚠️ " + i18n.tr("valori tipici da verificare sul datasheet"))
+                       + (f" · {vals}" if vals else "") + (f" · {i18n.tr(p['notes'])}" if p.get("notes") else ""))
+
+    # ---------------------------------------------------------------- thermal paste / pad
+    st.markdown('<div id="raff-tim"></div>', unsafe_allow_html=True)
+    st.markdown("#### 🧴 " + i18n.tr("Pasta o pad termico (R case–dissipatore)"), unsafe_allow_html=True)
+    k = st.columns([3, 1, 1, 2])
+    with k[0]:
+        tim = pick("tim", "Materiale tra case e dissipatore", f"{key}_tim", ("MX-4", "Arctic"), "✏️ R a mano")
+    ax = k[1].number_input(_a("Base del contatto (mm)"), 1.0, 100.0, 10.0, 0.5, key=f"{key}_tax",
+                           help="lato della flangia o della parte metallica del package appoggiata al dissipatore")
+    ay = k[2].number_input(_a("Altezza del contatto (mm)"), 1.0, 100.0, 10.0, 0.5, key=f"{key}_tay")
+    if tim:
+        rcs = cp.r_tim(tim["k_wmk"], tim["t_um"], ax * ay, tim.get("rc_m2kw", 5e-6))
+        k[3].metric("R case–dissipatore", f"{rcs:.3f} K/W")
+        facts(tim, "tim")
+        if not tim.get("insulating", True):
+            st.warning(i18n.tr("Conduce corrente") + f": {tim['part']}. " + i18n.tr(tim.get("notes") or ""))
+    else:
+        rcs = k[3].number_input(_a("R case–dissipatore (K/W)"), 0.0, 5.0, 0.2, 0.01, key=f"{key}_hc",
+                                help="pasta termica o indio: 0.05–0.3 K/W; con isolante di più")
+    with st.expander("📋 " + i18n.tr("Paste e pad comuni con questa superficie di contatto")):
+        st.dataframe(pd.DataFrame([{i18n.tr("Materiale"): f"{t['part']} — {t['maker']}",
+                                    i18n.tr("Conducibilità (W/m·K)"): t["k_wmk"], i18n.tr("Spessore (µm)"): t["t_um"],
+                                    "R (K/W)": round(cp.r_tim(t["k_wmk"], t["t_um"], ax * ay, t.get("rc_m2kw", 5e-6)), 3),
+                                    i18n.tr("Isolante"): "✔" if t.get("insulating", True) else "✖",
+                                    i18n.tr("Note"): i18n.tr(t.get("notes") or "")} for t in cp.parts("tim", lib)]),
+                     hide_index=True, width="stretch")
+        st.caption("Una pasta sottile su superfici piane batte qualsiasi pad: i pad servono a colmare dislivelli o a isolare. "
+                   "Conducibilità dichiarate dai produttori, spessore tipico dello strato: verifica sul datasheet.")
+
+    # ---------------------------------------------------------------- heat sink
+    st.markdown('<div id="raff-dissipatore"></div>', unsafe_allow_html=True)
+    st.markdown("#### 🧱 " + i18n.tr("Dissipatore (passivo e con ventola)"))
+    hs = pick("dissipatore", "Il tuo dissipatore", f"{key}_hs", None, "📐 Da misure (geometria delle alette)")
     sink = {}
-    with st.expander("🧱 " + i18n.tr("Dissipatore alettato (passivo e ventilato)")):
+    if hs:
+        sink = dict(hs)
+        facts(hs, "dissipatore")
+    else:
         st.caption("Piastra di alluminio con alette parallele, alette in verticale per il passivo; la ventola soffia lungo "
                    "le alette. Misura il tuo dissipatore: i valori proposti sono un esempio.")
         cc = st.columns(6)
-        for col, (k, lab, lo, hi, stp) in zip(cc, [("w_cm", "Larghezza (cm)", 3.0, 60.0, 0.5), ("l_cm", "Lunghezza alette (cm)", 3.0, 60.0, 0.5),
-                                                   ("base_mm", "Spessore base (mm)", 2.0, 30.0, 0.5), ("fin_h_mm", "Altezza alette (mm)", 5.0, 150.0, 1.0),
-                                                   ("n_fins", "Numero di alette", 2, 80, 1), ("fin_t_mm", "Spessore alette (mm)", 0.5, 10.0, 0.1)]):
-            d = cooling.SINK[k]
-            sink[k] = col.number_input(_a(lab), lo if k != "n_fins" else int(lo), hi if k != "n_fins" else int(hi),
-                                       d if k != "n_fins" else int(d), stp, key=f"{key}_s_{k}")
+        for col, (kk, lab, lo, hi, stp) in zip(cc, [("w_cm", "Larghezza (cm)", 3.0, 60.0, 0.5), ("l_cm", "Lunghezza alette (cm)", 3.0, 60.0, 0.5),
+                                                    ("base_mm", "Spessore base (mm)", 2.0, 30.0, 0.5), ("fin_h_mm", "Altezza alette (mm)", 5.0, 150.0, 1.0),
+                                                    ("n_fins", "Numero di alette", 2, 80, 1), ("fin_t_mm", "Spessore alette (mm)", 0.5, 10.0, 0.1)]):
+            d = cooling.SINK[kk]
+            sink[kk] = col.number_input(_a(lab), lo if kk != "n_fins" else int(lo), hi if kk != "n_fins" else int(hi),
+                                        d if kk != "n_fins" else int(d), stp, key=f"{key}_s_{kk}")
         sink["emiss"] = 0.85
-    cc = st.columns(2)
-    with cc[0].container(border=True):
-        st.markdown("**" + i18n.tr(_COOL_NAMES["ventilato"]) + "**")
-        k2 = st.columns(2)
-        flow = k2[0].number_input(_a("Portata della ventola (m³/h)"), 5.0, 1000.0, 100.0, 5.0, key=f"{key}_ff",
-                                  help="a bocca libera, dal datasheet: 120 mm ≈ 100 m³/h (60 CFM); 1 CFM = 1.7 m³/h")
-        thr = k2[1].number_input(_a("Frazione che passa tra le alette"), 0.1, 1.0, 0.5, 0.05, key=f"{key}_ft",
-                                 help="la contropressione delle alette e le fughe ai lati riducono la portata: 0.4–0.6 "
-                                      "con la ventola appoggiata, 0.7–0.9 con un convogliatore")
-    with cc[1].container(border=True):
-        st.markdown("**" + i18n.tr(_COOL_NAMES["acqua"]) + "**")
-        k3 = st.columns(4)
-        flw = k3[0].number_input(_a("Portata del liquido (L/min)"), 0.1, 20.0, 2.0, 0.1, key=f"{key}_wf",
-                                 help="pompa da PC 1–2 L/min, pompa 12 V da camper 4–6 L/min")
-        tw = k3[1].number_input(_a("Liquido in ingresso (°C)"), 0.0, 70.0, float(tamb) + 3, 1.0, key=f"{key}_wt",
-                                help="con un buon radiatore il liquido resta 3–8 °C sopra l'aria")
-        rref = k3[2].number_input(_a("R piastra (K/W)"), 0.005, 1.0, 0.04, 0.005, key=f"{key}_wr", format="%.3f",
-                                  help="dal datasheet della piastra, alla portata di riferimento; piastra di rame 0.02–0.06 K/W")
-        fref = k3[3].number_input(_a("alla portata (L/min)"), 0.1, 20.0, 2.0, 0.1, key=f"{key}_wq")
-        k3 = st.columns(2)
-        cool = k3[0].selectbox("Liquido", list(cooling.COOLANTS), key=f"{key}_wc")
-        mcp = k3[1].number_input(_a("Massa della piastra di rame (kg)"), 0.02, 5.0, 0.25, 0.05, key=f"{key}_wm")
+
+    # ---------------------------------------------------------------- fan
+    st.markdown('<div id="raff-ventola"></div>', unsafe_allow_html=True)
+    st.markdown("#### 🌀 " + i18n.tr("Ventola"))
+    tunnel = bool(hs and hs.get("r_fan_kw") and not hs.get("r_nat_kw"))
+    k2 = st.columns([3, 2, 2])
+    with k2[0]:
+        fan = pick("ventola", "La tua ventola", f"{key}_fan", ("NF-A12x25 PWM", "Noctua"), "✏️ Portata a mano")
+    flow = k2[1].number_input("Portata della ventola (m³/h)" if fan else _a("Portata della ventola (m³/h)"), 5.0, 1000.0,
+                              float(fan["flow_m3h"]) if fan else 100.0, 5.0, key=f"{key}_ff_{fan['part'] if fan else ''}",
+                              help="a bocca libera, dal datasheet: 120 mm ≈ 100 m³/h (60 CFM); 1 CFM = 1.7 m³/h",
+                              disabled=tunnel)
+    thr = k2[2].number_input(_a("Frazione che passa tra le alette"), 0.1, 1.0, 0.5, 0.05, key=f"{key}_ft",
+                             help="la contropressione delle alette e le fughe ai lati riducono la portata: 0.4–0.6 "
+                                  "con la ventola appoggiata, 0.7–0.9 con un convogliatore", disabled=tunnel)
+    if tunnel:
+        st.caption("Dissipatore a tunnel: la ventola è compresa e la sua R è quella del datasheet.")
+    else:
+        facts(fan, "ventola")
+
+    # ---------------------------------------------------------------- water loop
+    st.markdown('<div id="raff-acqua"></div>', unsafe_allow_html=True)
+    st.markdown("#### 💧 " + i18n.tr("Circuito ad acqua"))
+    k3 = st.columns([3, 2, 2])
+    with k3[0]:
+        plate = pick("piastra", "La tua piastra ad acqua", f"{key}_pl", ("Waterblock CPU in rame (generico)", "—"))
+    facts(plate, "piastra")
+    src = k3[1].radio("Raffreddamento del liquido", ["chiller", "radiatore", "mano"], key=f"{key}_src",
+                      format_func=lambda x: {"chiller": "Chiller", "radiatore": "Pompa + radiatore",
+                                             "mano": "Temperatura e portata a mano"}[x])
+    cool = k3[2].selectbox("Liquido", list(cooling.COOLANTS), key=f"{key}_wc")
+    p_avg = p_d * int(ndev) * duty
+    loop = None
+    if src == "mano":
+        k4 = st.columns(2)
+        flw = k4[0].number_input(_a("Portata del liquido (L/min)"), 0.1, 20.0, 2.0, 0.1, key=f"{key}_wf")
+        tw = k4[1].number_input(_a("Liquido in ingresso (°C)"), 0.0, 70.0, float(tamb) + 3, 1.0, key=f"{key}_wt")
+        t_note = ""
+    else:
+        k4 = st.columns(3)
+        tube = k4[2].selectbox(_a("Tubi"), list(cp.TUBE_DP), index=1, key=f"{key}_tube")
+        if src == "chiller":
+            with k4[0]:
+                ch = pick("chiller", "Il tuo chiller", f"{key}_ch", ("CW-3000", "VEVOR"))
+            tset = None
+            if ch.get("kind") == "compressore":
+                tset = k4[1].number_input("Set point del chiller (°C)", float(ch.get("t_set_min_c") or 5.0), 40.0, 25.0, 1.0,
+                                          key=f"{key}_tset")
+            facts(ch, "chiller")
+            pump, rad = ch, None
+            ci = cp.coolant_inlet(ch, p_avg, tamb, tset)
+        else:
+            with k4[0]:
+                pump = pick("pompa", "La tua pompa", f"{key}_pump", ("D5 (Vario, velocità 5)", "Xylem / Laing"))
+            with k4[1]:
+                rad = pick("radiatore", "Il tuo radiatore", f"{key}_rad", ("Radiatore 240 mm rame (2 ventole)", "—"))
+            facts(pump, "pompa")
+            facts(rad, "radiatore")
+            ci = cp.coolant_inlet(rad, p_avg, tamb)
+        loop_parts = [(plate.get("dp_kpa") or 5.0, plate.get("flow_lmin") or 2.0), cp.TUBE_DP[tube]] + \
+                     ([(rad.get("dp_kpa") or 2.0, rad.get("flow_lmin") or 2.0)] if rad else [])
+        loop = cp.loop_point(pump, loop_parts)
+        flw, tw = loop["flow_lmin"], ci["t_in_c"]
+        dpl, dpt = loop["dp_parts_kpa"][0], loop["dp_parts_kpa"][1]
+        dpr = loop["dp_parts_kpa"][2] if rad else 0.0
+        t_out = tw + p_avg / (cooling.COOLANTS[cool]["rho"] * cooling.COOLANTS[cool]["cp"] * flw / 60000)
+        mm = st.columns(6)
+        mm[0].metric("Portata (punto di lavoro)", f"{flw:.1f} L/min",
+                     help=i18n.tr("dove la curva della pompa incontra le perdite di carico del circuito"))
+        mm[1].metric("Pressione in ingresso alla piastra", f"{(dpl + dpt + dpr) / 100:.2f} bar", f"{dpl + dpt + dpr:.0f} kPa",
+                     delta_color="off", help=i18n.tr("relativa, rispetto al serbatoio aperto"))
+        mm[2].metric("Pressione in uscita dalla piastra", f"{(dpt + dpr) / 100:.2f} bar", f"{dpt + dpr:.0f} kPa", delta_color="off")
+        mm[3].metric("Perdita di carico della piastra", f"{dpl:.1f} kPa")
+        mm[4].metric("Liquido in ingresso", f"{tw:.1f} °C", f"+{tw - tamb:.1f} °C " + i18n.tr("sull'aria"), delta_color="off")
+        mm[5].metric("Liquido in uscita (media)", f"{t_out:.1f} °C", f"+{t_out - tw:.2f} °C", delta_color="off")
+        if ci["load"] is not None and ci["over_w"] > 0:
+            st.error(i18n.tr("Il chiller non tiene il set point") + f": {p_avg:.0f} W > {ch.get('cap_w'):.0f} W.")
+        if dpl + dpt + dpr > 0.9 * loop["p_max_kpa"]:
+            st.warning("La pompa lavora quasi a portata zero: circuito troppo resistente, usa tubi più grossi o una pompa più forte.")
+        t_note = " · " + i18n.tr("liquido calcolato dal circuito")
+    if src == "chiller" and ch.get("kind") != "compressore":
+        st.caption("Un chiller senza compressore (come il CW-3000) è un radiatore con ventola e serbatoio: il liquido non "
+                   "scende mai sotto la temperatura dell'aria. Per andare sotto serve un chiller a compressore.")
+    rref = plate.get("r_kw") or 0.05
+    fref = plate.get("flow_lmin") or 2.0
+    mcp = plate.get("mass_kg") or 0.25
     common = {"n_dev": int(ndev), "rth_jc": rjc, "rth_cs": rcs}
     meth = {"passivo": dict(t_ref_c=tamb, sink=sink),
             "ventilato": dict(t_ref_c=tamb, sink=sink, flow_m3h=flow, through=thr),
@@ -3418,6 +3543,23 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     _st.dataframe(df.style.map(lambda v: "color:#c92a2a;font-weight:600" if isinstance(v, (int, float)) and v < 0 else "",
                                subset=[mcol]).format(fmt), hide_index=True, width="stretch")
     rp, rv, rw = (res[m][0] for m in ("passivo", "ventilato", "acqua"))
+    rs = res[show][0]
+    sink_name = {"passivo": (hs["part"] if hs else i18n.tr("dissipatore da misure")),
+                 "ventilato": (hs["part"] if hs else i18n.tr("dissipatore da misure")) + (f" + {fan['part']}" if fan and not tunnel else ""),
+                 "acqua": plate["part"]}[show]
+    ref_name = {"passivo": i18n.tr("aria"), "ventilato": i18n.tr("aria"),
+                "acqua": i18n.tr("liquido") + (f" ({ch['part']})" if src == "chiller" else "")}[show]
+    diag.markdown(_thermal_svg(
+        [("raff-dispositivo", (dev or {}).get("part") or i18n.tr("dispositivo"), "Tj", rs["tj_c"]),
+         ("raff-dispositivo", "R giunzione–case", rjc, None),
+         ("raff-dispositivo", i18n.tr("flangia"), "Tc", rs["t_case_c"]),
+         ("raff-tim", (tim["part"] if tim else "R case–dissipatore"), rcs, None),
+         ({"acqua": "raff-acqua"}.get(show, "raff-dissipatore"), i18n.tr("dissipatore") if show != "acqua" else i18n.tr("piastra"), "Ts", rs["t_sink_c"]),
+         ({"passivo": "raff-dissipatore", "ventilato": "raff-ventola", "acqua": "raff-acqua"}[show], sink_name, rs["r_kw"], None),
+         ({"passivo": "raff-dispositivo", "ventilato": "raff-dispositivo", "acqua": "raff-acqua"}[show], ref_name, "T",
+          meth[show]["t_ref_c"])], p_d, int(ndev), _COOL_COLORS[show]), unsafe_allow_html=True)
+    diag.caption("Clicca su un elemento dello schema per andare ai suoi valori. Temperature a fine trasmissione; la R del "
+                 "dissipatore porta il calore di tutti i dispositivi montati sopra.")
     m4 = st.columns(4)
     m4[0].metric("R dissipatore–aria massima", f"{(tjt - tamb - p_d * (rjc + rcs)) / max(duty * p_d * ndev, 1e-9):.2f} K/W",
                  help=i18n.tr("il dissipatore più piccolo che basta, con la media del ciclo T/R"))
@@ -3453,7 +3595,7 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
             fig.add_trace(go.Scatter(x=tmin, y=sim["t_sink_c"], name=i18n.tr(_COOL_NAMES[m]) + " · " + i18n.tr("dissipatore"),
                                      line=dict(color=_COOL_COLORS[m], width=1, dash="dot")))
     fig.add_hline(y=tjt, line_dash="dash", line_color="#c92a2a",
-                  annotation_text=i18n.tr("obiettivo") + f" {tjt:.0f} °C", annotation_position="top left")
+                  annotation_text=i18n.tr("Tj massima accettata") + f" {tjt:.0f} °C", annotation_position="top left")
     fig.update_layout(title=i18n.tr("Temperatura dalla partenza a freddo") + f" · T/R {tr_s} s",
                       xaxis_title="min", yaxis_title="°C", height=380, margin=dict(l=10, r=10, t=40, b=10),
                       legend=dict(orientation="h", y=-0.2))
@@ -3486,6 +3628,112 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     st.markdown(f"<span style='color:{ASSUMED_COLOR}'>" + i18n.tr("presunto") + "</span>: " +
                 i18n.tr("i valori in arancione sono esempi tipici: sostituiscili con quelli del tuo hardware e dei datasheet."),
                 unsafe_allow_html=True)
+    _cooling_catalog(key, lib)
+
+
+def _cooling_catalog(key, lib):
+    """Catalogue of heat sinks, fans, cold plates, pumps, radiators, chillers, pastes: table, hand correction or
+    datasheet PDF, saved in the local library as verified (this PC only), revertible to the catalogue."""
+    import pandas as pd
+    from emelab import catalog, cooling_parts as cp
+    ss = _st.session_state
+    st.markdown('<div id="raff-catalogo"></div>', unsafe_allow_html=True)
+    st.markdown("#### 📚 " + i18n.tr("Catalogo del raffreddamento e datasheet"))
+    for kind_msg, msg in ss.pop(f"{key}_cflash", None) or []:
+        getattr(st, kind_msg)(msg)
+    c = st.columns([2, 3])
+    cat = c[0].selectbox("Categoria", list(cp.CATS), key=f"{key}_ccat", format_func=lambda k: i18n.tr(cp.CATS[k]))
+    rows = cp.parts(cat, lib)
+    fields = cp.NUM_FIELDS[cat]
+    st.dataframe(pd.DataFrame([{i18n.tr("Modello"): r["part"], i18n.tr("Produttore"): i18n.tr(r["maker"]),
+                                **{i18n.tr(lab): ("" if r.get(k) is None else f"{r[k]:g}") for k, lab in fields},
+                                i18n.tr("Note"): i18n.tr(r.get("notes") or ""),
+                                i18n.tr("Verificato"): "✅" if r.get("verified") else "⚠️"} for r in rows]),
+                 hide_index=True, width="stretch")
+    st.caption("⚠️ = valori tipici da confermare sul datasheet della versione che compri (lunghezza, tensione della ventola…). "
+               "✅ = valori inseriti o corretti da te: restano su questo PC e prendono il posto di quelli del catalogo.")
+    NEW = len(rows)
+    if not isinstance(ss.get(f"{key}_csel_{cat}"), int) or ss[f"{key}_csel_{cat}"] > NEW:
+        ss[f"{key}_csel_{cat}"] = 0
+    i = c[1].selectbox("Modello da correggere o aggiungere", range(NEW + 1), key=f"{key}_csel_{cat}",
+                       format_func=lambda i: "➕ " + i18n.tr("Nuovo modello") if i == NEW else f"{rows[i]['part']} — {rows[i]['maker']}")
+    sel = rows[i] if isinstance(i, int) and i < NEW else None
+    with st.expander((("✏️ " + i18n.tr("Correggi") + f" {sel['part']} " + i18n.tr("o caricane il datasheet (PDF)")) if sel
+                      else "➕ " + i18n.tr("Nuovo modello: valori a mano o dal datasheet (PDF)")), expanded=sel is None):
+        up = st.file_uploader("📄 Datasheet PDF (facoltativo): EMELab legge i valori e li mette nei campi qui sotto",
+                              type=["pdf"], key=f"{key}_cds_{cat}_{sel['part'] if sel else 'new'}")
+        found = {}
+        if up is not None:
+            from emelab import stations as stn
+            try:
+                found = cp.read_datasheet(stn.pdf_text(up.getvalue()), cat)
+            except Exception as e:
+                st.error(f"PDF: {e}")
+            lines = found.pop("_lines", {})
+            if lines:
+                labels = dict(fields)
+                st.caption(i18n.tr("Valori trovati nel PDF (controllali)") + ":  \n" +
+                           "  \n".join(f"**{i18n.tr(labels.get(k, k))}** ← «{v}»" for k, v in lines.items()))
+            elif not found:
+                st.warning("Nel PDF non ho trovato valori leggibili (forse è una scansione): inseriscili a mano qui sotto.")
+        base = sel or {}
+        stamp = f"{key}_c_{cat}_{abs(hash((base.get('part'), base.get('maker'), base.get('origin'), up.file_id if up else '')))}"
+        fixed = bool(sel) and sel["origin"] != "mine"
+        cc = st.columns(3)
+        part = cc[0].text_input("Modello", base.get("part") or (up.name.rsplit(".", 1)[0] if up else ""), key=f"{stamp}_p", disabled=fixed)
+        maker = cc[1].text_input("Produttore", base.get("maker") or "", key=f"{stamp}_m", disabled=fixed)
+        srcl = cc[2].text_input("Fonte o link al datasheet", base.get("source") or (up.name if up else ""), key=f"{stamp}_s")
+        vals = {}
+        cc = st.columns(len(fields))
+        for col, (k, lab) in zip(cc, fields):
+            v = found.get(k, base.get(k))
+            vals[k] = col.number_input(lab, value=None if v is None else float(v), key=f"{stamp}_{k}", format="%g")
+        notes = st.text_input("Note", base.get("notes") or "", key=f"{stamp}_n")
+        b = st.columns(3)
+        if b[0].button("💾 Salva i valori (verificati da te)", key=f"{stamp}_save", type="primary", disabled=not (part or "").strip()):
+            e = {**{k: v for k, v in base.items() if k not in ("origin", "catalog", "check", "verified")},
+                 "cat": cat, "part": (sel["part"] if fixed else part.strip()), "maker": (sel["maker"] if fixed else (maker.strip() or "—")),
+                 "source": srcl.strip() or None, "notes": notes.strip() or None,
+                 **{k: v for k, v in vals.items() if v is not None}}
+            new_lib = cp.save([x for x in lib if not (sel and sel["origin"] == "mine" and cp._key(x) == cp._key(sel))], e)
+            openems_local.save_settings(cool_lib=new_lib)
+            ss[f"{key}_cflash"] = [("success", i18n.tr("Valori salvati e segnati come verificati da te (solo su questo PC)") + f": {e['part']}")]
+            st.rerun()
+        if sel and sel["origin"] == "edited" and b[1].button("↩️ Ripristina i valori del catalogo", key=f"{stamp}_rev"):
+            openems_local.save_settings(cool_lib=cp.revert(lib, sel))
+            ss[f"{key}_cflash"] = [("info", i18n.tr("Ripristinati i valori del catalogo EMELab") + f": {sel['part']}")]
+            st.rerun()
+        if sel and sel["origin"] == "mine" and b[1].button("🗑️ Elimina dalla tua libreria", key=f"{stamp}_del"):
+            openems_local.save_settings(cool_lib=cp.revert(lib, sel))
+            ss[f"{key}_cflash"] = [("info", i18n.tr("Eliminato dalla tua libreria") + f": {sel['part']}")]
+            st.rerun()
+        if sel:
+            links = catalog.search_links(sel["part"], sel["maker"] if sel["maker"] != "—" else "")
+            lc = st.columns(len(links))
+            for col, (k, u) in zip(lc, links.items()):
+                col.link_button("🔎 " + k, u)
+
+
+def _thermal_svg(items, p_w, n_dev, color):
+    """Series thermal chain drawn in HTML: nodes (temperature) and resistors (K/W), each a link to its section."""
+    import html as _h
+    box = ("display:flex;flex-direction:column;align-items:center;text-decoration:none;color:inherit;"
+           "min-width:92px;max-width:150px;text-align:center;cursor:pointer")
+    wire = "<div style='flex:1;min-width:14px;height:2px;background:#adb5bd;margin-bottom:22px'></div>"
+    parts = []
+    for anchor, name, sym, val in items:
+        name = _h.escape(str(i18n.tr(name)))[:34]
+        if val is None:
+            body = (f"<div style='border:2px solid {color};border-radius:5px;padding:3px 10px;background:var(--background-color,#fff);"
+                    f"font-weight:600'>{sym:.3g} K/W</div>")
+        else:
+            hot = "#c92a2a" if sym == "Tj" else color
+            body = (f"<div style='color:{hot};font-weight:700;font-size:1.05em'>{sym} {val:.0f} °C</div>"
+                    f"<div style='width:16px;height:16px;border-radius:50%;background:{hot};margin:2px 0'></div>")
+        parts.append(f"<a href='#{anchor}' target='_self' style='{box}' title='{name}'>{body}"
+                     f"<div style='font-size:0.8em;opacity:0.8;margin-top:4px'>{name}</div></a>")
+    head = f"<div style='font-size:0.85em;opacity:0.8'>→ {p_w:.0f} W" + (f" × {n_dev}" if n_dev > 1 else "") + "</div>"
+    return head + "<div style='display:flex;align-items:center;gap:0;margin:6px 0 4px 0'>" + wire.join(parts) + "</div>"
 
 
 # ------------------------------------------------------------------ guided start

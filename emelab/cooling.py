@@ -90,8 +90,29 @@ def _ntu_r(g_wk: float, mcp: float) -> float:
     return 1 / (mcp * (1 - math.exp(-g_wk / mcp)))
 
 
+def _r_from_datasheet(sink: dict, method: str, p_avg_w: float, flow_m3h=None, through=0.5) -> dict:
+    """Heat sink picked from the catalogue: R from its datasheet instead of the geometry."""
+    from emelab import cooling_parts as cp
+    m = cp.sink_mass(sink)
+    out = {"c_jk": m * CP_AL, "mass_kg": m, "datasheet": True}
+    if method == "passivo":
+        if not sink.get("r_nat_kw"):                       # tunnel heat sink without its fan: assumed ×3
+            r = sink["r_fan_kw"] * 3
+        else:
+            dt = 30.0
+            for _ in range(30):
+                r = cp.sink_r_natural(sink, dt)
+                dt = 0.5 * dt + 0.5 * max(p_avg_w, 1e-6) * r
+        return {**out, "r_kw": r}
+    r, u = cp.sink_r_fan(sink, flow_m3h, through)
+    q = max((flow_m3h or 0) * through, 1e-3) / 3600
+    return {**out, "r_kw": r, "u_ms": u, "air_rise_k_per_w": 1 / (AIR["rho"] * AIR["cp"] * q)}
+
+
 def r_passive(sink: dict, p_avg_w: float, t_amb_c: float) -> dict:
     """Passive sink: natural convection + radiation; h depends on the temperature rise, so iterate."""
+    if sink.get("r_nat_kw") or sink.get("r_fan_kw"):
+        return _r_from_datasheet(sink, "passivo", p_avg_w)
     g = _sink_geom(sink)
     dt = 30.0
     for _ in range(40):
@@ -108,6 +129,8 @@ def r_passive(sink: dict, p_avg_w: float, t_amb_c: float) -> dict:
 
 def r_forced(sink: dict, flow_m3h: float, through: float = 0.5) -> dict:
     """The same sink with a fan: free-air flow × the fraction that really goes through the fins."""
+    if sink.get("r_nat_kw") or sink.get("r_fan_kw"):
+        return _r_from_datasheet(sink, "ventilato", 0.0, flow_m3h, through)
     g = _sink_geom(sink)
     q = max(flow_m3h * through, 1e-3) / 3600
     u = q / g["a_flow"]
