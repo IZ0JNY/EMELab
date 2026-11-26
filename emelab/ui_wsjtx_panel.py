@@ -420,6 +420,70 @@ def _check_table(svc, sets, band):
         _st.rerun()
 
 
+def _advice_box(svc, sets):
+    """DL3WDG's advice for microwave EME that WSJT-X does not follow now: only notes, never a pop-up."""
+    st.markdown("#### " + i18n.tr("📘 Consigli di DL3WDG per l'EME a microonde"))
+    ini = ini_state(sets)
+    if not ini:
+        st.caption("WSJT-X.ini non trovato: i consigli compaiono quando EMELab trova il file accanto a wsjtx_log.adi.")
+        return
+    items = wsjtx_ini.advice(ini, svc.status if _live(svc) else None)
+    if not items:
+        st.success("Media, decodifica, Single decode, EME delay, locator e DX: tutto come consiglia DL3WDG.")
+    for a in items:
+        st.info(i18n.tr(a["msg"]) + ": " + i18n.tr(a["detail"]))
+    st.caption("Dalla guida «Using WSJT-X for Microwave EME (Q65 and Echo mode)» di Charlie Suckling DL3WDG (EME 2022). "
+               "Sono solo consigli: EMELab non cambia WSJT-X.")
+
+
+def no_decode_rows(status: dict, ini: dict, clock: dict, sets: dict) -> list[dict]:
+    """«I see the signal but there is no decode»: the causes listed by DL3WDG, each with its state where EMELab can
+    tell (✅ fine, ⚠️ likely, ❔ check it yourself) and what to do."""
+    s = status or {}
+    mode = f"Q65-{s.get('tr_period') or ''}{(s.get('submode') or '').strip()}" if (s.get("mode") or "").upper().startswith("Q65") else (s.get("mode") or "—")
+    rows = []
+
+    def add(state, cause, todo, value=""):
+        rows.append({"Stato": state, "Causa possibile": i18n.tr(cause) + (f" ({value})" if value else ""),
+                     "Cosa fare": i18n.tr(todo)})
+    add(ASK, "Sottomodo diverso da quello del corrispondente", "chiedigli che sottomodo usa: deve essere identico", mode)
+    ntp = (clock or {}).get("ntp") or {}
+    v = timesync.verdict(ntp.get("offset_s"))
+    bkt = ((clock or {}).get("bkt") or {}).get("running")
+    state = BAD if (v in ("warn", "bad") or bkt is False) else OK if v == "ok" else ASK
+    add(state, "Orologio del PC sbagliato o corretto a metà periodo",
+        "BktTimeSync acceso e scarto entro ±0,5 s; una correzione dell'ora durante il periodo rovina la decodifica",
+        f"{ntp['offset_s']:+.2f} s" if ntp.get("offset_s") is not None else "")
+    gps_due = gpsdo.reminder_due(sets)
+    drift = ini.get("max_drift")
+    add(ASK if gps_due else OK, "Segnale che deriva o instabile",
+        "rig agganciato al GPSDO e Max Drift 0; se il segnale deriva e non decodifica, prova Max Drift diverso da 0",
+        f"Max Drift {drift}" if drift is not None else "")
+    depth = ini.get("depth")
+    add(OK if depth == "Deep" else BAD if depth else ASK, "Decodifica Fast o Normal",
+        "metti Deep, oppure fai doppio clic sul tono di sync nella cascata (o premi Decode): rifà la decodifica in Deep",
+        depth or "")
+    ftol = s.get("freq_tolerance")
+    add(ASK, "Segnale fuori dalla barra verde (F Tol)",
+        "il segnale deve stare dentro la barra verde attorno a Rx; se non sai dov'è allarga F Tol (decodifica più lenta)",
+        f"F Tol {ftol} Hz" if ftol not in (None, wsjtx_check.NULL) else "")
+    dop = ini.get("doppler")
+    add((OK if dop == "CFOM" else BAD) if dop else ASK, "Doppler tracking spento o diverso dal corrispondente",
+        "CFOM da entrambe le parti è il caso più semplice: il Doppler si aggiorna di continuo",
+        wsjtx_check.DOPPLER.get(dop, dop) if dop else "")
+    add(ASK, "Ha iniziato a trasmettere tardi o ha cambiato messaggio durante il periodo", "aspetta il periodo successivo")
+    add(ASK, "Salto di Doppler grande (es. 20 Hz) a metà periodo", "succede senza CAT continuo: aspetta il periodo successivo")
+    add(ASK, "Audio interrotto", "chiudi e riapri WSJT-X")
+    return rows
+
+
+def _no_decode_box(svc, sets):
+    with st.expander("🤔 " + i18n.tr("Vedo il segnale in cascata ma non decodifica: perché?")):
+        rows = no_decode_rows(svc.status if _live(svc) else {}, ini_state(sets), clock_state(), sets)
+        _st.dataframe([{i18n.tr(k): v for k, v in r.items()} for r in rows], hide_index=True, width="stretch")
+        st.caption("Le cause elencate da DL3WDG; spesso sono più di una insieme. ✅ a posto · ⚠️ probabile · ❔ controlla tu.")
+
+
 def _preset_editor(band):
     """Every field of the band preset, editable and saved in the settings (only compared with WSJT-X, never written
     into WSJT-X.ini)."""
@@ -490,6 +554,8 @@ def render(svc, sets):
         _check_table(svc, sets, band)
     else:
         st.info("Il controllo parte quando WSJT-X è collegato e su una banda da 10 GHz in su.")
+    _advice_box(svc, sets)
+    _no_decode_box(svc, sets)
     _preset_editors(band)
     if svc.fixes:
         f = svc.fixes[0]

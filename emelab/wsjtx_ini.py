@@ -9,7 +9,11 @@ so a change made a moment ago may not be there yet: the panel shows the time the
 - [Astro] DopplerTracking, DopplerMethod: 0 none, 1 full Doppler to DX grid, 2 constant frequency on Moon (CFOM),
   3 own echo, 4 on DX echo, 5 call DX (order of the Astro window radio buttons in WSJT-X);
 - [Configuration] SplitMode: split_mode_none / split_mode_rig / split_mode_emulate («Fake It»);
-- [MainWindow] TxFirst, [Common] AutoSeq, MaxDrift."""
+- [MainWindow] TxFirst, [Common] AutoSeq, MaxDrift;
+- for the advice of DL3WDG («Using WSJT-X for Microwave EME», EME 2022), only shown as notes: [Common] NDepth
+  (bits 0–1: 1 Fast, 2 Normal, 3 Deep; bit 4 = 16: «Enable averaging»), AutoClearAvg; [Configuration] SingleDecode,
+  Decode52 («Decode after EME delay»), VHFUHF («Enable VHF and submode features»), MyGrid; [WideGraph] Flatten,
+  UseRef («Ref Spec»)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -80,7 +84,60 @@ def read(path: str | Path | None = None) -> dict:
     return {"config": ini.get("MultiSettings", {}).get("CurrentName"), "doppler_tracking": track,
             "doppler": ("None" if track is False else method), "split": split,
             "tx_first": _bool(ini.get("MainWindow", {}).get("TxFirst")), "auto_seq": _bool(ini.get("Common", {}).get("AutoSeq")),
-            "max_drift": _int(ini.get("Common", {}).get("MaxDrift")), "saved": saved, "path": str(p)}
+            "max_drift": _int(ini.get("Common", {}).get("MaxDrift")), "saved": saved, "path": str(p),
+            **_extras(ini)}
+
+
+DEPTH = {1: "Fast", 2: "Normal", 3: "Deep"}
+
+
+def _extras(ini: dict) -> dict:
+    """Decoding options of the DL3WDG advice (None when the key is missing)."""
+    com, conf, wg = ini.get("Common", {}), ini.get("Configuration", {}), ini.get("WideGraph", {})
+    nd = _int(com.get("NDepth"))
+    return {"depth": DEPTH.get(nd & 3) if nd is not None else None,
+            "averaging": bool(nd & 16) if nd is not None else None,
+            "auto_clear_avg": _bool(com.get("AutoClearAvg")), "single_decode": _bool(conf.get("SingleDecode")),
+            "decode52": _bool(conf.get("Decode52")), "vhf": _bool(conf.get("VHFUHF")),
+            "my_grid": (conf.get("MyGrid") or "").strip().upper() or None,
+            "flatten": _bool(wg.get("Flatten")), "use_ref": _bool(wg.get("UseRef"))}
+
+
+def advice(ini: dict, status: dict | None = None) -> list[dict]:
+    """What DL3WDG recommends for microwave EME and is not so in WSJT-X: [{"code", "msg", "detail"}]. Only notes:
+    never in the pop-up, never written to WSJT-X. status: the UDP Status (DX Call and DX Grid for AP decoding)."""
+    out = []
+
+    def add(code, msg, detail):
+        out.append({"code": code, "msg": msg, "detail": detail})
+    if ini.get("averaging") is False:
+        add("avg", "Enable averaging spento (menu Decode)",
+            "la media di più periodi decodifica segnali troppo deboli per un periodo solo")
+    if ini.get("averaging") and ini.get("auto_clear_avg") is False:
+        add("autoclear", "Auto Clear Avg after decode spento (menu Decode)",
+            "senza, la media già decodificata può dare decodifiche anche dal solo rumore")
+    if ini.get("depth") in ("Fast", "Normal"):
+        add("depth", "Decodifica Fast (menu Decode)" if ini["depth"] == "Fast" else "Decodifica Normal (menu Decode)",
+            "per i segnali più deboli serve Deep; un doppio clic sul tono di sync rifà la decodifica in Deep")
+    if ini.get("single_decode") is False:
+        add("single", "Single decode spento (Settings → General)",
+            "decodificare tutta la banda è più lento e richiede segnali più forti")
+    if ini.get("decode52") is False:
+        add("decode52", "Decode after EME delay spento (Settings → General)", "la decodifica parte prima che arrivi l'eco")
+    if ini.get("vhf") is False:
+        add("vhf", "Enable VHF and submode features spento (Settings → General)", "senza, i sottomodi Q65 non ci sono")
+    g = ini.get("my_grid")
+    if g and len(g) < 6:
+        add("grid6", "My Grid con meno di 6 caratteri", "con il locator completo a 6 caratteri il Doppler è più preciso")
+    if ini.get("use_ref") and ini.get("flatten") is False:
+        add("refspec", "Ref Spec acceso con Flatten spento (Wide Graph)",
+            "lo spettro di riferimento si registra con Flatten acceso, antenna fuori dalla Luna o su una frequenza pulita")
+    s = status or {}
+    if s and not (s.get("dx_call") or "").strip():
+        add("dxcall", "DX Call vuoto", "con DX Call e DX Grid compilati la decodifica AP guadagna fino a 4 dB")
+    elif s and not (s.get("dx_grid") or "").strip():
+        add("dxgrid", "DX Grid vuoto", "con il DX Grid la decodifica AP del primo messaggio guadagna sensibilità")
+    return out
 
 
 def differences(ini: dict, preset: dict) -> list[dict]:
