@@ -2643,6 +2643,8 @@ def _lna_tab(D):
                "racconta le perdite nascoste e il fuoco.")
     from emelab import ui_lna_cool
     ui_lna_cool.box(D, nf1, g1, nf2, l_pre, t_ant, tphys, gain, float(s["band_ghz"]) if s else None)
+    from emelab import ui_lna_market
+    ui_lna_market.box(D, s)
     st.divider()
     _catalog_box(D, ("LNA", "SW"), "ln")
 
@@ -2757,6 +2759,8 @@ def _power_tab(D):
         st.markdown(i18n.tr("La tua stazione") + ": " + " · ".join(
             f"**{_bl(float(b))}** {'SSPA' if v['kind'] == 'PA' else 'TWT'} {v.get('part') or ''}" for b, v in
             sorted(done.items(), key=lambda x: float(x[0]))))
+    from emelab import ui_lna_market
+    ui_lna_market.pa_box(band)
     st.divider()
     if kind == "PA":
         _sspa_tab(D)
