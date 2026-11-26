@@ -30,6 +30,7 @@ def test_assistant_moves_and_hides_tabs(tmp_path, monkeypatch):
     import os
     monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
     monkeypatch.setenv("EMELAB_LANG", "it")
+    monkeypatch.delenv("EMELAB_TABS", raising=False)            # the real defaults of a fresh PC
     from streamlit.testing.v1 import AppTest
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     at = AppTest.from_file(os.path.join(root, "emelab_main.py"), default_timeout=300)
@@ -37,16 +38,35 @@ def test_assistant_moves_and_hides_tabs(tmp_path, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     assert not any("Schede da mostrare" in e.label for e in at.sidebar.expander)
     labels = [t.label for t in at.tabs]
-    assert labels[0] == "🧭 Assistente" and labels.index("📡 Log QSO") > labels.index("🗓️ Pianificatore")
-    at.button(key="tabup_log").click().run()
+    assert labels == ["🧭 Assistente", "🔴 Live", "🏠 Stazione", "🌙 Luna", "📡 Log QSO", "🗓️ Pianificatore"]
+    at.button(key="tabup_planner").click().run()
     labels = [t.label for t in at.tabs]
-    assert labels.index("📡 Log QSO") == labels.index("🗓️ Pianificatore") - 1
+    assert labels.index("🗓️ Pianificatore") == labels.index("📡 Log QSO") - 1
     at.checkbox(key="tabvis_moon").uncheck().run()
     assert "🌙 Luna" not in [t.label for t in at.tabs]
     s = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    assert s["tabs_order"].index("log") < s["tabs_order"].index("planner") and "moon" not in s["tabs"]
+    assert s["tabs_order"].index("planner") < s["tabs_order"].index("log") and "moon" not in s["tabs"]
     at.checkbox(key="tabvis_camera").check().run()
     assert "📷 Telecamera Astronomica" in [t.label for t in at.tabs]
     at.button(key="tab_order_reset").click().run()
     labels = [t.label for t in at.tabs]
-    assert labels.index("📡 Log QSO") > labels.index("🗓️ Pianificatore")
+    assert labels.index("📡 Log QSO") < labels.index("🗓️ Pianificatore")
+
+
+def test_new_defaults_once_on_a_pc_already_set_up(tmp_path, monkeypatch):
+    """0.1.10: a PC with its own tab choice gets the new defaults once; afterwards its choice is kept."""
+    import json
+    import os
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    monkeypatch.setenv("EMELAB_LANG", "it")
+    (tmp_path / "settings.json").write_text(json.dumps({"tabs": ["wsjtx", "gpsdo", "lna", "database"]}), encoding="utf-8")
+    from streamlit.testing.v1 import AppTest
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    at = AppTest.from_file(os.path.join(root, "emelab_main.py"), default_timeout=300)
+    at.run()
+    assert [t.label for t in at.tabs] == ["🧭 Assistente", "🔴 Live", "🏠 Stazione", "🌙 Luna", "📡 Log QSO",
+                                          "🗓️ Pianificatore"]
+    at.checkbox(key="tabvis_wsjtx").check().run()
+    at2 = AppTest.from_file(os.path.join(root, "emelab_main.py"), default_timeout=300)
+    at2.run()
+    assert "📻 WSJT-X" in [t.label for t in at2.tabs] and "🛰️ GPSDO" not in [t.label for t in at2.tabs]

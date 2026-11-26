@@ -120,8 +120,15 @@ TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ RF Power", ui._power_tab),
      ("design", "🧪 Laboratorio", ui._design_tab), ("prints", "🖨️ Stampa PDF", ui._prints_tab),
     ("database", "🗄️ Database", ui._database_tab), ("guide", "📖 Guida alle misure", None)]
-OFF_BY_DEFAULT = {"camera", "live"}   # shown only when chosen in «Schede da mostrare e ordine» (Assistant)
+# 0.1.10: a new EMELab shows only these tabs, in this order (after 🧭 Assistente); the others are switched on in
+# «Schede da mostrare e ordine» (Assistant). 🏠 Stazione is always shown.
+DEFAULT_ON = ["live", "station", "moon", "log", "planner"]
+DEFAULT_ORDER = DEFAULT_ON + [k for k, _, _ in TABS[1:] if k not in DEFAULT_ON]
 _saved = openems_local.load_settings().get("tabs")
+if "tabs_on" not in S and _saved is not None and not openems_local.load_settings().get("tabs_defaults_0110"):
+    _saved = [k for k in DEFAULT_ON if k != "station"]               # once: the new defaults also on PCs already set up
+    openems_local.save_settings(tabs=_saved, tabs_order=DEFAULT_ORDER, tabs_defaults_0110=True,
+                                tabs_gpsdo_offered=True, tabs_moon_offered=True)
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
         _saved = [k for k in _saved if k not in ("sspa", "twt")] + ["power"]
@@ -133,16 +140,19 @@ if "tabs_on" not in S:
     if _saved is not None and "moon" not in _saved and not openems_local.load_settings().get("tabs_moon_offered"):
         _saved = list(_saved) + ["moon"]                              # new Moon tab shown once by default
         openems_local.save_settings(tabs=_saved, tabs_moon_offered=True)
-    S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k not in OFF_BY_DEFAULT) or (_saved and k in _saved)]
+    if _saved is None and os.environ.get("EMELAB_TABS") == "all":     # tests: every tab on a fresh PC
+        _saved = [k for k, _, _ in TABS[2:]]
+    S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k in DEFAULT_ON) or (_saved and k in _saved)]
 
 
 if "tabs_order" not in S:
-    S["tabs_order"] = tab_order.merge([k for k, _, _ in TABS[1:]], openems_local.load_settings().get("tabs_order"))
+    S["tabs_order"] = tab_order.merge(DEFAULT_ORDER, openems_local.load_settings().get("tabs_order"))
 
 
 def _save_tabs():
     try:
-        openems_local.save_settings(tabs=S["tabs_on"], tabs_order=S["tabs_order"])
+        openems_local.save_settings(tabs=S["tabs_on"], tabs_order=S["tabs_order"], tabs_defaults_0110=True,
+                                    tabs_gpsdo_offered=True, tabs_moon_offered=True)   # a choice: no more offers
     except Exception:
         pass
 
@@ -159,7 +169,7 @@ def _move_tab(k, delta):
 
 
 def _reset_tab_order():
-    S["tabs_order"] = [k for k, _, _ in TABS[1:]]
+    S["tabs_order"] = list(DEFAULT_ORDER)
     _save_tabs()
 
 
