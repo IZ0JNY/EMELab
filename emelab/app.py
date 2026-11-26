@@ -212,6 +212,8 @@ for tab, (k, _, fn) in zip(tabs, shown):
             fn(D)
         elif k == "guide":
             ui._guide()
+        elif k == "new":
+            fn(D, getattr(tab, "open", None))   # True/False when Streamlit tracks the active tab, None otherwise
         else:
             fn(D)
 
