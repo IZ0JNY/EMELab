@@ -196,10 +196,23 @@ def _dialog_body(svc, items):
             S.setdefault("wj_conf_now", set()).add(a["key"])
     st.caption("Puoi cambiare i parametri in WSJT-X mentre operi: EMELab avvisa soltanto. Un avviso chiuso due volte "
                "non riappare più (si riattiva nella scheda 📻 WSJT-X).")
-    if st.button("Chiudi", type="primary", key="wjp_close"):
+    c = st.columns(2)
+    if c[0].button("Chiudi", type="primary", key="wjp_close"):
         _closed([a["key"] for a in items if a["key"] not in S.get("wj_conf_now", set())])
         S["wj_conf_now"] = set()
         _st.rerun()
+    from emelab import nav
+    if nav.button(_kind(items), key="wjp_go", container=c[1],
+                  on_click=lambda: S.setdefault("wj_popup_done", set()).update(a["key"] for a in items)):
+        _st.rerun()                                 # seen: back only if the problem goes away and returns
+
+
+def _kind(items) -> str:
+    """Alert kind for the «➡️ Apri» button: GPSDO, PC clock or the WSJT-X settings."""
+    keys = [a["key"] for a in items]
+    if any(not k.startswith(("gpsdo", "clock", "bktsync")) for k in keys):
+        return "wsjtx"
+    return "gpsdo" if any(k.startswith("gpsdo") for k in keys) else "clock"
 
 
 def _on_dismiss():
@@ -347,7 +360,8 @@ except Exception:                                   # Streamlit without fragment
 
 
 # ------------------------------------------------------------------ control check + preset editor
-def _check_table(svc, sets, band):
+def check_rows(svc, sets, band) -> list[dict]:
+    """Rows of the control check: Parametro, Preset, WSJT-X adesso, Stato (✅/⚠️/❔). Also used by 🔴 Live."""
     pre = wsjtx_check.preset(band, sets)
     s = svc.status or {}
     probs = {p["code"]: p for p in svc.problems}
@@ -372,6 +386,12 @@ def _check_table(svc, sets, band):
         out.append({"Parametro": label.replace("«", "").replace("»", ""), "Preset": show(want),
                     "WSJT-X adesso": f"{show(have)} (WSJT-X.ini)" if have is not None else i18n.tr("non inviato via UDP"),
                     "Stato": (OK if str(have) == str(want) else BAD) if have is not None else (OK if confirmed(sets, conf, band) else ASK)})
+    return out
+
+
+def _check_table(svc, sets, band):
+    pre = wsjtx_check.preset(band, sets)
+    out = check_rows(svc, sets, band)
     st.dataframe(out, hide_index=True, width="stretch")
     if pre.get("assumed"):
         st.markdown(f"<span style='color:#e8590c'>{html.escape(i18n.tr('Valori presunti: copiati dai 24GHz, controllali e salvali'))}</span>",
@@ -388,31 +408,55 @@ def _check_table(svc, sets, band):
 
 
 def _preset_editor(band):
-    import emelab.dx as dx
+    """Every field of the band preset, editable and saved in the settings (only compared with WSJT-X, never written
+    into WSJT-X.ini)."""
     pre = wsjtx_check.preset(band)
-    with st.expander(i18n.tr("✏️ Preset di WSJT-X per") + f" {stations.band_label(band)}"):
-        c = st.columns(4)
-        mode = c[0].selectbox("Modo Q65", list(dx.Q65_MODES), index=list(dx.Q65_MODES).index(pre["mode"]), key=f"wjp_mode_{band}",
-                              format_func=lambda k: f"Q65-{k}")
-        tx = c[1].number_input("Tx (Hz)", 200, 4000, int(pre["tx_df"]), 10, key=f"wjp_tx_{band}")
-        rx = c[2].number_input("Rx (Hz)", 200, 4000, int(pre["rx_df"]), 10, key=f"wjp_rx_{band}")
-        ftol = c[3].number_input("F Tol (Hz)", 10, 1000, int(pre["f_tol"]), 10, key=f"wjp_ftol_{band}")
-        c = st.columns(4)
-        cfg = c[0].text_input("Configurazione", pre.get("config") or "", key=f"wjp_cfg_{band}")
-        dop = c[1].selectbox("Doppler tracking", list(wsjtx_check.DOPPLER), index=list(wsjtx_check.DOPPLER).index(pre.get("doppler", "CFOM"))
-                             if pre.get("doppler") in wsjtx_check.DOPPLER else 0, format_func=lambda k: wsjtx_check.DOPPLER[k],
-                             key=f"wjp_dop_{band}")
-        drift = c[2].number_input("Max Drift", 0, 100, int(pre.get("max_drift") or 0), 1, key=f"wjp_drift_{band}")
-        split = c[2].selectbox("Split Operation", list(wsjtx_check.SPLIT), index=list(wsjtx_check.SPLIT).index(pre.get("split", "Rig"))
-                               if pre.get("split") in wsjtx_check.SPLIT else 0, key=f"wjp_split_{band}")
-        c3 = c[3].columns(2)
-        txf = c3[0].checkbox("Tx even/1st", bool(pre.get("tx_first")), key=f"wjp_txf_{band}")
-        aseq = c3[1].checkbox("Auto Seq", bool(pre.get("auto_seq")), key=f"wjp_aseq_{band}")
-        if st.button("💾 Salva il preset della banda", key=f"wjp_save_{band}"):
-            wsjtx_check.save_preset(band, mode=mode, tx_df=int(tx), rx_df=int(rx), f_tol=int(ftol), config=cfg.strip(),
-                                    doppler=dop, max_drift=int(drift), tx_first=txf, auto_seq=aseq, split=split)
-            st.success("Preset salvato.")
-            _st.rerun()
+    if pre.get("assumed"):
+        st.markdown(f"<span style='color:#e8590c'>{html.escape(i18n.tr('Valori presunti: copiati dai 24GHz. Controllali, correggili e salva il preset.'))}</span>",
+                    unsafe_allow_html=True)
+    elif pre.get("saved"):
+        st.caption(i18n.tr("Preset salvato da te."))
+    modes = list(wsjtx_check.Q65_PRESET_MODES)
+    c = st.columns(4)
+    mode = c[0].selectbox("Modo Q65 (sottomodo e T/R)", modes, index=modes.index(pre["mode"]) if pre["mode"] in modes else modes.index("60E"),
+                          key=f"wjp_mode_{band}", format_func=lambda k: f"Q65-{k}",
+                          help=i18n.tr("Il numero è il periodo T/R in secondi, la lettera il sottomodo. Soglie e margini EMELab li calcola per 60D, 60E e 120E."))
+    tx = c[1].number_input("Tx (Hz)", 200, 4000, int(pre["tx_df"]), 10, key=f"wjp_tx_{band}")
+    rx = c[2].number_input("Rx (Hz)", 200, 4000, int(pre["rx_df"]), 10, key=f"wjp_rx_{band}")
+    ftol = c[3].number_input("F Tol (Hz)", 10, 1000, int(pre["f_tol"]), 10, key=f"wjp_ftol_{band}")
+    c = st.columns(4)
+    cfg = c[0].text_input("Configurazione", pre.get("config") or "", key=f"wjp_cfg_{band}")
+    dop = c[1].selectbox("Doppler tracking", list(wsjtx_check.DOPPLER), index=list(wsjtx_check.DOPPLER).index(pre.get("doppler", "CFOM"))
+                         if pre.get("doppler") in wsjtx_check.DOPPLER else 0, format_func=lambda k: wsjtx_check.DOPPLER[k],
+                         key=f"wjp_dop_{band}")
+    drift = c[2].number_input("Max Drift", 0, 100, int(pre.get("max_drift") or 0), 1, key=f"wjp_drift_{band}")
+    split = c[2].selectbox("Split Operation", list(wsjtx_check.SPLIT), index=list(wsjtx_check.SPLIT).index(pre.get("split", "Rig"))
+                           if pre.get("split") in wsjtx_check.SPLIT else 0, key=f"wjp_split_{band}")
+    c3 = c[3].columns(2)
+    txf = c3[0].checkbox("Tx even/1st", bool(pre.get("tx_first")), key=f"wjp_txf_{band}")
+    aseq = c3[1].checkbox("Auto Seq", bool(pre.get("auto_seq")), key=f"wjp_aseq_{band}")
+    c = st.columns([1, 1, 2])
+    if c[0].button("💾 Salva il preset della banda", key=f"wjp_save_{band}"):
+        wsjtx_check.save_preset(band, mode=mode, tx_df=int(tx), rx_df=int(rx), f_tol=int(ftol), config=cfg.strip(),
+                                doppler=dop, max_drift=int(drift), tx_first=txf, auto_seq=aseq, split=split)
+        st.success("Preset salvato.")
+        _st.rerun()
+    if pre.get("saved") and c[1].button("↩️ Torna ai valori iniziali", key=f"wjp_reset_{band}"):
+        wsjtx_check.reset_preset(band)
+        for k in ("mode", "tx", "rx", "ftol", "cfg", "dop", "drift", "split", "txf", "aseq"):
+            S.pop(f"wjp_{k}_{band}", None)
+        _st.rerun()
+
+
+def _preset_editors(band):
+    """One tab per band (10, 24, 47, 76 GHz; the band WSJT-X is on comes first)."""
+    st.markdown("#### " + i18n.tr("✏️ Preset di WSJT-X per banda"))
+    st.caption(i18n.tr("Scrivi i valori che usi su ogni banda e salvali: EMELab li usa solo per il controllo qui sopra e "
+                       "non modifica mai WSJT-X.ini."))
+    bands = ([band] if band else []) + [b for b in wsjtx_check.EDITABLE_BANDS if b != band]
+    for b, tab in zip(bands, st.tabs([stations.band_label(b) for b in bands])):
+        with tab:
+            _preset_editor(b)
 
 
 def render(svc, sets):
@@ -423,7 +467,8 @@ def render(svc, sets):
     band = _band(svc)
     st.markdown("#### " + i18n.tr("✅ Controllo dei parametri per il QSO"))
     st.caption("EMELab confronta i valori di WSJT-X con il preset della banda (10GHz: Q65-60D, Tx e Rx 1000 Hz, CFOM; "
-               "24GHz: Q65-60E, Tx e Rx 700 Hz; Split «Rig»). Modo, sottomodo, T/R e F Tol li corregge da solo (serve "
+               "24GHz: Q65-60E, Tx e Rx 700 Hz; 47 e 76GHz: presunti come i 24GHz; Split «Rig»; tutti modificabili "
+               "qui sotto). Modo, sottomodo, T/R e F Tol li corregge da solo (serve "
                "«Accept UDP requests» in WSJT-X), mai durante la trasmissione; Rx lo imposta al cambio di banda. Tx lo "
                "segnala soltanto; Doppler tracking, Split, Tx even/1st, Max Drift e Auto Seq non passano via UDP: li "
                "legge da WSJT-X.ini (che WSJT-X salva quando cambi un'impostazione). EMELab ascolta e legge file: "
@@ -436,8 +481,7 @@ def render(svc, sets):
         _check_table(svc, sets, band)
     else:
         st.info("Il controllo parte quando WSJT-X è collegato e su una banda da 10 GHz in su.")
-    for b in ([band] if band else []) + [x for x in ("10G", "24G") if x != band]:
-        _preset_editor(b)
+    _preset_editors(band)
     if svc.fixes:
         f = svc.fixes[0]
         st.caption(i18n.tr("Ultima correzione inviata") + f": {f['utc']:%H:%M:%S} UTC, {f['from']} → {f['to']}")

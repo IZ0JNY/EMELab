@@ -24,6 +24,31 @@ def test_presets_and_check(tmp_path, monkeypatch):
     assert wc.preset("24G")["mode"] == "60D" and wc.preset("24G")["tx_df"] == 800 and wc.preset("24G")["saved"]
 
 
+def test_presets_47_76_editable(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    from emelab import dx, wsjtx_check as wc
+    assert {"47G", "76G"} <= set(wc.EDITABLE_BANDS)
+    for b in ("47G", "76G"):
+        p = wc.preset(b)
+        assert p["assumed"] and not p["saved"] and p["mode"] == "60E" and p["tx_df"] == 700
+    wc.save_preset("47G", mode="30C", tx_df=1200, rx_df=1200, f_tol=100, doppler="Full", split="Fake It",
+                   max_drift=10, tx_first=False, auto_seq=False, config="EME 47")
+    p = wc.preset("47G")
+    assert (p["mode"], p["tr"], p["submode"], p["tx_df"], p["f_tol"], p["doppler"], p["split"], p["config"]) == \
+        ("30C", 30, "C", 1200, 100, "Full", "Fake It", "EME 47")
+    assert p["saved"] and not p["assumed"] and dx.band_mode("47G") == "60E"   # 30C has no threshold: Signal tab untouched
+    st = {"dial_hz": 47_088_100_000, "mode": "Q65", "submode": "C", "tr_period": 30, "tx_df": 1200, "rx_df": 1200,
+          "freq_tolerance": 100, "config_name": "EME 47"}
+    assert wc.check(st) == []
+    assert wc.check({**st, "submode": "E", "tr_period": 60})[0]["fix"] == "30C"
+    wc.save_preset("76G", mode="120E")
+    assert wc.preset("76G")["mode"] == "120E" and dx.band_mode("76G") == "120E"
+    wc.save_preset("47G", mode="60E")                     # back to a threshold mode: the stored 30C goes away
+    assert wc.preset("47G")["mode"] == "60E"
+    wc.reset_preset("47G")
+    assert wc.preset("47G")["assumed"] and wc.preset("47G")["tx_df"] == 700
+
+
 def test_configure_rx_df_and_service_fix(tmp_path, monkeypatch):
     monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
     from emelab import db as edb, wsjtx

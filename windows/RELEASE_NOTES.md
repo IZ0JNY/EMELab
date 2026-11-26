@@ -1,3 +1,25 @@
+## EMELab 0.1.9 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.9.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.9-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`. L'installazione sostituisce tutti i file del programma, anche quelli modificati a mano; i tuoi dati e le impostazioni restano. / Installing replaces all program files, including hand-edited ones; your data and settings stay.
+
+### 🇮🇹 Novità
+- **🔴 Nuova scheda Live, tutta su una pagina:** c'è la telecamera sulla Luna con le correzioni manuali a DriverDish (al massimo ±0,5°), lo stato di DriverDish e i watchdog. Ci sono anche i riquadri delle due stazioni (ora locale, Luna, Dpol, meteo) con i valori comuni, l'orologio UTC con frequenza e modo di WSJT-X e i controlli di WSJT-X.
+- **⚙️ Schede nell'Assistente:** lì scegli quali schede vedere e le sposti con ⬆️ ⬇️. Con un clic su un allarme si apre la scheda Live, o quella dell'allarme.
+- **➕ Nuova misura compilata in automatico:** prende ora, AZ/EL, offset ed errore di puntamento da DriverDish (sola lettura), il meteo e la frequenza di WSJT-X. Il fattore Y si misura in due clic (cielo freddo → Sole/Luna/Terra).
+- **🌙 Luna:** mappa della Luna com'è adesso dalla stazione, con fase, librazione e nomi di mari e crateri.
+- **📻 Preset WSJT-X anche per 47 e 76 GHz:** tutti i campi si possono modificare e salvare per ogni banda, anche con WSJT-X scollegato.
+- La scheda «⚡ Potenza» ora si chiama «⚡ RF Power».
+- L'ora locale del DX è giusta anche dove manca il database dei fusi orari.
+
+### 🇬🇧 What's new
+- **🔴 New single-page Live tab:** it has the Moon camera with manual DriverDish corrections (at most ±0.5°), the DriverDish status and watchdogs. It also has panels for both stations (local time, Moon, Dpol, weather) with the shared values, a UTC clock with the WSJT-X frequency and mode, and the WSJT-X checks.
+- **⚙️ Tabs in the Assistant:** there you pick which tabs to show and move them with ⬆️ ⬇️. Clicking an alert opens the Live tab, or the alert's own tab.
+- **➕ New measurement filled in automatically:** it takes the time, AZ/EL, offsets and pointing error from DriverDish (read-only), the weather and the WSJT-X frequency. The Y factor takes two clicks (cold sky → Sun/Moon/Earth).
+- **🌙 Moon:** a map of the Moon as it looks from your station right now, with phase, libration and the names of maria and craters.
+- **📻 WSJT-X presets for 47 and 76 GHz too:** every field can be edited and saved per band, even with WSJT-X disconnected.
+- The «⚡ Power» tab is now called «⚡ RF Power».
+- The DX local time is right even where the time-zone database is missing.
+
 ## EMELab 0.1.8 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.8.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.8-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

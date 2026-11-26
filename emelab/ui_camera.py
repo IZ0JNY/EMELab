@@ -267,19 +267,52 @@ def _scale(src, det, cfg) -> float:
     return sc or mt.deg_per_px(mt.DEFAULT_PIXEL_UM, 1, mt.DEFAULT_FOCAL_MM)
 
 
-def _live(cfg):
+def cfg_from_settings(D, sets: dict | None = None) -> dict:
+    """The camera settings saved by this tab, for other tabs (🔴 Live) that show the camera without its widgets."""
+    s = sets if sets is not None else openems_local.load_settings()
+    return dict(tol_mode=s.get("cam_tol_mode", "auto"), tol_fixed=s.get("cam_tol_deg", 0.05),
+                max_loss=s.get("cam_max_echo_loss_db", 1.0), man_ghz=s.get("cam_band_ghz", 24.048),
+                hp_over=s.get("cam_hpbw_override", 0.0), D=D, hold=s.get("cam_hold_s", 3.0), grid=s.get("cam_grid_deg", 0.1),
+                flip_x=s.get("cam_flip_x", False), flip_y=s.get("cam_flip_y", False), beep=s.get("cam_beep", True),
+                scale_mode=s.get("cam_scale_mode", "optics"), focal=s.get("cam_focal_mm", mt.DEFAULT_FOCAL_MM),
+                rf=(s.get("cam_rf_az_deg", 0.0), s.get("cam_rf_el_deg", 0.0)))
+
+
+def start_from_settings(sets: dict | None = None):
+    """Start (or keep) the camera chosen in this tab, without drawing it: for 🔴 Live. Returns the source or None."""
+    s = sets if sets is not None else openems_local.load_settings()
+    if not s.get("cam_enabled"):
+        return None
+    kind = s.get("cam_source", "asi")
+    if kind == "sim":
+        return mt.ensure(("sim",), mt.SimSource)
+    if kind == "asi":
+        cur = mt.current()
+        if cur is not None and cur.kind == "asi":
+            return cur
+        cams, err = mt.list_cameras(s.get("cam_dll", ""))
+        if err or not cams:
+            return None
+        b = int(s.get("cam_bin", 2))
+        exp, gain, auto = float(s.get("cam_exposure_ms", 5.0)), int(s.get("cam_gain", 0)), bool(s.get("cam_auto", False))
+        return mt.ensure(("asi", cams[0]["index"], b), lambda: mt.AsiSource(cams[0]["index"], exp, gain, b, auto))
+    return mt.current()
+
+
+def measure(cfg) -> dict | None:
+    """Moon offset on the newest frame: {frame, t, det, off, scale, ref, tol, hpbw, alarm, started}. The same frame is
+    measured once even when two tabs show it (one alarm, one history)."""
     src = mt.current()
     if src is None:
-        return
+        return None
     frame, t = src.latest()
     if frame is None:
-        if src.error:
-            st.error(i18n.tr(src.error) if src.error.startswith("impossibile") else src.error)
-        else:
-            st.info("In attesa del primo fotogramma dalla telecamera…")
-        return
+        return {"frame": None, "error": src.error}
+    last = getattr(src, "last_meas", None)
+    if last and last["t"] == t and last["cfg_key"] == _cfg_key(cfg):
+        return {**last, "started": False}
     bm = beam(cfg["D"], cfg["man_ghz"], cfg["hp_over"])          # follows WSJT-X when you change band
-    cfg = {**cfg, "tol": _tol(bm, cfg["max_loss"], cfg["tol_mode"], cfg["tol_fixed"]), "hpbw": bm["hpbw"]}
+    tol = _tol(bm, cfg["max_loss"], cfg["tol_mode"], cfg["tol_fixed"])
     h, w = frame.shape[:2]
     det = mt.detect(frame)
     scale = _scale(src, det, cfg)
@@ -288,9 +321,44 @@ def _live(cfg):
     now = time.time()
     alarm = getattr(src, "alarm", None) or mt.Alarm()
     src.alarm = alarm
-    started = alarm.update(now, off["total_deg"] if off else None, cfg["tol"], cfg["hold"])
+    started = alarm.update(now, off["total_deg"] if off else None, tol, cfg["hold"])
     src.history.append((now, off["az_deg"] if off else None, off["el_deg"] if off else None))
+    m = {"frame": frame, "t": t, "now": now, "det": det, "off": off, "scale": scale, "ref": ref, "tol": tol,
+         "hpbw": bm["hpbw"], "beam": bm, "alarm": alarm, "started": started, "w": w, "h": h, "src": src,
+         "cfg_key": _cfg_key(cfg)}
+    src.last_meas = m
+    return m
 
+
+def _cfg_key(cfg) -> tuple:
+    return tuple((k, v) for k, v in sorted(cfg.items()) if k != "D")
+
+
+def alarm_feedback(m, cfg):
+    """Toast and beep when the alarm starts."""
+    if m and m.get("started"):
+        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola.") + " "
+                  + i18n.tr("(clicca per aprire la scheda)"), icon="🚨")
+        if cfg["beep"]:
+            try:
+                _st.audio(mt.beep_wav(), format="audio/wav", autoplay=True)
+            except TypeError:
+                pass
+
+
+def _live(cfg):
+    m = measure(cfg)
+    if m is None:
+        return
+    if m["frame"] is None:
+        if m.get("error"):
+            st.error(i18n.tr(m["error"]) if m["error"].startswith("impossibile") else m["error"])
+        else:
+            st.info("In attesa del primo fotogramma dalla telecamera…")
+        return
+    frame, t, det, off, scale, ref, alarm, src = (m[k] for k in ("frame", "t", "det", "off", "scale", "ref", "alarm", "src"))
+    w, h, now = m["w"], m["h"], m["now"]
+    cfg = {**cfg, "tol": m["tol"], "hpbw": m["hpbw"]}
     img = mt.overlay(frame, det, ref, cfg["tol"] / scale, cfg["grid"] / scale, alarm.active, grid_deg=cfg["grid"])
     c = st.columns([3, 1])
     c[0].image(img, width="stretch")
@@ -313,13 +381,9 @@ def _live(cfg):
                 st.metric("Perdita di puntamento (eco)", f"{2 * mt.pointing_loss_db(off['total_deg'], cfg['hpbw']):.2f} dB")
         st.caption(f"{(src.info or {}).get('name', '')} · {w}×{h} · {scale * 3600:.1f}\"/px · "
                    + i18n.tr("fotogramma di") + f" {max(0.0, now - t):.1f} s " + i18n.tr("fa"))
-    if started:
-        _st.toast(i18n.tr("🚨 Telecamera: fuori tracking! Controlla il puntamento della parabola."), icon="🚨")
-        if cfg["beep"]:
-            try:
-                _st.audio(mt.beep_wav(), format="audio/wav", autoplay=True)
-            except TypeError:
-                pass
+    alarm_feedback(m, cfg)
+    from emelab import ui_live
+    ui_live.corrections(off, "cam")
     hist = [(x, a, e) for x, a, e in src.history if now - x <= 600 and a is not None]
     if len(hist) > 2:
         import pandas as pd

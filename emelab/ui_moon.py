@@ -291,3 +291,54 @@ def _live(D, stn):
     st.plotly_chart(_dec_plot(dec, ext, t), width="stretch", key="moon_dec")
     st.caption("Con la declinazione alta la Luna resta più ore sopra l'orizzonte e sale di più; vicino al perigeo "
                "l'eco è più forte (fino a 2.2 dB rispetto all'apogeo).")
+    _map_box(t, lat, lon, h, n)
+
+
+def _map_fig(img, info):
+    n = info["size"]
+    fig = go.Figure(go.Image(z=img, hoverinfo="skip"))
+    feats = info["features"]
+    if feats:
+        fig.add_trace(go.Scatter(x=[f["x"] for f in feats], y=[f["y"] for f in feats], mode="markers+text",
+                                 text=[f["name"] for f in feats], textposition="top center",
+                                 textfont=dict(size=11, color=["#ffe08a" if f["lit"] else "#9fb3c8" for f in feats]),
+                                 marker=dict(size=4, color=["#ffe08a" if f["lit"] else "#9fb3c8" for f in feats]),
+                                 customdata=[(f["lat"], f["lon"]) for f in feats],
+                                 hovertemplate="%{text}<br>lat %{customdata[0]:.1f}° · lon %{customdata[1]:.1f}°<extra></extra>",
+                                 name=i18n.tr("Mari e crateri")))
+    xs, ys = info["sub_obs_px"]
+    fig.add_trace(go.Scatter(x=[xs], y=[ys], mode="markers", marker=dict(symbol="cross-thin", size=14,
+                             line=dict(color="#e8590c", width=2)), name=i18n.tr("Centro visto da te (librazione)"),
+                             hovertemplate=i18n.tr("Centro visto da te (librazione)") + "<extra></extra>"))
+    xp, yp, vis = info["north"]
+    if vis:
+        fig.add_trace(go.Scatter(x=[xp], y=[yp], mode="markers+text", text=["N"], textposition="top center",
+                                 textfont=dict(color="#e8590c", size=14), marker=dict(size=7, color="#e8590c"),
+                                 name=i18n.tr("Polo nord lunare"), hovertemplate=i18n.tr("Polo nord lunare") + "<extra></extra>"))
+    fig.update_xaxes(visible=False, range=[0, n])
+    fig.update_yaxes(visible=False, range=[n, 0], scaleanchor="x")
+    fig.update_layout(height=640, margin=dict(l=0, r=0, t=0, b=0), plot_bgcolor="#000", paper_bgcolor="#000",
+                      legend=dict(orientation="h", y=-0.02, font=dict(color="#ddd")))
+    return fig
+
+
+def _map_box(t, lat, lon, h, n):
+    from emelab import moon_map
+    st.markdown("#### " + i18n.tr("🗺️ Mappa della Luna"))
+    c = st.columns([2, 2, 3])
+    up = c[0].radio("In alto", ["zenith", "north"], horizontal=True, key="moon_map_up",
+                    format_func=lambda k: {"zenith": "Zenit (come la vedi)", "north": "Nord celeste"}[k],
+                    help="Zenit: la Luna orientata come la vedi dalla stazione in questo momento. Nord celeste: come "
+                         "nelle carte del cielo e nei telescopi senza diagonale (est a sinistra).")
+    names = c[1].checkbox("Nomi di mari e crateri", True, key="moon_map_names")
+    img, info = moon_map.render(t, lat, lon, h, 560, up)
+    if not names:
+        info = {**info, "features": []}
+    st.plotly_chart(_map_fig(img, info), width="stretch", key="moon_map")
+    ob, ss = info["sub_obs"], info["sub_sun"]
+    st.caption(i18n.tr("Fase") + f" {i18n.tr(n['phase']['name'])}, " + i18n.tr("illuminata al") +
+               f" {100 * n['phase']['illum']:.0f} % · " + i18n.tr("centro visto da te") +
+               f": lat {ob[0]:+.1f}°, lon {ob[1]:+.1f}° · " + i18n.tr("Sole allo zenit su") +
+               f" lat {ss[0]:+.1f}°, lon {ss[1]:+.1f}° · " + i18n.tr("in giallo i punti illuminati, in azzurro quelli al buio"))
+    st.caption("Mappa della superficie: texture di Celestia ricavata dalle immagini LRO e dal «CGI Moon Kit» della NASA "
+               "(pubblico dominio). Il lato in ombra è schiarito un po' per riconoscere i mari.")

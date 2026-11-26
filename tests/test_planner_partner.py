@@ -96,7 +96,18 @@ def test_best_rows_and_local_time():
             {"sun_moon_deg": 5, "snr_spread": 3.0}, {"sun_moon_deg": 90, "snr_spread": -4.0}]
     assert ui.planner_best_rows(rows, 10.0) == [True, True, False, False]
     lt, name, assumed = tz.local_time(50.0, 14.4, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc))
-    assert lt.hour == 14 and (assumed or name == "Europe/Prague")
+    if assumed:                     # without timezonefinder: solar time rounded to the hour, UTC+1 at 14.4° E
+        assert (lt.hour, name) == (13, "UTC+1")
+    else:                           # real zone: Prague is on summer time (CEST, UTC+2) in July
+        assert (lt.hour, name) == (14, "Europe/Prague")
+
+
+def test_local_time_without_timezonefinder(monkeypatch):
+    from datetime import datetime, timezone
+    from emelab import tz
+    monkeypatch.setattr(tz, "zone_name", lambda lat, lon: None)
+    lt, name, assumed = tz.local_time(41.6, -73.9, datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+    assert assumed and name == "UTC-5" and lt.hour == 7
 
 
 def test_click_in_who_can_i_work_opens_planner(monkeypatch):
