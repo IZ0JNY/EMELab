@@ -50,3 +50,16 @@ def test_now_per_band_scales_with_frequency():
     assert b10["setup_assumed"] and n["wx_assumed"]
     assert b10["dgrd"]["total"] >= 0 and b24["dgrd"]["total"] > b10["dgrd"]["total"]
     assert n["t_gal_10g"] < 0.5
+
+
+def test_moon_map_matches_libration_and_phase():
+    """The rendered view agrees with the optical libration (Meeus) within 1°, and the full Moon is lit, the new Moon dark."""
+    from emelab import moon_map
+    for t in (datetime(2026, 11, 24, 15, tzinfo=timezone.utc), datetime(2026, 12, 9, 1, tzinfo=timezone.utc)):
+        g = moon_map.geometry(t, 0.0, 0.0, 0.0)
+        l_, b_ = moon.libration(t)
+        assert abs(g["sub_obs"][0] - b_) < 1.0 and abs(g["sub_obs"][1] - l_) < 1.0
+    full, _ = moon_map.render(datetime(2026, 11, 24, 15, tzinfo=timezone.utc), *ROME, 50.0, 120)
+    new, info = moon_map.render(datetime(2026, 12, 9, 1, tzinfo=timezone.utc), *ROME, 50.0, 120)
+    assert full.shape == (120, 120, 3) and full.mean() > 2.5 * new.mean()
+    assert any(f["name"] == "Tycho" for f in info["features"])
