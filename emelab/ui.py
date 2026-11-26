@@ -2667,10 +2667,19 @@ def _power_apply(dev, kind):
     if not dev:
         return
     if kind == "PA":
+        from emelab import cooling
         if dev.get("psat_dbm"):
-            ss["sp_psat"] = float(dev["psat_dbm"])
+            ss["sp_psat"] = ss["sp_drv_psat"] = float(dev["psat_dbm"])
         if dev.get("gain_db"):
-            ss["sp_g"] = float(dev["gain_db"])
+            ss["sp_g"] = ss["sp_drv_g"] = float(dev["gain_db"])
+        if dev.get("vdc") and dev.get("idc_a"):
+            ss["sp_vd"], ss["sp_id"], ss["sp_dcm"] = float(dev["vdc"]), float(dev["idc_a"]), "vi"
+        pae = cooling.device_thermal(dev).get("pae_pct")
+        if pae:
+            ss["sp_eff"] = float(pae)
+        lu = dev.get("lineup") or {}
+        if lu:
+            ss["sp_n"], ss["sp_drv"] = int(lu.get("n", 1)), bool(lu.get("driver"))
     elif kind == "TWT" and dev.get("psat_dbm"):
         ss["tw_ps"] = round(10 ** ((float(dev["psat_dbm"]) - 30) / 10), 1)
 
@@ -2708,7 +2717,8 @@ def _power_tab(D):
             rows = _power_rows(D, band, k)
             idx = next((i for i, r in enumerate(rows) if r["part"] == cur.get("part")), 0)
             ss[f"pw_dev_{k}"] = idx
-            if cur.get("kind") == k and rows:
+            if rows and (cur.get("kind") == k or (not cur.get("kind") and
+                                                  k == {"SSPA": "PA", "TWT": "TWT"}.get(ss["pw_kind"]))):
                 _power_apply(rows[idx], k)
     kind_l = c[1].radio("Tipo di amplificatore", ["SSPA", "TWT"], key="pw_kind", horizontal=True,
                         on_change=_power_save_cb, args=(D, band))
@@ -2726,6 +2736,7 @@ def _power_tab(D):
                                                  if isinstance(i, int) and 0 <= i < len(rows) else str(i),
                            on_change=_power_save_cb, args=(D, band))
         dev = rows[i if isinstance(i, int) and 0 <= i < len(rows) else 0]
+        ss["pw_dev_obj"] = dev if kind == "PA" else None
         if ("sp_psat" if kind == "PA" else "tw_ps") not in ss:     # numbers not on screen yet: from the device
             _power_apply(dev, kind)
         info = [f"Psat {dev['psat_dbm']:.1f} dBm ({10 ** ((dev['psat_dbm'] - 30) / 10):.1f} W)" if dev.get("psat_dbm") else None,
@@ -2766,27 +2777,66 @@ def _sspa_tab(D):
     g = c[1].number_input("Guadagno (dB)", 5.0, 60.0, step=0.5, key="sp_g")
     s_r = c[2].number_input("Morbidezza di Rapp s", 0.5, 10.0, 2.0, 0.5, key="sp_s", help="2 tipico GaAs/GaN; alto = limitatore netto")
     pin = c[3].number_input("Potenza di pilotaggio (dBm)", -20.0, 40.0, 10.0, 0.5, key="sp_pin")
+    ss = _st.session_state
     c = st.columns(4)
-    n = c[0].number_input("Moduli combinati", 1, 16, 1, key="sp_n")
-    lc = c[1].number_input("Perdita del combinatore (dB)", 0.0, 3.0, 0.3, 0.05, key="sp_lc", disabled=n == 1)
+    ss.setdefault("sp_n", 1)
+    n = c[0].number_input("Moduli in parallelo", 1, 16, step=1, key="sp_n")
+    lc = c[1].number_input("Perdita del combinatore (dB)", 0.0, 3.0, 0.3, 0.05, key="sp_lc", disabled=n == 1,
+                           help="la stessa perdita la ha il divisore all'ingresso")
     lout = c[2].number_input("Perdita fino al feed (dB)", 0.0, 6.0, 0.5, 0.05, key="sp_lo", help="guida, relè, isolatore")
-    eff = c[3].number_input("Efficienza (PAE, %)", 5.0, 70.0, 25.0, 1.0, key="sp_eff")
-    one = chain.rapp_dbm(pin + g, psat, s_r)
+    ss.setdefault("sp_eff", 25.0)
+    eff = c[3].number_input("Efficienza (PAE, %)", 5.0, 70.0, step=1.0, key="sp_eff")
+    c = st.columns(4)
+    ss.setdefault("sp_drv", False)
+    drv = c[0].checkbox("Stadio pilota (driver)", key="sp_drv",
+                        help="un modulo uguale (o un altro) davanti al divisore che pilota i moduli in parallelo")
+    ss.setdefault("sp_dcm", "pae")
+    dcm = c[1].radio("Consumo DC", ["pae", "vi"], key="sp_dcm", horizontal=True,
+                     format_func=lambda x: {"pae": "dalla PAE", "vi": "da Vd × Id"}[x],
+                     help="GaN in classe AB: a saturazione la corrente resta vicina a quella del datasheet; con Vd × Id il "
+                          "consumo non cala se piloti meno")
+    ss.setdefault("sp_vd", 28.0)
+    ss.setdefault("sp_id", 1.0)
+    vd = c[2].number_input("Vd (V)", 1.0, 60.0, step=0.5, key="sp_vd", disabled=dcm != "vi")
+    idd = c[3].number_input("Id per modulo (A)", 0.01, 20.0, step=0.05, key="sp_id", disabled=dcm != "vi")
+    if drv:
+        c = st.columns(4)
+        ss.setdefault("sp_drv_psat", float(psat))
+        ss.setdefault("sp_drv_g", float(g))
+        dpsat = c[0].number_input("Psat del pilota (dBm)", 10.0, 60.0, step=0.5, key="sp_drv_psat")
+        dg = c[1].number_input("Guadagno del pilota (dB)", 5.0, 60.0, step=0.5, key="sp_drv_g")
+        dsame = c[2].checkbox("Pilota sullo stesso raffreddamento", True, key="sp_dsame")
+    d_out = chain.rapp_dbm(pin + dg, dpsat, s_r) if drv else pin
+    pa_in = d_out - (10 * math.log10(int(n)) + (lc if n > 1 else 0.0) if drv else 0.0)
+    if not drv and n > 1:
+        pa_in = pin - 10 * math.log10(int(n)) - lc
+    one = chain.rapp_dbm(pa_in + g, psat, s_r)
     tot = chain.combine(one, int(n), lc) - lout
     pw = 10 ** ((tot - 30) / 10)
-    pdc = int(n) * 10 ** ((one - 30) / 10) / (eff / 100)
-    heat = pdc - 10 ** ((chain.combine(one, int(n), lc) - 30) / 10)
-    m = st.columns(4)
+    w = lambda dbm: 10 ** ((dbm - 30) / 10)
+    dc_one = vd * idd if dcm == "vi" else w(one) / (eff / 100)
+    dc_drv = (vd * idd if dcm == "vi" else w(d_out) / (eff / 100)) if drv else 0.0
+    heat_one = max(dc_one + w(pa_in) - w(one), 0.0)
+    heat_drv = max(dc_drv + w(pin) - w(d_out), 0.0) if drv else 0.0
+    pdc = int(n) * dc_one + dc_drv
+    heat = int(n) * heat_one + heat_drv
+    m = st.columns(5 if drv else 4)
     m[0].metric("Potenza al feed", f"{pw:.1f} W", f"{tot:.1f} dBm", delta_color="off")
-    m[1].metric("Compressione", f"{(pin + g) - one:.1f} dB")
-    m[2].metric("Consumo DC", f"{pdc:.0f} W")
-    m[3].metric("Dissipatore", f"≤ {chain.heatsink_rth(heat):.2f} K/W",
-                help=i18n.tr("resistenza termica massima per restare sotto 70 °C con 35 °C d'aria e il 50 % di trasmissione"))
-    x = _np.linspace(pin - 25, pin + 10, 80)
+    m[1].metric("Compressione", f"{(pa_in + g) - one:.1f} dB", f"Pin {pa_in:.1f} dBm " + i18n.tr("per modulo"), delta_color="off")
+    m[2].metric("Consumo DC", f"{pdc:.0f} W", f"{pdc / max(vd, 1e-3):.1f} A @ {vd:.0f} V" if dcm == "vi" else None,
+                delta_color="off")
+    m[3].metric("Calore da smaltire", f"{heat:.0f} W", f"{heat_one:.1f} W " + i18n.tr("per modulo"), delta_color="off")
+    if drv:
+        m[4].metric("Uscita del pilota", f"{d_out:.1f} dBm", f"{(pin + dg) - d_out:.1f} dB " + i18n.tr("di compressione"),
+                    delta_color="off")
+        st.caption(i18n.tr("Catena") + f": {pin:.1f} dBm → " + i18n.tr("pilota") + f" {d_out:.1f} dBm → " +
+                   i18n.tr("divisore") + f" {int(n)}× {pa_in:.1f} dBm → " + i18n.tr("moduli") + f" {int(n)}× {one:.1f} dBm → " +
+                   i18n.tr("combinatore") + f" {chain.combine(one, int(n), lc):.1f} dBm → feed {tot:.1f} dBm ({pw:.1f} W)")
+    x = _np.linspace(pa_in - 25, pa_in + 10, 80)
     y = [chain.rapp_dbm(v + g, psat, s_r) for v in x]
     fig = go.Figure(go.Scatter(x=x, y=y, name="Rapp"))
     fig.add_trace(go.Scatter(x=x, y=x + g, name="lineare", line=dict(dash="dot")))
-    fig.add_vline(x=pin, line_dash="dot")
+    fig.add_vline(x=pa_in, line_dash="dot")
     fig.update_layout(title="Uscita di un modulo contro pilotaggio", xaxis_title="Pin (dBm)", yaxis_title="Pout (dBm)",
                       height=320, margin=dict(l=10, r=10, t=40, b=10), yaxis_range=[min(y) - 3, psat + 3])
     st.plotly_chart(fig, width="stretch")
@@ -2794,7 +2844,9 @@ def _sspa_tab(D):
                "riduce il calore.")
     st.divider()
     dev = _catalog_box(D, ("PA",), "sp")
-    _heatsink_box(dev, 10 ** ((tot + lout - 30) / 10) / max(int(n), 1), eff, "sp", int(n))
+    dev = ss.get("pw_dev_obj") or dev                     # the device of the band chosen in ⚡ RF Power
+    _heatsink_box(dev, w(one), eff, "sp", int(n), p_dc_w=dc_one,
+                  extra_w=heat_drv if drv and ss.get("sp_dsame", True) else 0.0)
 
 
 def _twt_tab(D):
@@ -3289,7 +3341,7 @@ def _a(label):
     return f":orange[{label}]"
 
 
-def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
+def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1, p_dc_w=None, extra_w=0.0):
     import pandas as pd
     from emelab import cooling, cooling_parts as cp
     st.subheader("🌡️ Raffreddamento del dispositivo di potenza")
@@ -3304,7 +3356,8 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     tech = c[0].selectbox("Tecnologia" if th["tech"] else _a("Tecnologia"), techs,
                           index=techs.index(th["tech"]) if th["tech"] else 0, key=f"{dk}_tech",
                           help="dal dispositivo scelto qui sopra; cambia Tj max, R giunzione–case tipica ed energia di attivazione")
-    pw = c[1].number_input("Potenza d'uscita del dispositivo (W)", 0.1, 500.0, float(round(p_out_w, 1)), 0.5, key=f"{key}_hp")
+    pw = c[1].number_input("Potenza d'uscita del dispositivo (W)", 0.1, 500.0, float(round(p_out_w, 1)), 0.5,
+                         key=f"{key}_hp_{round(p_out_w, 1)}", help=i18n.tr("dal calcolo qui sopra; si aggiorna quando cambi l'amplificatore"))
     pae0 = th["pae_pct"] or float(pae_default)
     pae = c[2].number_input("Efficienza (PAE, %)", 5.0, 80.0, pae0, 1.0, key=f"{dk}_he")
     rjc0 = th["rth_jc"] or cooling.RJC_TYP[tech]
@@ -3326,9 +3379,10 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     duty = c[3].number_input("Frazione in trasmissione", 0.05, 1.0, 0.5, 0.05, key=f"{key}_hd",
                              help="Q65: 0.5; prove e beacon continui: 1")
     period = tr_s / max(duty, 1e-3)
-    p_dc = pw / max(pae / 100, 1e-3)
+    p_dc = p_dc_w if p_dc_w and abs(pw - p_out_w) <= 0.01 * p_out_w + 0.06 else pw / max(pae / 100, 1e-3)
     p_d = max(p_dc - pw, 0.0)
-    c[4].metric("Potenza dissipata", f"{p_d:.0f} W", f"DC {p_dc:.0f} W", delta_color="off")
+    c[4].metric("Potenza dissipata", f"{p_d:.1f} W", f"DC {p_dc:.0f} W" + (f" · {i18n.tr('pilota')} +{extra_w:.0f} W" if extra_w > 0 else ""),
+                delta_color="off", help=i18n.tr("per dispositivo; il pilota sullo stesso raffreddamento aggiunge il suo calore al dissipatore"))
     if dev and dev.get("part"):
         st.caption(i18n.tr("Dispositivo") + f": **{dev['part']}** ({dev.get('maker') or '—'}) · {tech} · Tj max {tjmax:.0f} °C" +
                    ("" if th["tj_max"] else " (" + i18n.tr("tipica della tecnologia") + ")") + " · R giunzione–case " +
@@ -3366,10 +3420,15 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     st.markdown("#### 🧴 " + i18n.tr("Pasta o pad termico (R case–dissipatore)"), unsafe_allow_html=True)
     k = st.columns([3, 1, 1, 2])
     with k[0]:
-        tim = pick("tim", "Materiale tra case e dissipatore", f"{key}_tim", ("MX-4", "Arctic"), "✏️ R a mano")
-    ax = k[1].number_input(_a("Base del contatto (mm)"), 1.0, 100.0, 10.0, 0.5, key=f"{key}_tax",
+        tim = pick("tim", "Materiale tra case e dissipatore", f"{dk}_tim",
+                   ("DM6030Hk-F954 (colla all'argento)", "Diemat (NAMICS)") if th.get("die_mm") else ("MX-4", "Arctic"),
+                   "✏️ R a mano")
+    die = th.get("die_mm") or (10.0, 10.0)
+    ax = k[1].number_input("Base del contatto (mm)" if th.get("die_mm") else _a("Base del contatto (mm)"), 0.5, 100.0,
+                           float(die[0]), 0.1, key=f"{dk}_tax",
                            help="lato della flangia o della parte metallica del package appoggiata al dissipatore")
-    ay = k[2].number_input(_a("Altezza del contatto (mm)"), 1.0, 100.0, 10.0, 0.5, key=f"{key}_tay")
+    ay = k[2].number_input("Altezza del contatto (mm)" if th.get("die_mm") else _a("Altezza del contatto (mm)"), 0.5, 100.0,
+                           float(die[1]), 0.1, key=f"{dk}_tay")
     if tim:
         rcs = cp.r_tim(tim["k_wmk"], tim["t_um"], ax * ay, tim.get("rc_m2kw", 5e-6))
         k[3].metric("R case–dissipatore", f"{rcs:.3f} K/W")
@@ -3439,7 +3498,7 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
                       format_func=lambda x: {"chiller": "Chiller", "radiatore": "Pompa + radiatore",
                                              "mano": "Temperatura e portata a mano"}[x])
     cool = k3[2].selectbox("Liquido", list(cooling.COOLANTS), key=f"{key}_wc")
-    p_avg = p_d * int(ndev) * duty
+    p_avg = (p_d * int(ndev) + extra_w) * duty
     loop = None
     if src == "mano":
         k4 = st.columns(2)
@@ -3494,7 +3553,7 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
     rref = plate.get("r_kw") or 0.05
     fref = plate.get("flow_lmin") or 2.0
     mcp = plate.get("mass_kg") or 0.25
-    common = {"n_dev": int(ndev), "rth_jc": rjc, "rth_cs": rcs}
+    common = {"n_dev": int(ndev), "rth_jc": rjc, "rth_cs": rcs, "extra_w": float(extra_w)}
     meth = {"passivo": dict(t_ref_c=tamb, sink=sink),
             "ventilato": dict(t_ref_c=tamb, sink=sink, flow_m3h=flow, through=thr),
             "acqua": dict(t_ref_c=tw, flow_lmin=flw, r_ref_kw=rref, flow_ref_lmin=fref, coolant=cool, mass_kg=mcp)}
@@ -3524,7 +3583,8 @@ def _heatsink_box(dev, p_out_w, pae_default, key, n_dev=1):
                      "Dissipatore a fine TX (°C)": round(r["t_sink_c"]),
                      "Flangia a fine TX (°C)": round(r["t_case_c"]),
                      "Giunzione a fine TX (°C)": round(r["tj_c"]),
-                     "Margine (°C)": round(tjt - r["tj_c"]),
+                     **({"Giunzione del pilota (°C)": round(r["t_sink_c"] + extra_w * (rjc + rcs))} if extra_w > 0 else {}),
+                     "Margine (°C)": round(tjt - max(r["tj_c"], r["t_sink_c"] + extra_w * (rjc + rcs) if extra_w > 0 else 0)),
                      "Escursione per ciclo (°C)": round(r["tj_swing_k"]),
                      "Giunzione in continuo (°C)": round(r1["tj_c"]),
                      "Pout max in EME (W)": round(cooling.p_out_from_diss(pmx, pae), 1),

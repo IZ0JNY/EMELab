@@ -54,6 +54,11 @@ DEVICES = [
     dict(part="RW1136", maker="Siemens", type="TWT", f_lo=24.0, f_hi=24.25, psat_dbm=42.6, vdc=48.0, tech="TWT",
          notes="TWT modificato per 24 GHz; 18.2 W misurati al feed con twist WR-42 diretto (14 W con guida flessibile)",
          source="pagina nuovo setup 24 GHz IZ0JNY", check=False),
+    dict(part="YPA47-4653C1", maker="Sichuan YiFeng (YFEN)", type="PA", f_lo=46.0, f_hi=53.0, psat_dbm=41.3, gain_db=18.2,
+         vdc=18.0, idc_a=1.4, tech="GaN", lineup={"n": 2, "driver": True},
+         notes="die GaN 46–53 GHz, Vd 18 V Id 1.4 A Vg −1.9 V; pae_pct=24, die_mm=2.56x4.80. SSPA 47 GHz di IZ0JNY: "
+               "un die pilota due die in parallelo (combinatore a 2 vie), raffreddati ad acqua",
+         source="datasheet YFEN (documento «YPA 47GHz 25/50W SSPA» v0.1)", check=False),
     dict(part="SSPA 47 GHz 50 W", maker="OK1DFC (autocostruito)", type="PA", f_lo=47.0, f_hi=47.2, psat_dbm=47.0, tech="GaN",
          notes="raffreddato a liquido, efficienza circa 33 %; 45 W misurati in aprile 2026", source="432 and Above EME News 04/2026",
          check=False),

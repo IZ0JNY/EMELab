@@ -30,3 +30,20 @@ def test_power_tab_survives_bad_device_state(tmp_path, monkeypatch, bad):
     assert isinstance(at.session_state["pw_dev_TWT"], int)
     at.radio(key="pw_kind").set_value("SSPA").run()
     assert not at.exception, [e.value for e in at.exception]
+
+
+def test_ypa47_lineup_driver_and_two_in_parallel(tmp_path, monkeypatch):
+    """47 GHz: the YPA47-4653C1 fills a driver + 2 modules line-up, DC from Vd × Id, driver heat on the same cooling."""
+    monkeypatch.setenv("EMELAB_CONFIG", str(tmp_path))
+    from streamlit.testing.v1 import AppTest
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    at = AppTest.from_string(SCRIPT.format(root=root), default_timeout=120)
+    at.run()
+    at.selectbox(key="pw_band").set_value(47.088).run()
+    assert not at.exception, [e.value for e in at.exception]
+    ss = at.session_state
+    assert (ss["sp_n"], ss["sp_drv"], ss["sp_vd"], ss["sp_id"], ss["sp_dcm"], ss["sp_psat"]) == (2, True, 18.0, 1.4, "vi", 41.3)
+    m = {x.label: x.value for x in at.metric}
+    assert m["Consumo DC"].startswith("76 W")                 # 3 dies × 18 V × 1.4 A
+    tab = [d.value for d in at.dataframe if "Raffreddamento" in d.value.columns][0]
+    assert "Giunzione del pilota (°C)" in tab.columns
