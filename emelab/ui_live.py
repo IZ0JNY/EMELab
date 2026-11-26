@@ -173,6 +173,8 @@ def tab(D):
     q = st.columns([1.15, 1, 1.25])      # camera + corrections · DriverDish, watchdog, strip · me, DX, WSJT-X checks
     with q[0].container(border=True):
         _camera_quadrant(D, sets, cfg)
+    with q[0].container(border=True):
+        _clock_quadrant()
     with q[1].container(border=True):
         _driverdish_quadrant(sets)
     with q[1].container(border=True):
@@ -466,17 +468,45 @@ def _moon_live(D):
             other = None
     v = station_view(now, me, other, f_ghz, stn.get("height_m") or 0.0)
     band = stations.band_label(f_ghz)
-    _panel("🟦 " + i18n.tr("IO") + f" · {stn.get('callsign') or ''} · {stn.get('locator') or ''}", "#1f6feb",
+    _panel(f"{stn.get('callsign') or '—'} · {stn.get('locator') or ''}", "#1f6feb",
            v, me, now, band, freq=(f"{hz / 1e6:,.3f} MHz".replace(",", " ") if hz else None), towards=call or "DX")
     if other:
         vo = station_view(now, other, me, f_ghz)
-        _panel("🟧 DX" + f" · {call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
+        _panel(f"{call or '—'} · {grid[:6]}", "#e8590c", vo, other, now, band,
                towards=stn.get("callsign") or i18n.tr("me"))
         st.caption(i18n.tr("Percorso Terra–Luna–Terra") + f" {v['path_km']:,.0f} km · " + i18n.tr("ritardo")
                    + f" {v['delay_s']:.3f} s · " + i18n.tr("polarizzazioni") + f" {v['pols']}")
     else:
         st.caption("Il riquadro del DX compare quando WSJT-X ha un DX Call con il locator (o il locator è nel "
                    "database delle stazioni).")
+
+
+def weather_pairs(wx: dict) -> list[tuple[str, str]]:
+    """Temperature, humidity and whether it rains (pure)."""
+    f = lambda k, fmt: format(wx[k], fmt) if isinstance(wx.get(k), (int, float)) else "—"
+    rain = wx.get("rain_mmh")
+    wet = isinstance(rain, (int, float)) and rain >= 0.1
+    return [("Temperatura", f"{f('t_c', '.0f')} °C"), ("Umidità", f"{f('rh', '.0f')} %"),
+            ("Pioggia", "—" if rain is None else (i18n.tr("sì") + f" · {rain:.1f} mm/h" if wet else i18n.tr("no")))]
+
+
+def _clock_quadrant():
+    _frag(1)(_clock_live)()
+
+
+def _clock_live():
+    now = datetime.now(timezone.utc)
+    _html(f"<div style='display:flex;align-items:baseline;gap:18px;justify-content:center'>"
+          f"<span style='font-family:ui-monospace,Consolas,monospace;font-size:40px;font-weight:700'>{now:%H:%M:%S}</span>"
+          f"<span style='font-size:18px;opacity:.75'>UTC · {html.escape(_date_it(now))}</span></div>")
+
+
+def _date_it(d: datetime) -> str:
+    if i18n.get_lang() == "en":
+        return f"{d:%a %d %b %Y}"
+    days = ("lun", "mar", "mer", "gio", "ven", "sab", "dom")
+    months = ("gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic")
+    return f"{days[d.weekday()]} {d.day} {months[d.month - 1]} {d.year}"
 
 
 def _panel(title, color, v, ll, now, band, freq=None, towards="DX"):
@@ -497,9 +527,7 @@ def _panel(title, color, v, ll, now, band, freq=None, towards="DX"):
               ("Librazione eco", f"{v['lib_echo']:.3f}°/min"), ("Sole–Luna", f"{v['sun_moon']:.0f}°")]
     wx = weather_at(*ll)
     if wx:
-        pairs += [("Meteo", f"{wx.get('t_c') or 0:.0f} °C · " + i18n.tr("UR") + f" {wx.get('rh') or 0:.0f} %"),
-                  ("Vento", f"{wx.get('wind_ms') or 0:.0f} m/s" + (f" ({wx['gust_ms']:.0f})" if wx.get("gust_ms") else "")),
-                  ("Nuvole / pioggia", f"{wx.get('cloud_pct') or 0:.0f} % · {wx.get('rain_mmh') or 0:.1f} mm/h")]
+        pairs += weather_pairs(wx)
     else:
         pairs.append(("Meteo", "—"))
     kv(pairs)
