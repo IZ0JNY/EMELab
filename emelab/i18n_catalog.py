@@ -1831,6 +1831,8 @@ ENTRIES = [
     ('Errore Az', 'Error Az'),
     ('Errore El', 'Error El'),
     ('Controllo ogni 5 s; GPSDO letto ogni 20 s.', 'Checked every 5 s; GPSDO read every 20 s.'),
+    ('simulatore: la telecamera vera non è in uso', 'simulator: the real camera is not in use'),
+    ('immagine da file: la telecamera vera non è in uso', 'image from file: the real camera is not in use'),
     ('aggancio perso e ritrovato negli ultimi 10 minuti', 'lock lost and regained in the last 10 minutes'),
     ('in DriverDish accendi Setup → Telnet server, porta 9999, «Run»', 'in DriverDish switch on Setup → Telnet server, port 9999, «Run»'),
     ('(WSJT-X.ini) = dal file salvato alle', '(WSJT-X.ini) = from the file saved at'),

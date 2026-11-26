@@ -16,6 +16,8 @@ WSJTX_SILENT_S = 90.0
 CAM_STALE_S = 5.0
 DT_WARN_S, DT_BAD_S = 0.5, 1.0
 TOAST_PREFIX = "🚨 Watchdog: "
+CAM_NOT_REAL = {"sim": "simulatore: la telecamera vera non è in uso",
+                "still": "immagine da file: la telecamera vera non è in uso"}
 TELNET_HINT = "in DriverDish accendi Setup → Telnet server, porta 9999, «Run»"
 
 
@@ -29,7 +31,8 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
            dd: dict | None = None, dd_err: str | None = None, dd_on: bool = False, dd_err_since: datetime | None = None,
            wsjtx_on: bool = False, wsjtx_last: datetime | None = None, wsjtx_problems: list | None = None,
            bkt: dict | None = None, ntp: dict | None = None, dt: float | None = None,
-           cam_on: bool = False, cam_age_s: float | None = None, cam_error: str | None = None) -> list[dict]:
+           cam_on: bool = False, cam_age_s: float | None = None, cam_error: str | None = None,
+           cam_kind: str = "asi") -> list[dict]:
     """[{"key", "name", "state": ok/warn/bad, "msg"}] for the parts in use."""
     now = now or datetime.now(timezone.utc)
     out = []
@@ -81,7 +84,9 @@ def checks(*, now: datetime | None = None, gpsdo: dict | None = None, gpsdo_on: 
         st = "ok" if abs(dt) <= DT_WARN_S else "warn" if abs(dt) <= DT_BAD_S else "bad"
         add("dt", "DT", st, f"DT medio {dt:+.1f} s")
     if cam_on:
-        if cam_error and (cam_age_s is None or cam_age_s > CAM_STALE_S):
+        if cam_kind in CAM_NOT_REAL:
+            add("camera", "Telecamera", "warn", CAM_NOT_REAL[cam_kind])
+        elif cam_error and (cam_age_s is None or cam_age_s > CAM_STALE_S):
             add("camera", "Telecamera", "bad", "telecamera: " + cam_error)
         elif cam_age_s is None:
             add("camera", "Telecamera", "warn", "in attesa del primo fotogramma")

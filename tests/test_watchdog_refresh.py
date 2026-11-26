@@ -28,3 +28,9 @@ def test_driverdish_refused_tells_where_to_switch_telnet_on():
     assert item["state"] == "bad" and watchdog.TELNET_HINT in item["msg"]
     item = watchdog.checks(now=NOW, dd=None, dd_err="timed out", dd_on=True)[0]
     assert watchdog.TELNET_HINT not in item["msg"]
+
+
+def test_camera_simulator_is_flagged_not_ok():
+    item = watchdog.checks(now=NOW, cam_on=True, cam_age_s=0.5, cam_kind="sim")[0]
+    assert item["state"] == "warn" and "simulatore" in item["msg"]
+    assert watchdog.checks(now=NOW, cam_on=True, cam_age_s=0.5)[0]["state"] == "ok"

@@ -239,6 +239,10 @@ def _camera_quadrant(D, sets, cfg):
 
 
 def _camera_live(cfg):
+    from emelab import watchdog
+    kind = openems_local.load_settings().get("cam_source", "asi")
+    if kind in watchdog.CAM_NOT_REAL:
+        badge(i18n.tr(watchdog.CAM_NOT_REAL[kind]), "warn")
     m = ui_camera.measure(cfg)
     if not m or m.get("frame") is None:
         st.info("In attesa del primo fotogramma dalla telecamera…")
@@ -362,7 +366,8 @@ def watchdog_items(D=None) -> list[dict]:
                            dd=d, dd_err=None if err == "off" else err, dd_on=bool(sets.get("dd_live")), dd_err_since=mon_since,
                            wsjtx_on=bool(svc and svc.running), wsjtx_last=getattr(svc, "last_seen", None), wsjtx_problems=probs,
                            bkt=clock.get("bkt") if svc and svc.running else None, ntp=clock.get("ntp"), dt=dt if n >= 3 else None,
-                           cam_on=cam_on, cam_age_s=age, cam_error=getattr(src, "error", None) if src else None)
+                           cam_on=cam_on, cam_age_s=age, cam_error=getattr(src, "error", None) if src else None,
+                           cam_kind=sets.get("cam_source", "asi"))
 
 
 _ICON = {"ok": "🟢", "warn": "🟡", "bad": "🔴"}
