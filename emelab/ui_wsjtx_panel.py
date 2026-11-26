@@ -360,7 +360,8 @@ except Exception:                                   # Streamlit without fragment
 
 
 # ------------------------------------------------------------------ control check + preset editor
-def _check_table(svc, sets, band):
+def check_rows(svc, sets, band) -> list[dict]:
+    """Rows of the control check: Parametro, Preset, WSJT-X adesso, Stato (✅/⚠️/❔). Also used by 🔴 Live."""
     pre = wsjtx_check.preset(band, sets)
     s = svc.status or {}
     probs = {p["code"]: p for p in svc.problems}
@@ -385,6 +386,12 @@ def _check_table(svc, sets, band):
         out.append({"Parametro": label.replace("«", "").replace("»", ""), "Preset": show(want),
                     "WSJT-X adesso": f"{show(have)} (WSJT-X.ini)" if have is not None else i18n.tr("non inviato via UDP"),
                     "Stato": (OK if str(have) == str(want) else BAD) if have is not None else (OK if confirmed(sets, conf, band) else ASK)})
+    return out
+
+
+def _check_table(svc, sets, band):
+    pre = wsjtx_check.preset(band, sets)
+    out = check_rows(svc, sets, band)
     st.dataframe(out, hide_index=True, width="stretch")
     if pre.get("assumed"):
         st.markdown(f"<span style='color:#e8590c'>{html.escape(i18n.tr('Valori presunti: copiati dai 24GHz, controllali e salvali'))}</span>",
