@@ -1904,7 +1904,6 @@ ENTRIES = [
     ('Parabola AZ / EL (DriverDish)', 'Dish AZ / EL (DriverDish)'),
     ('Parabola − posizione EMELab', 'Dish − EMELab position'),
     ('AZ / EL: differenza tra la posizione letta da DriverDish e quella calcolata da EMELab (con rifrazione radio) per la sorgente misurata', 'AZ / EL: difference between the position read from DriverDish and the one EMELab computes (with radio refraction) for the measured source'),
-    ('Frequenza WSJT-X', 'WSJT-X frequency'),
     ("WSJT-X è su un'altra banda rispetto alla configurazione scelta", 'WSJT-X is on a different band from the chosen configuration'),
     ("I dati automatici sono stati letti a un'ora diversa da quella della misura", 'The automatic data were read at a different time from the measurement'),
     ('premi di nuovo ⚡ Leggi tutto adesso.', 'press ⚡ Read everything now again.'),
