@@ -497,9 +497,17 @@ def _clock_quadrant():
 
 def _clock_live():
     now = datetime.now(timezone.utc)
-    _html(f"<div style='display:flex;align-items:baseline;gap:18px;justify-content:center'>"
-          f"<span style='font-family:ui-monospace,Consolas,monospace;font-size:40px;font-weight:700'>{now:%H:%M:%S}</span>"
-          f"<span style='font-size:18px;opacity:.75'>UTC · {html.escape(_date_it(now))}</span></div>")
+    svc = _svc()
+    stt = (svc.status or {}) if _wsjtx_live(svc) else {}
+    hz = stt.get("dial_hz")
+    mode = next((v for k, v, _ in strip_items(stt, None, None, None, None, 0, None) if k == "Modo"), "—")
+    mono = "font-family:ui-monospace,Consolas,monospace;font-weight:700"
+    _html("<div style='display:grid;grid-template-columns:1fr 1.25fr;gap:10px;align-items:center;text-align:center'>"
+          f"<div><div style='{mono};font-size:32px;line-height:1.1'>{now:%H:%M:%S}</div>"
+          f"<div style='font-size:14px;opacity:.75'>UTC · {html.escape(_date_it(now))}</div></div>"
+          f"<div style='border-left:1px solid rgba(127,127,127,.35)'><div style='{mono};font-size:30px;line-height:1.1;white-space:nowrap'>"
+          f"{_mhz(hz)[:-3] if hz else '—'}<span style='font-size:15px;opacity:.75'> MHz</span></div>"
+          f"<div style='{mono};font-size:18px;color:#1f6feb'>{html.escape(mode)}</div></div></div>")
 
 
 def _date_it(d: datetime) -> str:
