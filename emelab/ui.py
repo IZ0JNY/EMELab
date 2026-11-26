@@ -523,6 +523,8 @@ def _extra_with_y(auto_x):
         from emelab import autofill
         x["y_capture"] = {"cold": cold, "hot": hot,
                           "y_db": autofill.y_delta((cold or {}).get("db"), (hot or {}).get("db"))}
+        if (hot or {}).get("source") == "SDR Console" and _st.session_state.get("em_y_sdrc"):
+            x["y_capture"]["sdr_console"] = _st.session_state["em_y_sdrc"]
     return x
 
 
@@ -575,7 +577,114 @@ def _y_capture_box(kind):
     cols[2].metric("Delta Y", _fmt(y, "{:+.2f} dB"))
     if hot_c and hot_c.get("kind") != kind:
         st.caption("Il secondo clic era su un'altra sorgente: ripetilo.")
+    _sdrc_box(kind)
     return {"cold": cold, "hot": hot_c, "y_db": y} if (cold or hot_c) else None
+
+
+def _naive(t):
+    return t.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _sdrc_load(r, name):
+    from emelab import sdrconsole
+    ss = _st.session_state
+    if not r["samples"]:
+        ss["em_sdrc_msg"] = i18n.tr("Nessun dato nel file") + f": {name}"
+        return
+    w = sdrconsole.auto_windows(r["samples"])
+    ss["em_sdrc"] = dict(r, name=name)
+    ss["em_sdrc_cold"] = tuple(_naive(t) for t in w["cold"])
+    ss["em_sdrc_hot"] = tuple(_naive(t) for t in w["hot"])
+    ss.pop("em_sdrc_msg", None)
+
+
+def _sdrc_latest_cb():
+    from emelab import sdrconsole
+    folder = (_st.session_state.get("em_sdrc_dir") or "").strip()
+    openems_local.save_settings(sdrc_dir=folder)
+    f = sdrconsole.latest_csv(folder) if folder else None
+    if f is None:
+        _st.session_state["em_sdrc_msg"] = i18n.tr("Nessun CSV nella cartella") + f": {folder or '—'}"
+        return
+    try:
+        _sdrc_load(sdrconsole.read(f), f.name)
+    except OSError as e:
+        _st.session_state["em_sdrc_msg"] = str(e)
+
+
+def _sdrc_use_cb(kind, res):
+    """✅ The two windows become the cold-sky and source readings, Y goes in the form and the time is the source's."""
+    from emelab import autofill
+    ss = _st.session_state
+    r = ss.get("em_sdrc") or {}
+    def cap(st_, extra):
+        mid = st_["from"] + (st_["to"] - st_["from"]) / 2
+        return dict(autofill.capture(st_["db"], mid, source="SDR Console"), sd=st_["sd"], n=st_["n"],
+                    window=[edb.iso_utc(st_["from"]), edb.iso_utc(st_["to"])], **extra)
+    ss["em_y_cold"] = cap(res["cold"], {})
+    ss["em_y_hot"] = cap(res["hot"], {"kind": kind})
+    ss["em_y_sdrc"] = {"file": r.get("name"), "program": r.get("meta", {}).get("program"), "unit": r.get("unit"),
+                       "y_err_db": res.get("y_err"), "noise_sd_db": res.get("noise_sd")}
+    if res["y_db"] is not None and -5.0 <= res["y_db"] <= 40.0:
+        ss["em_n_y"] = res["y_db"]
+    t = res["hot"]["from"] + (res["hot"]["to"] - res["hot"]["from"]) / 2
+    ss["em_n_date"], ss["em_n_time"] = t.date(), t.time().replace(second=0, microsecond=0)
+
+
+def _sdrc_box(kind):
+    """Y from the Continuum CSV exported by SDR Console: windows on cold sky and on the source, chosen on the plot."""
+    from emelab import sdrconsole
+    ss = _st.session_state
+    with st.expander(i18n.tr("📂 Y dal CSV di SDR Console (Continuum)"), expanded=bool(ss.get("em_sdrc"))):
+        st.caption("In SDR Console: View → Spectrum → Signal History (o il modo Continuum), pulsante «…», esporta in CSV. "
+                   "Registra cielo freddo e sorgente nella stessa esportazione. EMELab legge solo il file.")
+        ss.setdefault("em_sdrc_dir", openems_local.load_settings().get("sdrc_dir", ""))
+        c = st.columns([3, 1.4])
+        c[0].text_input("Cartella dei CSV di SDR Console", key="em_sdrc_dir", help="es. C:\\Claude.ai\\SDR Console")
+        c[1].button("📥 Carica l'ultimo CSV", key="em_sdrc_latest", on_click=_sdrc_latest_cb)
+        up = st.file_uploader("oppure scegli il file", type=["csv"], key="em_sdrc_up")
+        if up is not None and (ss.get("em_sdrc") or {}).get("name") != up.name:
+            _sdrc_load(sdrconsole.parse(up.getvalue().decode("utf-8", "replace")), up.name)
+        if ss.get("em_sdrc_msg"):
+            st.warning(ss["em_sdrc_msg"])
+        r = ss.get("em_sdrc")
+        if not r:
+            return
+        smp = r["samples"]
+        t0, t1 = _naive(smp[0][0]), _naive(smp[-1][0])
+        st.caption(f"{r['name']} · {r['meta'].get('program', 'SDR Console')} · {len(smp)} " + i18n.tr("campioni") +
+                   f" · {t0:%Y-%m-%d %H:%M:%S} → {t1:%H:%M:%S} UTC · {r.get('unit')}")
+        if t1 <= t0:
+            st.warning("Il file contiene un solo istante.")
+            return
+        c = st.columns(2)
+        cold_w = c[0].slider("❄️ Finestra cielo freddo (UTC)", t0, t1, key="em_sdrc_cold", format="HH:mm:ss",
+                             step=timedelta(seconds=1))
+        hot_w = c[1].slider("Finestra sorgente (UTC)", t0, t1, key="em_sdrc_hot", format="HH:mm:ss",
+                            step=timedelta(seconds=1))
+        utc = lambda w: tuple(t.replace(tzinfo=timezone.utc) for t in w)
+        res = sdrconsole.y_from(smp, utc(cold_w), utc(hot_w))
+        sm = sdrconsole.smooth(smp, 1.0)
+        fig = go.Figure(go.Scatter(x=[_naive(t) for t, _ in sm], y=[v for _, v in sm], mode="lines",
+                                   name=i18n.tr("livello (media 1 s)"), line=dict(color="#4c78a8")))
+        for w, col in ((cold_w, "rgba(76,120,168,0.18)"), (hot_w, "rgba(245,133,24,0.22)")):
+            fig.add_vrect(x0=w[0], x1=w[1], fillcolor=col, line_width=0)
+        fig.update_layout(height=260, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="UTC",
+                          yaxis_title=r.get("unit") or "dB", showlegend=False)
+        st.plotly_chart(fig, width="stretch", key="em_sdrc_fig")
+        cols = st.columns(3)
+        cols[0].metric("Cielo freddo", _fmt((res["cold"] or {}).get("db"), "{:.2f}") + f" {r.get('unit') or 'dB'}",
+                       help=f"σ {_fmt((res['cold'] or {}).get('sd'), '{:.2f}')} dB · n {(res['cold'] or {}).get('n', 0)}")
+        cols[1].metric("Sorgente", _fmt((res["hot"] or {}).get("db"), "{:.2f}") + f" {r.get('unit') or 'dB'}",
+                       help=f"σ {_fmt((res['hot'] or {}).get('sd'), '{:.2f}')} dB · n {(res['hot'] or {}).get('n', 0)}")
+        cols[2].metric("Y dal CSV", _fmt(res["y_db"], "{:+.2f} dB") +
+                       (f" ± {res['y_err']:.2f}" if res.get("y_err") is not None else ""))
+        if res["y_db"] is not None and abs(res["y_db"]) < 3 * res.get("noise_sd", 0):
+            st.warning(i18n.tr("La differenza è dentro il rumore del ricevitore: nel file c'è davvero il passaggio dal cielo "
+                               "freddo alla sorgente?"))
+        st.button("✅ Usa questi valori per Y", key="em_sdrc_use", on_click=_sdrc_use_cb, args=(kind, res),
+                  disabled=res["y_db"] is None, type="primary")
+
 
 
 def stations_band(setup) -> str | None:

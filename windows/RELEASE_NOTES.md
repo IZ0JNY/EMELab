@@ -1,3 +1,17 @@
+## EMELab 0.1.10 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.10.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.10-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📈 Nuova misura: Y dal CSV di SDR Console** (modo Continuum). Le finestre di cielo freddo e di sorgente vengono proposte da sole e si possono regolare sul grafico.
+- **🔧 Corretto un blocco:** le spunte delle schede (per esempio 🔴 Live) e i pulsanti «Chiudi» degli avvisi a volte non rispondevano, perché con molte schede Streamlit scollegava la sessione senza dirlo. Inoltre il watchdog della barra laterale non apre più la telecamera.
+- **Schede predefinite:** Assistente, Live, Stazione, Luna, Log QSO e Pianificatore. Le altre si accendono da «Schede da mostrare e ordine» nell'Assistente. Sui PC già configurati le nuove schede predefinite si applicano una volta sola, poi resta la tua scelta.
+
+### 🇬🇧 What's new
+- **📈 New measurement: Y factor from the SDR Console CSV** (Continuum mode). The cold-sky and source windows are suggested automatically and can be adjusted on the plot.
+- **🔧 Fixed a lock-up:** tab checkboxes (e.g. 🔴 Live) and the alerts' «Close» buttons sometimes did not respond, because with many tabs Streamlit silently dropped the session. The sidebar watchdog also no longer opens the camera.
+- **Default tabs:** Assistant, Live, Station, Moon, QSO log and Planner. The others are switched on from «Tabs to show and order» in the Assistant. On PCs already set up the new defaults are applied once, then your choice is kept.
+
 ## EMELab 0.1.9 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.9.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.9-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`. L'installazione sostituisce tutti i file del programma, anche quelli modificati a mano; i tuoi dati e le impostazioni restano. / Installing replaces all program files, including hand-edited ones; your data and settings stay.
