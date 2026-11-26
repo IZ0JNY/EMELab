@@ -1,0 +1,50 @@
+diff --git a/lib/qra/q65/q65.f90 b/lib/qra/q65/q65.f90
+index d73ded6..ac72099 100644
+--- a/lib/qra/q65/q65.f90
++++ b/lib/qra/q65/q65.f90
+@@ -24,6 +24,10 @@ module q65
+   real, allocatable,save :: ccf2_avg(:)  !Like ccf2, but for avg (red curve)
+   real sync(85)                          !sync vector
+   real df,dtstep,dtdec,f0dec,ftol,plog,drift
++! Q65 Lab (EMELab) experimental knobs. The defaults keep the WSJT-X behaviour.
++  integer :: q65x_fade=1       !Fading model of the metric: 0 Gaussian, 1 Lorentzian (WSJT-X)
++  integer :: q65x_smo=100      !Spectral smoothing, percent of the WSJT-X amount
++  integer :: q65x_ntc=4        !Averaging time constant in sequences (4 in WSJT-X; large = linear average)
+ 
+ contains
+ 
+@@ -94,6 +98,7 @@ subroutine q65_dec0(iavg,iwave,ntrperiod,nfqso,ntol,lclearave,  &
+   ia2=max(ia,10*mode_q65,nint(100.0/df))
+ !  nsmo=int(0.7*mode_q65*mode_q65)
+   nsmo=int(0.5*mode_q65*mode_q65)
++  nsmo=nint(nsmo*q65x_smo/100.0)             !Q65 Lab
+   if(nsmo.lt.1) nsmo=1
+   if(first) then                         !Generate the sync vector
+      sync=-22.0/63.0                     !Sync tone OFF  
+@@ -298,7 +303,7 @@ subroutine q65_symspec(iwave,nmax,iz,jz,s1)
+   enddo
+   if(lnewdat) then
+      navg(iseq)=navg(iseq) + 1
+-     ntc=min(navg(iseq),4)               !Averaging time constant in sequences
++     ntc=min(navg(iseq),q65x_ntc)                !Q65 Lab               !Averaging time constant in sequences
+      u=1.0/ntc
+      s1a(:,:,iseq)=u*s1 + (1.0-u)*s1a(:,:,iseq)
+    endif
+@@ -592,7 +597,7 @@ subroutine q65_dec1(s3,nsubmode,b90ts,esnodb,irc,dat4,decoded)
+   character c77*77,decoded*37
+   logical unpk77_success
+ 
+-  nFadingModel=1
++  nFadingModel=q65x_fade                    !Q65 Lab
+   decoded='                                     '
+   call q65_intrinsics_ff(s3,nsubmode,b90ts,nFadingModel,s3prob)
+   call q65_dec_fullaplist(s3,s3prob,codewords,ncw,esnodb,dat4,plog,irc)
+@@ -620,7 +625,7 @@ subroutine q65_dec2(s3,nsubmode,b90ts,esnodb,irc,dat4,decoded)
+   character c77*77,decoded*37
+   logical unpk77_success
+ 
+-  nFadingModel=1
++  nFadingModel=q65x_fade                    !Q65 Lab
+   decoded='                                     '
+   call q65_intrinsics_ff(s3,nsubmode,b90ts,nFadingModel,s3prob)
+   call q65_dec(s3,s3prob,APmask,APsymbols,maxiters,esnodb,dat4,irc)

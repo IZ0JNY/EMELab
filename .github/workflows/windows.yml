@@ -29,9 +29,40 @@ jobs:
       - name: Tests
         run: python -m pytest -q -ra
 
+  decoder:
+    name: Q65 Lab decoder (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            git patch
+            mingw-w64-x86_64-gcc-fortran
+            mingw-w64-x86_64-fftw
+      - name: WSJT-X v3.0.2 sources (GPLv3)
+        run: git clone --depth 1 --branch v3.0.2 https://github.com/WSJTX/wsjtx.git wsjtx-src
+      - name: Build q65lab.exe
+        run: ./decoder/q65lab/build.sh wsjtx-src build/q65lab
+      - name: Self-test on a synthetic period
+        run: |
+          printf 'DECODE missing.wav 0000 60 E 700 200 3 - - - 0 1 1\nQUIT\n' | ./build/q65lab/q65lab.exe | tee out.txt
+          grep -q "E ERR cannot read wav" out.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q65lab
+          path: build/q65lab/q65lab.exe
+          retention-days: 30
+
   build:
     name: Build installer
-    needs: test
+    needs: [test, decoder]
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -47,6 +78,10 @@ jobs:
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
             choco install innosetup -y --no-progress
           }
+      - uses: actions/download-artifact@v4
+        with:
+          name: q65lab
+          path: build/q65lab
       - name: Version
         id: ver
         shell: pwsh

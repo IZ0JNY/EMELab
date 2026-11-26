@@ -9,3 +9,4 @@ pypdf>=4.0
 timezonefinder>=6.0
 tzdata
 zwoasi>=0.2
+sounddevice>=0.4.6
