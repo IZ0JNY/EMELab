@@ -1153,6 +1153,7 @@ ENTRIES = [
     ('i libri su cui si basano i calcoli', 'the books the calculations are based on'),
     ("Wiley — guadagno, efficienza d'apertura, diagrammi, polarizzazione, riflettori", 'Wiley — gain, aperture efficiency, patterns, polarisation, reflectors'),
     ("ricezione di segnali deboli: rumore, temperatura d'antenna, G/T, EME", 'weak-signal reception: noise, antenna temperature, G/T, EME'),
+    ('presentazione alla conferenza EME 2022, aggiornamento n. 3 (7 dicembre 2022): sottomodi Q65 e soglie in funzione dello spread, decodifica AP, media, spettro di riferimento, modo Echo, metodi Doppler e CFOM — https://archive.org/details/eme2022_using-wsjt-x-for-microwave-eme', 'EME 2022 conference presentation, update #3 (7 December 2022): Q65 submodes and thresholds vs spread, AP decoding, averaging, reference spectrum, Echo mode, Doppler methods and CFOM — https://archive.org/details/eme2022_using-wsjt-x-for-microwave-eme'),
     ('⚡ Amplificatore di potenza per banda', '⚡ Power amplifier per band'),
     ('Per ogni banda scegli se usi un SSPA (stato solido) o un TWT e quale dispositivo: i suoi dati dal catalogo riempiono il calcolo qui sotto. La scelta resta salvata su questo PC.', 'For each band choose whether you use an SSPA (solid state) or a TWT and which device: its catalogue data fill the calculation below. The choice stays saved on this PC.'),
     ('Tipo di amplificatore', 'Amplifier type'),
