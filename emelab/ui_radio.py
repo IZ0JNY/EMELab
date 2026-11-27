@@ -39,12 +39,12 @@ def _wsjtx_status():
 
 # ------------------------------------------------------------------ the display
 def fmt_freq(hz: int | None) -> tuple[str, str]:
-    """«10368.100» and «.00» as on the Icom readout (MHz.kHz, then the 10 Hz digits smaller)."""
+    """«10368.100» and «.000» as on the Icom readout (MHz.kHz, then the Hz digits smaller)."""
     if not hz:
-        return "----.---", ".--"
+        return "----.---", ".---"
     mhz, rest = divmod(int(hz), 1_000_000)
     khz, hz_ = divmod(rest, 1000)
-    return f"{mhz}.{khz:03d}", f".{hz_ // 10:02d}"
+    return f"{mhz}.{khz:03d}", f".{hz_:03d}"
 
 
 def _band(hz):
@@ -110,7 +110,7 @@ def render_display(state: dict, now: datetime | None = None) -> str:
 
     icons = "".join([
         _icon("P.AMP", state.get("preamp")), _icon("ATT", state.get("att") not in (None, "OFF")),
-        _icon("AGC-" + (state.get("agc") or "?")[0], state.get("agc") is not None),
+        _icon("AGC-" + state["agc"][0] if state.get("agc") else "AGC", state.get("agc") is not None),
         _icon("NB", state.get("nb")), _icon("NR", state.get("nr")), _icon("AN", state.get("anf")),
         _icon("MN", state.get("mnf")), _icon("COMP", state.get("comp")), _icon("VOX", state.get("vox")),
         _icon("BK-IN", state.get("bkin") not in (None, "OFF")), _icon("MONI", state.get("monitor")),
@@ -197,13 +197,13 @@ def render_display(state: dict, now: datetime | None = None) -> str:
 # ------------------------------------------------------------------ settings table
 def _trv(v):
     if not v.get("if_hz"):
-        return "—"
+        return "n.d."
     return (f"{v['trv']}" + (f" ({v['trv_model']})" if v.get("trv_model") else "") + " · IF "
             + "{:,.0f} Hz".format(v["if_hz"]).replace(",", "."))
 
 
 def _yn(v):
-    return "—" if v is None else ("ON" if v is True else ("OFF" if v is False else str(v)))
+    return "n.d." if v is None else ("ON" if v is True else ("OFF" if v is False else str(v)))
 
 
 def settings_rows(state: dict) -> list[tuple[str, str, str]]:
@@ -211,38 +211,38 @@ def settings_rows(state: dict) -> list[tuple[str, str, str]]:
     sel, uns = state.get("sel") or {}, state.get("unsel") or {}
 
     def fq(v):
-        return "—" if not v.get("freq_hz") else "{:,.0f} Hz".format(v["freq_hz"]).replace(",", ".")
-    rows = [("MAIN/SUB", "Ricevitore selezionato", state.get("main_sub") or "—"),
+        return "n.d." if not v.get("freq_hz") else "{:,.0f} Hz".format(v["freq_hz"]).replace(",", ".")
+    rows = [("MAIN/SUB", "Ricevitore selezionato", state.get("main_sub") or "n.d."),
             ("MAIN/SUB", "Frequenza selezionata", fq(sel)),
-            ("MAIN/SUB", "Modo selezionato", icom.mode_label(sel.get("mode"), sel.get("data"))
+            ("MAIN/SUB", "Modo selezionato", (icom.mode_label(sel.get("mode"), sel.get("data")) if sel.get("mode") else "n.d.")
              + (f" · {sel['filter']}" if sel.get("filter") else "")),
             ("MAIN/SUB", "Frequenza non selezionata", fq(uns)),
-            ("MAIN/SUB", "Modo non selezionato", icom.mode_label(uns.get("mode"), uns.get("data"))
+            ("MAIN/SUB", "Modo non selezionato", (icom.mode_label(uns.get("mode"), uns.get("data")) if uns.get("mode") else "n.d.")
              + (f" · {uns['filter']}" if uns.get("filter") else "")),
             ("MAIN/SUB", "Transverter sul selezionato", _trv(sel)),
             ("MAIN/SUB", "Transverter sul non selezionato", _trv(uns)),
             ("MAIN/SUB", "Dualwatch", _yn(state.get("dualwatch"))),
             ("MAIN/SUB", "Modo satellite", _yn(state.get("satmode"))),
-            ("MAIN/SUB", "Split / Duplex", state.get("split") or "—"),
+            ("MAIN/SUB", "Split / Duplex", state.get("split") or "n.d."),
             ("RX", "Preamplificatore (P.AMP)", _yn(state.get("preamp"))),
-            ("RX", "Attenuatore", state.get("att") or "—"),
-            ("RX", "AGC", state.get("agc") or "—"),
+            ("RX", "Attenuatore", state.get("att") or "n.d."),
+            ("RX", "AGC", state.get("agc") or "n.d."),
             ("RX", "Noise blanker", _yn(state.get("nb")) + (f" · {state['nb_level']}%" if state.get("nb_level") is not None else "")),
             ("RX", "Noise reduction", _yn(state.get("nr")) + (f" · {state['nr_level']}" if state.get("nr_level") is not None else "")),
             ("RX", "Notch automatico / manuale", f"{_yn(state.get('anf'))} / {_yn(state.get('mnf'))}"),
             ("RX", "RIT", _yn(state.get("rit_on")) + (f" · {state['rit_hz']:+d} Hz" if state.get("rit_hz") is not None else "")),
-            ("RX", "AF / RF gain / Squelch", " / ".join("—" if state.get(k) is None else f"{state[k]}%"
+            ("RX", "AF / RF gain / Squelch", " / ".join("n.d." if state.get(k) is None else f"{state[k]}%"
                                                     for k in ("af_pct", "rf_pct", "sql_pct"))),
-            ("RX", "S-meter", state.get("s_meter") or "—"),
+            ("RX", "S-meter", state.get("s_meter") or "n.d."),
             ("TX", "Stato", "TX" if state.get("tx") else "RX"),
-            ("TX", "Potenza RF", "—" if state.get("power_pct") is None else f"{state['power_pct']}%"),
-            ("TX", "Mic gain", "—" if state.get("mic_pct") is None else f"{state['mic_pct']}%"),
+            ("TX", "Potenza RF", "n.d." if state.get("power_pct") is None else f"{state['power_pct']}%"),
+            ("TX", "Mic gain", "n.d." if state.get("mic_pct") is None else f"{state['mic_pct']}%"),
             ("TX", "Compressore", _yn(state.get("comp")) + (f" · {state['comp_level']}" if state.get("comp_level") is not None else "")),
             ("TX", "VOX", _yn(state.get("vox")) + (f" · {state['vox_pct']}%" if state.get("vox_pct") is not None else "")),
-            ("TX", "Break-in / velocità CW", f"{state.get('bkin') or '—'} / "
-             + ("—" if state.get("key_wpm") is None else f"{state['key_wpm']} WPM")),
-            ("TX", "Po / SWR / ALC", f"{state.get('po_pct', '—')}% / {state.get('swr', '—')} / {state.get('alc_pct', '—')}%"),
-            ("Alimentazione", "Vd / Id", f"{state.get('vd_v', '—')} V / {state.get('id_a', '—')} A"),
+            ("TX", "Break-in / velocità CW", f"{state.get('bkin') or 'n.d.'} / "
+             + ("n.d." if state.get("key_wpm") is None else f"{state['key_wpm']} WPM")),
+            ("TX", "Po / SWR / ALC", f"{state.get('po_pct', 'n.d.')}% / {state.get('swr', 'n.d.')} / {state.get('alc_pct', 'n.d.')}%"),
+            ("Alimentazione", "Vd / Id", f"{state.get('vd_v', 'n.d.')} V / {state.get('id_a', 'n.d.')} A"),
             ("Varie", "Blocco manopola (LOCK)", _yn(state.get("lock"))),
             ("Varie", "Monitor", _yn(state.get("monitor")))]
     return rows
@@ -463,6 +463,8 @@ def tab(D=None):
                            + i18n.tr("Mostro quello che dice WSJT-X."))
             elif not state.get("sel"):
                 st.info("Nessun dato: WSJT-X non trasmette lo stato e il CAT non è configurato.")
+            st.caption(i18n.tr("In alto le funzioni della radio: riquadro chiaro = ON, grigio scuro = OFF o non letto. "
+                               "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore."))
             st.caption(i18n.tr("In arancione i valori presunti (modo da WSJT-X, scala di Id).")
                        + " " + i18n.tr("Con il firmware SQ6EMM la radio mostra e passa via CI-V la frequenza RF del transverter."))
         with right:

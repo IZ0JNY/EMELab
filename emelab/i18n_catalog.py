@@ -2668,4 +2668,5 @@ ENTRIES = [
     ('SMA (RX/TX separati)', 'SMA (separate RX/TX)'),
     ('guida WR-19 (UG383/U)', 'WR-19 waveguide (UG383/U)'),
     ('✅ dati dalla pagina del costruttore; in arancione i modelli con i soli valori presunti (banda e IF usuali).', "✅ data from the maker's page; in orange the models with assumed values only (usual band and IF)."),
+    ('In alto le funzioni della radio: riquadro chiaro = ON, grigio scuro = OFF o non letto. Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore.', "At the top the radio's functions: light box = ON, dark grey = OFF or not read. In the table «n.d.» = not available: the radio (or rigctld) does not give that value."),
 ]

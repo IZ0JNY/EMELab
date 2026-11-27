@@ -283,6 +283,7 @@ class Rigctld:
     def cmd(self, line: str) -> list[str] | None:
         """Lines of the answer to «+\\line» (without the RPRT line); None if Hamlib returned an error."""
         self.sock.sendall(("+\\" + line + "\n").encode())
+        name = line.split()[0]
         out = []
         while True:
             while b"\n" not in self._buf:
@@ -294,15 +295,17 @@ class Rigctld:
             t = ln.decode(errors="replace").strip()
             if t.startswith("RPRT"):
                 return out if t.split()[-1] == "0" else None
-            if ":" in t and t.split(":", 1)[1].strip():      # «get_freq:» (the command echoed) has no value
-                out.append(t.split(":", 1)[1].strip())
+            if not t or t.startswith(name + ":"):            # the command echoed: «get_level: RFPOWER»
+                continue
+            # values come as «Frequency: 144100000» or bare («0.500000» after get_level, «0» after get_func)
+            out.append(t.split(":", 1)[1].strip() if ":" in t else t)
 
     def _num(self, line: str):
         r = self.cmd(line)
         try:
             return float(r[-1]) if r else None
         except ValueError:
-            return r[-1] if r else None
+            return None                      # not a number: unknown, never «ON»
 
     def read_state(self) -> dict:
         st: dict = {"source": "rigctld"}
@@ -359,7 +362,7 @@ class Rigctld:
             st["rit_hz"] = int(rit)
         vfo = self.cmd("get_vfo")
         if vfo:
-            st["main_sub"] = "SUB" if "Sub" in vfo[0] else "MAIN"
+            st["main_sub"] = "SUB" if "sub" in vfo[0].lower() or vfo[0] == "VFOB" else "MAIN"
         return st
 
     def send_line(self, line: str) -> bool:
