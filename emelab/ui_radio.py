@@ -6,6 +6,7 @@ send something to the radio only when «Comandi verso la radio» is switched on 
 from __future__ import annotations
 
 import html
+import re
 import time
 from datetime import datetime, timezone
 
@@ -56,20 +57,6 @@ def _band(hz):
     return f"{hz / 1e6:.0f}MHz" if hz < 1e9 else f"{hz / 1e9:.1f}GHz"
 
 
-def _icon(label, on, warn=False):
-    cls = "on warn" if (on and warn) else ("on" if on else "off")
-    return f'<span class="ic {cls}">{html.escape(label)}</span>'
-
-
-def _bar(frac, n=30, hot_from=None, color="#f5f5f5"):
-    k = max(0, min(n, round((frac or 0) * n)))
-    cells = []
-    for i in range(n):
-        c = (("#ff4d4d" if hot_from is not None and i >= hot_from else color) if i < k else "#2b3440")
-        cells.append(f'<i style="background:{c}"></i>')
-    return '<span class="bar">' + "".join(cells) + "</span>"
-
-
 def _s_frac(state):
     raw = state.get("s_raw")
     if raw is not None:
@@ -82,116 +69,137 @@ def _s_frac(state):
     return 0
 
 
-def render_display(state: dict, now: datetime | None = None) -> str:
-    """HTML of the IC-9700 display (480×272 proportions, drawn at 2× on screen)."""
-    now = now or datetime.now(timezone.utc)
-    sel, uns = state.get("sel") or {}, state.get("unsel") or {}
-    tx = bool(state.get("tx"))
-    ms = state.get("main_sub") or "MAIN"
-    main, sub = (sel, uns) if ms == "MAIN" else (uns, sel)
-    wsjtx_only = state.get("source") == "wsjtx"
+def _icons(state) -> list[str]:
+    """The function icons the radio shows on its top line: only the ones that are on (unknown = not shown)."""
+    on = [("P.AMP", state.get("preamp") is True), ("ATT", state.get("att") not in (None, "OFF")),
+          ("NB", state.get("nb") is True), ("NR", state.get("nr") is True), ("AN", state.get("anf") is True),
+          ("NOTCH", state.get("mnf") is True), ("COMP", state.get("comp") is True), ("VOX", state.get("vox") is True),
+          ("BK-IN", state.get("bkin") not in (None, "OFF")), ("MONI", state.get("monitor") is True),
+          ("DUAL", state.get("dualwatch") is True), ("SAT", state.get("satmode") is True),
+          ("SPLIT", state.get("split") == "SPLIT"),
+          (f"RIT {state.get('rit_hz', 0):+d}", state.get("rit_on") is True), ("LOCK", state.get("lock") is True)]
+    return [k for k, v in on if v]
 
-    def readout(v, big, name, active):
-        f1, f2 = fmt_freq(v.get("freq_hz"))
-        mode = icom.mode_label(v.get("mode"), v.get("data"))
-        mode_style = f' style="color:{ASSUMED}"' if wsjtx_only else ""
-        dig = (f'<span class="dig" style="color:{ASSUMED}">{html.escape(v["digital"])}</span>'
-               if v.get("digital") else "")
-        txb = '<span class="txb">TX</span>' if (tx and active) else ""
-        ifx = ""
-        if v.get("if_hz"):
-            i1, i2 = fmt_freq(v["if_hz"])
-            ifx = f'<span class="ifq">IF {i1}{i2}</span>'
-        return (f'<div class="ro {"big" if big else "small"} {"act" if active else ""}">'
-                f'<div class="left"><span class="vfo">{name}</span><span class="mode"{mode_style}>{html.escape(mode)}</span>'
-                f'<span class="fil">{html.escape(v.get("filter") or "")}</span>{dig}</div>'
-                f'<div class="freq">{f1}<small>{f2}</small></div>'
-                f'<div class="right">{txb}<span class="band">{_band(v.get("freq_hz"))}</span>{ifx}</div></div>')
 
-    icons = "".join([
-        _icon("P.AMP", state.get("preamp")), _icon("ATT", state.get("att") not in (None, "OFF")),
-        _icon("AGC-" + state["agc"][0] if state.get("agc") else "AGC", state.get("agc") is not None),
-        _icon("NB", state.get("nb")), _icon("NR", state.get("nr")), _icon("AN", state.get("anf")),
-        _icon("MN", state.get("mnf")), _icon("COMP", state.get("comp")), _icon("VOX", state.get("vox")),
-        _icon("BK-IN", state.get("bkin") not in (None, "OFF")), _icon("MONI", state.get("monitor")),
-        _icon("DUAL", state.get("dualwatch")), _icon("SAT", state.get("satmode")),
-        _icon("SPLIT", state.get("split") == "SPLIT"),
-        _icon("RIT " + (f"{state.get('rit_hz', 0):+d}" if state.get("rit_on") else ""), state.get("rit_on")),
-        _icon("🔒", state.get("lock"), warn=True)])
-    if tx:
-        po = (state.get("po_pct") or 0) / 100
-        meter = (f'<div class="mrow"><b>Po</b>{_bar(po / 1.2, hot_from=25)}'
-                 f'<span class="sc">0 · 25 · 50 · 100%</span><em>{state.get("po_pct", "—")}%</em></div>')
-    else:
-        meter = (f'<div class="mrow"><b>S</b>{_bar(_s_frac(state), hot_from=15)}'
-                 f'<span class="sc">1 · 3 · 5 · 7 · 9 · +20 · +40 · +60</span><em>{state.get("s_meter", "—")}</em></div>')
-
-    def mf(name, val, frac, unit="", assumed=False):
-        col = f' style="color:{ASSUMED}"' if assumed else ""
-        v = "—" if val is None else f"{val}{unit}"
-        return f'<div class="mf"><b>{name}</b>{_bar(frac, 14, color="#7fd3ff")}<em{col}>{v}</em></div>'
-
-    multi = "".join([
-        mf("Po", state.get("po_pct"), (state.get("po_pct") or 0) / 120, "%"),
-        mf("SWR", state.get("swr"), ((state.get("swr") or 1) - 1) / 5),
-        mf("ALC", state.get("alc_pct"), (state.get("alc_pct") or 0) / 100, "%"),
-        mf("COMP", state.get("comp_raw"), (state.get("comp_raw") or 0) / 241),
-        mf("Vd", state.get("vd_v"), (state.get("vd_v") or 0) / 16, "V"),
-        mf("Id", state.get("id_a"), (state.get("id_a") or 0) / 20, "A", assumed=True)])
-    levels = " ".join(f'<span><b>{k}</b> {"—" if state.get(v) is None else state.get(v)}</span>'
-                      for k, v in (("AF", "af_pct"), ("RF", "rf_pct"), ("SQL", "sql_pct"), ("RF PWR", "power_pct"),
-                                   ("MIC", "mic_pct"), ("NR", "nr_level")))
-    src = {"serial": "CI-V USB", "rigctld": "rigctld", "wsjtx": "WSJT-X"}.get(state.get("source"), "—")
-    css = """
+_CSS = """
 <style>
 .ic97box{container-type:inline-size;width:100%}
-.ic97{width:auto;background:#0a0d12;border:1.46cqw solid #1d1f22;border-radius:1.04cqw;
- box-shadow:0 0.42cqw 1.46cqw rgba(0,0,0,.35);font-family:"Arial Narrow","Roboto Condensed",Arial,sans-serif;
- color:#f2f2f2;position:relative;overflow:hidden;box-sizing:content-box}
-.ic97 .top{display:flex;gap:0.42cqw;align-items:center;height:3.12cqw;padding:0.31cqw 0.83cqw;background:#151a22;border-bottom:1px solid #2a3340}
-.ic97 .ic{font-size:1.35cqw;padding:1px 0.52cqw;border-radius:0.31cqw;letter-spacing:.3px}
-.ic97 .ic.off{color:#3d4654;border:1px solid #232a34}
-.ic97 .ic.on{color:#0a0d12;background:#d8e4ee;border:1px solid #d8e4ee;font-weight:700}
-.ic97 .ic.warn{background:#ffb000;border-color:#ffb000}
-.ic97 .clk{margin-left:auto;font-size:1.88cqw;color:#d8e4ee}
-.ic97 .ro{display:flex;align-items:center;padding:0 1.25cqw;border-bottom:1px solid #1c232d}
-.ic97 .ro.big{height:15.62cqw}.ic97 .ro.small{height:9.58cqw}
-.ic97 .ro.act .vfo{background:#1f6fd1;color:#fff}
-.ic97 .left{width:15.62cqw;display:flex;flex-direction:column;gap:0.42cqw}
-.ic97 .vfo{font-size:1.46cqw;color:#9fb3c8;border:1px solid #33465c;border-radius:0.31cqw;padding:0 0.62cqw;width:max-content}
-.ic97 .mode{font-size:2.71cqw;font-weight:700;color:#ffffff}
-.ic97 .small .mode{font-size:2.08cqw}
-.ic97 .fil,.ic97 .dig{font-size:1.46cqw;color:#9fb3c8}
-.ic97 .freq{flex:1;text-align:right;font-weight:700;letter-spacing:1px;font-variant-numeric:tabular-nums;line-height:1}
-.ic97 .big .freq{font-size:10.21cqw}.ic97 .small .freq{font-size:6.04cqw;color:#cfd8e2}
-.ic97 .freq small{font-size:.55em;margin-left:2px}
-.ic97 .right{width:13cqw;display:flex;flex-direction:column;align-items:flex-end;gap:0.62cqw}
-.ic97 .band{font-size:1.67cqw;color:#7fd3ff}
-.ic97 .ifq{font-size:1.35cqw;color:#9fb3c8;white-space:nowrap}
-.ic97 .txb{background:#e02424;color:#fff;font-weight:700;font-size:2.08cqw;padding:0 1.04cqw;border-radius:0.31cqw}
-.ic97 .meter{padding:0.83cqw 1.25cqw 2px 1.25cqw}
-.ic97 .mrow{display:flex;align-items:center;gap:0.83cqw;font-size:1.56cqw}
-.ic97 .mrow b{width:2.71cqw;color:#9fb3c8}
-.ic97 .bar{display:inline-flex;gap:2px}.ic97 .bar i{display:inline-block;width:1.25cqw;height:1.46cqw}
-.ic97 .mrow .bar i{width:1.46cqw;height:1.88cqw}
-.ic97 .sc{color:#6d7f93;font-size:1.35cqw;margin-left:0.62cqw}
-.ic97 .mrow em,.ic97 .mf em{font-style:normal;margin-left:auto;color:#fff;min-width:7.29cqw;text-align:right}
-.ic97 .multi{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.42cqw 1.88cqw;padding:0.62cqw 1.25cqw 1.04cqw;font-size:1.46cqw}
-.ic97 .mf{display:flex;align-items:center;gap:0.62cqw}.ic97 .mf b{width:4.17cqw;color:#9fb3c8}
-.ic97 .mf .bar i{width:0.94cqw;height:1.15cqw}
-.ic97 .lv{height:3.12cqw;display:flex;gap:1.88cqw;align-items:center;
- padding:0 1.25cqw;background:#151a22;border-top:1px solid #2a3340;font-size:1.46cqw;color:#cfd8e2}
-.ic97 .lv b{color:#9fb3c8;font-weight:400}
-.ic97 .lv .src{margin-left:auto;color:#6d7f93}
-.ic97-name{text-align:center;font:600 1.25cqw Arial,sans-serif;letter-spacing:0.31cqw;color:#888;margin-top:0.42cqw}
+.ic97{background:#000;border:14px solid #1b1c1e;border-radius:10px;color:#fff;overflow:hidden;
+ font-family:"Arial Narrow","Roboto Condensed","Liberation Sans Narrow",Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.ic97 .top{display:flex;align-items:center;gap:8px;height:34px;padding:4px 10px 0}
+.ic97 .tx{background:#d01818;color:#fff;font-weight:700;font-size:20px;padding:0 8px;border:2px solid #ff6b6b}
+.ic97 .tx.off{visibility:hidden}
+.ic97 .fn{font-size:15px;color:#fff;border:1px solid #9aa4b0;padding:0 5px;border-radius:2px}
+.ic97 .clk{margin-left:auto;font-size:24px}
+.ic97 .pbt{font-size:15px;color:#000;background:#c9ced4;padding:0 6px;border-radius:2px}
+.ic97 .vfo{display:grid;grid-template-columns:260px 1fr 130px;align-items:end;padding:2px 10px 6px}
+.ic97 .boxes{display:flex;gap:8px}
+.ic97 .mode{background:linear-gradient(#3d7fd6,#1d55a8);border:1px solid #8bb8f0;font-size:26px;padding:4px 0;width:130px;
+ text-align:center;border-radius:2px}
+.ic97 .fil{background:#22262b;border:1px solid #9aa4b0;font-size:26px;padding:4px 0;width:110px;text-align:center;border-radius:2px}
+.ic97 .meter{margin-top:6px;font-size:12px;color:#c9ced4}
+.ic97 .meter .sc{display:flex;justify-content:space-between;width:250px;color:#e0e0e0}
+.ic97 .meter .sc b{color:#ff4d4d;font-weight:400}
+.ic97 .meter .bar{position:relative;height:6px;width:250px;background:#20242a;margin-top:2px}
+.ic97 .meter .bar i{position:absolute;left:0;top:0;bottom:0;background:#fff}
+.ic97 .meter .lab{font-size:12px;color:#c9ced4;margin-top:1px}
+.ic97 .fq{text-align:right;line-height:1}
+.ic97 .agc{font-size:16px;color:#e8e8e8;text-align:right;padding-right:6px}
+.ic97 .big{font-size:78px;font-weight:700;letter-spacing:1px;font-variant-numeric:tabular-nums}
+.ic97 .big small{font-size:50px}
+.ic97 .side{text-align:right;font-size:18px;line-height:1.25;padding-bottom:10px}
+.ic97 .side .ifq{font-size:13px;white-space:nowrap;color:#c9ced4}
+.ic97 .side .band{color:#7fd3ff}
+.ic97 .sh{display:flex;align-items:center;gap:8px;background:#1e2430;height:26px;padding:0 8px;font-size:15px}
+.ic97 .sh .main{background:#c3171b;padding:0 6px;font-weight:700}
+.ic97 .sh .ttl{margin:0 auto;letter-spacing:1px}
+.ic97 .sh .ctr{background:#2a64c8;padding:0 6px}
+.ic97 .sh .grid{color:#e0e0e0}
+.ic97 .edge{display:flex;justify-content:space-between;font-size:13px;color:#e0e0e0;padding:2px 8px 0}
+.ic97 .spec{display:block;width:100%;height:110px;background:#000}
+.ic97 .wf{display:block;width:100%;height:110px;image-rendering:pixelated;background:#000038}
+.ic97 .ax{display:flex;justify-content:space-around;font-size:13px;color:#e0e0e0;padding:2px 0}
+.ic97 .keys{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;padding:4px 6px 6px}
+.ic97 .keys span{background:linear-gradient(#3a3f46,#22262b);border:1px solid #6b737d;text-align:center;font-size:16px;
+ padding:3px 0;border-radius:2px;white-space:nowrap}
+.ic97 .keys b{font-weight:400;color:#c9ced4;margin-right:4px}
+.ic97 .noscope{display:flex;align-items:center;justify-content:center;height:240px;color:#8a929c;font-size:16px;
+ background:#04070d;text-align:center;padding:0 30px}
+.ic97-name{text-align:center;font:600 12px Arial,sans-serif;letter-spacing:3px;color:#888;margin-top:4px}
 </style>"""
-    return (css + '<div class="ic97box"><div class="ic97">'
-            f'<div class="top">{icons}<span class="clk">{now:%H:%M} UTC</span></div>'
-            + readout(main, ms == "MAIN", "MAIN", ms == "MAIN")
-            + readout(sub, ms == "SUB", "SUB", ms == "SUB")
-            + f'<div class="meter">{meter}</div><div class="multi">{multi}</div>'
-            f'<div class="lv">{levels}<span class="src">{html.escape(src)}</span></div>'
-            '</div><div class="ic97-name">IC-9700 · EMELab</div></div>')
+
+
+def _css():
+    return re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)px", lambda m: m.group(0) if m.group(1) in ("1", "2")
+                  else f"{float(m.group(1)) / 9.6:.2f}cqw", _CSS)
+
+
+def render_display(state: dict, now: datetime | None = None, scope: dict | None = None) -> str:
+    """HTML of the IC-9700 screen as on the radio: MAIN only (TX, function icons, clock; mode and filter, AGC,
+    S/SWR meter, frequency to the Hz, VFO; spectrum scope and waterfall; soft keys with the levels)."""
+    from emelab import radio_scope
+    now = now or datetime.now(timezone.utc)
+    sel, uns = state.get("sel") or {}, state.get("unsel") or {}
+    v = sel if (state.get("main_sub") or "MAIN") == "MAIN" else uns
+    tx = bool(state.get("tx"))
+    wsjtx_only = state.get("source") == "wsjtx"
+    f1, f2 = fmt_freq(v.get("freq_hz"))
+    mode = icom.mode_label(v.get("mode"), v.get("data"))
+    mode_st = f' style="color:{ASSUMED}"' if wsjtx_only else ""
+    fil = v.get("filter") or ("FIL" if not v.get("width_hz") else f"{v['width_hz'] / 1000:g}k")
+    icons = "".join(f'<span class="fn">{html.escape(k)}</span>' for k in _icons(state))
+    if tx:
+        frac = (state.get("po_pct") or 0) / 120
+        scale_ = '<span>0</span><span>25</span><span>50</span><span>100</span><b>%</b>'
+        lab = "Po/SWR " + (f"{state['swr']:g}" if state.get("swr") is not None else "")
+    else:
+        frac = _s_frac(state)
+        scale_ = ('<span>1</span><span>3</span><span>5</span><span>7</span><span>9</span>'
+                  '<b>+20</b><b>+40</b><b>+60dB</b>')
+        lab = "S/SWR " + (state.get("s_meter") or "")
+    agc = ("AGC-" + state["agc"][0]) if state.get("agc") else ""
+    ifq = ""
+    if v.get("if_hz"):
+        i1, i2 = fmt_freq(v["if_hz"])
+        ifq = f'<div class="ifq">IF {i1}{i2}</div>'
+    head = (f'<div class="top"><span class="tx {"" if tx else "off"}">TX</span>{icons}'
+            f'<span class="clk">{now:%H:%M}</span><span class="pbt">UTC</span></div>'
+            f'<div class="vfo"><div><div class="boxes"><span class="mode"{mode_st}>{html.escape(mode)}</span>'
+            f'<span class="fil">{html.escape(fil)}</span></div>'
+            f'<div class="meter"><div class="sc">{scale_}</div><div class="bar"><i style="width:{max(0, min(1, frac)) * 100:.0f}%"></i></div>'
+            f'<div class="lab">{html.escape(lab)}</div></div></div>'
+            f'<div class="fq"><div class="agc">{agc}</div><div class="big">{f1}<small>{f2}</small></div></div>'
+            f'<div class="side">VFO A'
+            f'<div class="band">{_band(v.get("freq_hz"))}</div>{ifq}</div></div>')
+    sc = scope or {}
+    rows = sc.get("rows") or []
+    if rows:
+        lo, hi = radio_scope.scale(rows)
+        dial = v.get("freq_hz")
+        ax = "".join(f"<span>{(dial + k) / 1e6:.4f}</span>" if dial else f"<span>+{k}</span>"
+                     for k in (250, 750, 1250, 1750, 2250, 2750))
+        edge_l = fmt_freq(dial)[0] if dial else "0"
+        edge_r = fmt_freq(dial + 3000)[0] + fmt_freq(dial + 3000)[1] if dial else "+3 kHz"
+        scope_html = (f'<div class="sh"><span class="main">MAIN</span><span class="ttl">SPECTRUM SCOPE</span>'
+                      f'<span class="ctr">{html.escape(sc.get("label") or "AUDIO")}</span>'
+                      f'<span class="grid">Grid 500Hz/10dB</span></div>'
+                      f'<div class="edge"><span>{edge_l}{fmt_freq(dial)[1] if dial else ""}</span><span>{edge_r}</span></div>'
+                      f'<img class="spec" src="data:image/png;base64,{radio_scope.spectrum_png(sc.get("spec"), lo, hi)}"/>'
+                      f'<img class="wf" src="data:image/png;base64,{radio_scope.waterfall_png(rows, lo, hi)}"/>'
+                      f'<div class="ax">{ax}</div>')
+    else:
+        msg = sc.get("error") or i18n.tr("Spectrum scope spento: accendilo sopra il display.")
+        scope_html = (f'<div class="sh"><span class="main">MAIN</span><span class="ttl">SPECTRUM SCOPE</span>'
+                      f'<span class="ctr">AUDIO</span></div><div class="noscope">{html.escape(i18n.tr(msg))}</div>')
+
+    def key(k, val, unit="%"):
+        return f'<span><b>{k}</b>{"n.d." if val is None else str(val) + unit}</span>'
+    keys = ('<div class="keys">' + key("AF", state.get("af_pct")) + key("RF", state.get("rf_pct"))
+            + key("SQL", state.get("sql_pct")) + key("PWR", state.get("power_pct")) + key("MIC", state.get("mic_pct"))
+            + f'<span><b>CAT</b>{html.escape({"serial": "CI-V", "rigctld": "rigctld", "wsjtx": "WSJT-X"}.get(state.get("source"), "—"))}</span>'
+            + '</div>')
+    return (_css() + '<div class="ic97box"><div class="ic97">' + head + scope_html + keys
+            + '</div><div class="ic97-name">IC-9700 · EMELab</div></div>')
 
 
 # ------------------------------------------------------------------ settings table
@@ -443,28 +451,58 @@ def _send(sets, key, value):
     S.pop("rad_state", None)            # read again at once
 
 
+def _scope_frame():
+    dev = S.get("rad_scope_dev")
+    if not dev:
+        return {"error": "Spectrum scope spento o scheda audio non trovata."} if S.get("rad_scope") else None
+    from emelab import radio_scope
+    try:
+        return radio_scope.get(dev["index"], "Mono", dev.get("rate") or 48000).frame()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def tab(D=None):
     sets = openems_local.load_settings()
     st.subheader("📟 Radio · Icom IC-9700")
     _connection(sets)
     _transverters(sets)
-    live = st.toggle("Aggiornamento automatico", value=True, key="rad_live",
-                     help=f"legge la radio ogni {REFRESH_S} secondi")
+    c = st.columns([2, 2, 4])
+    live = c[0].toggle("Aggiornamento automatico", value=True, key="rad_live",
+                       help=f"legge la radio ogni {REFRESH_S} secondi")
+    scope_on = c[1].toggle("Spectrum scope e waterfall", value=bool(sets.get("radio_scope", True)), key="rad_scope",
+                           help="dall'audio di ricezione dell'IC-9700 (USB Audio CODEC), condiviso con WSJT-X")
+    if scope_on != bool(sets.get("radio_scope", True)):
+        openems_local.save_settings(radio_scope=scope_on)
+    if scope_on:
+        from emelab import q65lab
+        devs = q65lab.input_devices()
+        best = q65lab.pick_device(devs, q65lab.ini_audio().get("device"))
+        if best:
+            c[2].caption(i18n.tr("Audio dello scope") + f": {best['name']} · {best['api']}")
+        else:
+            c[2].caption("Scheda audio dell'IC-9700 non trovata (USB Audio CODEC).")
+        S["rad_scope_dev"] = best
+    else:
+        from emelab import radio_scope
+        radio_scope.stop()
+        S["rad_scope_dev"] = None
 
     @_frag(REFRESH_S if live else None)
     def _panel():
         state = _read(openems_local.load_settings())
         left, right = st.columns([5, 3])
         with left:
-            h = render_display(state)
+            h = render_display(state, scope=_scope_frame())
             st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
             if state.get("error"):
                 st.warning(i18n.tr("Lettura dalla radio non riuscita") + f": {i18n.tr(state['error'])}. "
                            + i18n.tr("Mostro quello che dice WSJT-X."))
             elif not state.get("sel"):
                 st.info("Nessun dato: WSJT-X non trasmette lo stato e il CAT non è configurato.")
-            st.caption(i18n.tr("In alto le funzioni della radio: riquadro chiaro = ON, grigio scuro = OFF o non letto. "
-                               "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore."))
+            st.caption(i18n.tr("In alto compaiono solo le funzioni accese (NB, NR, P.AMP…), come sulla radio. "
+                               "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore. "
+                               "Lo scope mostra la banda passante audio (0–3 kHz sopra la frequenza)."))
             st.caption(i18n.tr("In arancione i valori presunti (modo da WSJT-X, scala di Id).")
                        + " " + i18n.tr("Con il firmware SQ6EMM la radio mostra e passa via CI-V la frequenza RF del transverter."))
         with right:

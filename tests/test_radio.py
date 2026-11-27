@@ -138,8 +138,8 @@ def test_display_html():
           "sel": {"freq_hz": 10_368_100_000, "mode": "USB", "data": True, "filter": "FIL1"},
           "unsel": {"freq_hz": 24_048_160_000, "mode": "USB", "data": True}, "po_pct": 50, "swr": 1.2}
     h = ui_radio.render_display(st)
-    assert "10368.100<small>.000" in h and "24048.160<small>.000" in h
-    assert "USB-D" in h and ">TX<" in h and "10GHz" in h
+    assert "10368.100<small>.000" in h and "24048.160" not in h          # MAIN only, as Ivan asked
+    assert "USB-D" in h and 'class="tx ">TX<' in h and "10GHz" in h and "P.AMP" in h and ">NB<" not in h
     assert ui_radio.fmt_freq(None) == ("----.---", ".---")
     assert ui_radio.fmt_freq(24_048_101_102) == ("24048.101", ".102")
     rows = ui_radio.settings_rows(st)
@@ -209,3 +209,22 @@ def test_rigctld_bare_values_as_hamlib_sends_them():
     assert "comp" not in st and "dualwatch" not in st          # not answered: unknown, not ON
     rows = dict((n, v) for _, n, v in ui_radio.settings_rows(st))
     assert rows["Noise blanker"].startswith("OFF") and rows["Compressore"].startswith("n.d.")
+
+
+def test_scope_spectrum_and_waterfall():
+    import numpy as np
+    from emelab import radio_scope
+    fs = 12000
+    tt = np.arange(fs) / fs
+    x = 0.01 * np.random.default_rng(0).normal(size=fs) + 0.2 * np.sin(2 * np.pi * 1000 * tt)
+    s = radio_scope.spectrum(x)
+    f = np.linspace(0, radio_scope.F_MAX, radio_scope.POINTS)
+    assert abs(f[int(np.argmax(s))] - 1000) < 20
+    rows = radio_scope.demo_rows()
+    lo, hi = radio_scope.scale(rows)
+    assert hi - lo == 50
+    png = radio_scope.waterfall_png(rows, lo, hi)
+    assert png.startswith("iVBOR")
+    h = ui_radio.render_display({"source": "rigctld", "sel": {"freq_hz": 24_048_101_102, "mode": "USB"}},
+                                scope={"spec": rows[-1], "rows": rows, "label": "AUDIO"})
+    assert "SPECTRUM SCOPE" in h and h.count("data:image/png;base64,") == 2 and "24048.1014" in h
