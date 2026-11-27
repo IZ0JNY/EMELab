@@ -138,9 +138,10 @@ def test_display_html():
           "sel": {"freq_hz": 10_368_100_000, "mode": "USB", "data": True, "filter": "FIL1"},
           "unsel": {"freq_hz": 24_048_160_000, "mode": "USB", "data": True}, "po_pct": 50, "swr": 1.2}
     h = ui_radio.render_display(st)
-    assert "10368.100<small>.00" in h and "24048.160<small>.00" in h
-    assert "USB-D" in h and ">TX<" in h and "10GHz" in h
-    assert ui_radio.fmt_freq(None) == ("----.---", ".--")
+    assert "10368.100<small>.000" in h and "24048.160" not in h          # MAIN only, as Ivan asked
+    assert "USB-D" in h and 'class="tx ">TX<' in h and "10GHz" in h and "P.AMP" in h and ">NB<" not in h
+    assert ui_radio.fmt_freq(None) == ("----.---", ".---")
+    assert ui_radio.fmt_freq(24_048_101_102) == ("24048.101", ".102")
     rows = ui_radio.settings_rows(st)
     assert any(n == "Frequenza selezionata" and v == "10.368.100.000 Hz" for _, n, v in rows)
 
@@ -177,3 +178,71 @@ def test_transverter_catalog_kuhne():
         assert by[m]["verified"] and by[m]["rf_mhz"] == rf and by[m]["if_mhz"] == 144
     assert [t["model"] for t in icom.DEFAULT_TRANSVERTERS] == ["Kuhne MKU 10 G5", "Kuhne MKU 24 G3", "Kuhne MKU 47 G2"]
     assert all(t["model"] in [icom.catalog_label(c) for c in icom.TRANSVERTER_CATALOG] for t in icom.DEFAULT_TRANSVERTERS)
+
+
+def test_rigctld_bare_values_as_hamlib_sends_them():
+    """Hamlib's extended answers: the command echoed («get_func: NB»), then the value, often without a label.
+    A function that is off must read OFF, not ON (first test on the IC-9700, 2026-11-27)."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    answers = {"get_freq": "get_freq:\nFrequency: 144101102", "get_mode": "get_mode:\nMode: USB\nPassband: 3000",
+               "get_ptt": "get_ptt:\nPTT: 0", "get_level RFPOWER": "get_level: RFPOWER\n0.250000",
+               "get_level AF": "get_level: AF\n0.400000", "get_func NB": "get_func: NB\n0",
+               "get_func NR": "get_func: NR\n0", "get_func VOX": "get_func: VOX\n1", "get_vfo": "get_vfo:\nVFO: Main",
+               "get_func SATMODE": "get_func: SATMODE\n0"}
+
+    def serve():
+        c, _ = srv.accept()
+        f = c.makefile("rwb")
+        for line in f:
+            cmd = line.decode().strip()[2:]
+            a = answers.get(cmd)
+            f.write(((a + "\nRPRT 0\n") if a else f"{cmd.split()[0]}:\nRPRT -11\n").encode())
+            f.flush()
+    threading.Thread(target=serve, daemon=True).start()
+    st = icom.read({"radio_source": "rigctld", "radio_host": "127.0.0.1", "radio_rport": srv.getsockname()[1]})
+    assert st.get("source") == "rigctld", st
+    assert st["sel"]["freq_hz"] == 144_101_102 and st["main_sub"] == "MAIN"
+    assert st["power_pct"] == 25 and st["af_pct"] == 40
+    assert st["nb"] is False and st["nr"] is False and st["vox"] is True and st["satmode"] is False
+    assert "comp" not in st and "dualwatch" not in st          # not answered: unknown, not ON
+    rows = dict((n, v) for _, n, v in ui_radio.settings_rows(st))
+    assert rows["Noise blanker"].startswith("OFF") and rows["Compressore"].startswith("n.d.")
+
+
+def test_scope_spectrum_and_waterfall():
+    import numpy as np
+    from emelab import radio_scope
+    fs = 12000
+    tt = np.arange(fs) / fs
+    x = 0.01 * np.random.default_rng(0).normal(size=fs) + 0.2 * np.sin(2 * np.pi * 1000 * tt)
+    s = radio_scope.spectrum(x)
+    f = np.linspace(0, radio_scope.F_MAX, radio_scope.POINTS)
+    assert abs(f[int(np.argmax(s))] - 1000) < 20
+    rows = radio_scope.demo_rows()
+    lo, hi = radio_scope.scale(rows)
+    assert hi - lo == 50
+    png = radio_scope.waterfall_png(rows, lo, hi)
+    assert png.startswith("iVBOR")
+    h = ui_radio.render_display({"source": "rigctld", "sel": {"freq_hz": 24_048_101_102, "mode": "USB"}},
+                                scope={"spec": rows[-1], "rows": rows, "label": "AUDIO"})
+    assert "SPECTRUM SCOPE" in h and h.count("data:image/png;base64,") == 2 and "24048.1014" in h
+
+
+def test_panel_knobs_keys_and_nd():
+    st = {"source": "rigctld", "sel": {"freq_hz": 144_101_102, "mode": "USB", "if_hz": None}, "af_pct": 35,
+          "nb": False, "preamp": True, "tx": False}
+    h = ui_radio.render_panel(st)
+    assert '<span class="key on"><span class="led"></span>P.AMP' in h
+    assert '<span class="key "><span class="led"></span>NB' in h and '<span class="key nd"><span class="led"></span>COMP' in h
+    assert "width:35%" in h and "n.d." in h and '<span class="rx on">RX' in h
+
+
+def test_display_status_chips_and_tx_line():
+    st = {"source": "rigctld", "main_sub": "MAIN", "nb": False, "nr": True, "split": "SPLIT", "doppler_hz": -1234.0,
+          "sel": {"freq_hz": 24_048_101_102, "mode": "USB", "filter": "FIL2"}, "unsel": {"freq_hz": 24_048_100_500}}
+    h = ui_radio.render_display(st)
+    assert '<span class="ch ">NB OFF</span>' in h and '<span class="ch on">NR ON</span>' in h
+    assert '<span class="ch on">SPLIT ON</span>' in h and "FIL2" in h
+    assert "TX 24048.100.500 · Doppler -1.234 Hz" in h
