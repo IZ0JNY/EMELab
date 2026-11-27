@@ -1,3 +1,19 @@
+## EMELab 0.1.20 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.20.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.20-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📟 Nuova scheda Radio:** il display dell'IC-9700 ridisegnato (MAIN e SUB, icone di stato, S-meter e Po, Po/SWR/ALC/COMP/Vd/Id) e tutte le impostazioni lette dalla radio. Lettura con rigctld condiviso con WSJT-X (pulsante «▶️ Avvia rigctld»), CI-V diretto o solo WSJT-X. Comandi verso la radio spenti di default: partono solo con l'interruttore acceso e un pulsante premuto.
+- **🔁 Transverter:** offset IF → RF per MAIN e SUB (la radio resta a 144 MHz, EMELab mostra 10368, 24048, 47088); catalogo con Kuhne MKU 10 G5, MKU 24 G3 e MKU 47 G2.
+- **🔌 Nuova scheda nanoHam:** misure dei setup 10GHz, 24GHz e 47GHz dalle schede nanoHam in fibra ottica (tensioni, temperature, PTT), stato di ogni link, grafici e log CSV; sola lettura.
+- **🔊 LNA:** suggerimenti di nuovi chip e design e ricerca di mercato.
+
+### 🇬🇧 What's new
+- **📟 New Radio tab:** the IC-9700 display redrawn (MAIN and SUB, status icons, S-meter and Po, Po/SWR/ALC/COMP/Vd/Id) and every setting read from the radio. Reading through rigctld shared with WSJT-X («▶️ Start rigctld» button), direct CI-V or WSJT-X only. Commands to the radio are off by default: they are sent only with the switch on and a button pressed.
+- **🔁 Transverters:** IF → RF offset for MAIN and SUB (the radio stays on 144 MHz, EMELab shows 10368, 24048, 47088); catalogue with Kuhne MKU 10 G5, MKU 24 G3 and MKU 47 G2.
+- **🔌 New nanoHam tab:** measurements of the 10GHz, 24GHz and 47GHz setups from the nanoHam boards over optical fiber (voltages, temperatures, PTT), state of each link, graphs and CSV log; read-only.
+- **🔊 LNA:** suggestions of new chips and designs, and a market survey.
+
 ## EMELab 0.1.19 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.19.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.19-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
