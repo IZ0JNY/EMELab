@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""🔌 nanoHam tab: protocol, channels, alarms, link state per board, settings and the tab in both languages."""
+"""nanoHam tab: protocol, channels, alarms, link state per board, settings and the tab in both languages."""
 import csv
 import os
 import time

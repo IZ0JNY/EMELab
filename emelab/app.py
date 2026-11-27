@@ -119,7 +119,7 @@ with st.sidebar:
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("live", "🔴 Live", ui_live.tab), ("moon", "🌙 Luna", ui_moon.tab), ("horizon", "🏔️ Orizzonte", ui_horizon.tab), ("skydome", "🌌 Volta celeste", ui_skydome.tab), ("setups", "🛰️ Configurazioni", ui._setups),
-    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("radio", "📟 Radio", ui_radio.tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("nanoham", "🔌 nanoHam", ui_nanoham.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("radio", "📟 Radio", ui_radio.tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("nanoham", ":material/developer_board: nanoHam", ui_nanoham.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ RF Power", ui._power_tab),

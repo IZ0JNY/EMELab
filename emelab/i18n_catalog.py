@@ -2535,7 +2535,7 @@ ENTRIES = [
     ('A 134 GHz si lavora con moduli WR-6 (D-band) InP o con un mixer subarmonico al feed.', 'At 134 GHz you work with InP WR-6 (D-band) modules or with a subharmonic mixer at the feed.'),
     ("Il vapore acqueo pesa più dell'LNA: Tsys d'inverno e con aria secca (vedi Pianificatore).", 'Water vapour weighs more than the LNA: Tsys in winter and with dry air (see Planner).'),
     # 🔌 nanoHam tab
-    ('🔌 nanoHam', '🔌 nanoHam'),
+    (':material/developer_board: nanoHam', ':material/developer_board: nanoHam'),
     ('dati in arrivo dalla fibra', 'data arriving from the fiber'),
     ('porta aperta ma nessun dato da più di 1 s: controlla fibra, moduli TEL0153 e scheda', 'port open but no data for more than 1 s: check the fiber, the TEL0153 modules and the board'),
     ('porta COM non aperta', 'COM port not opened'),
