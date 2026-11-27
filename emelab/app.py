@@ -9,7 +9,7 @@ import os
 import streamlit as _st
 
 import emelab
-from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_moon, ui_nanoham, ui_q65lab, ui_radio, ui_wsjtx_panel
+from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_horizon, ui_moon, ui_nanoham, ui_q65lab, ui_radio, ui_skydome, ui_wsjtx_panel
 from emelab import settings as openems_local
 from emelab import stallwatch, wsqueue
 
@@ -118,7 +118,7 @@ with st.sidebar:
     st.caption("Tutti i dati restano su questo PC. Orari in UTC.")
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
-    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("live", "🔴 Live", ui_live.tab), ("moon", "🌙 Luna", ui_moon.tab), ("setups", "🛰️ Configurazioni", ui._setups),
+    ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("live", "🔴 Live", ui_live.tab), ("moon", "🌙 Luna", ui_moon.tab), ("horizon", "🏔️ Orizzonte", ui_horizon.tab), ("skydome", "🌌 Volta celeste", ui_skydome.tab), ("setups", "🛰️ Configurazioni", ui._setups),
     ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("radio", "📟 Radio", ui_radio.tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("nanoham", "🔌 nanoHam", ui_nanoham.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
@@ -155,6 +155,10 @@ if "tabs_on" not in S:
     if _saved is not None and "radio" not in _saved and not openems_local.load_settings().get("tabs_radio_offered"):
         _saved = list(_saved) + ["radio"]                             # 0.1.20: new Radio tab shown once (Ivan asked for it)
         openems_local.save_settings(tabs=_saved, tabs_radio_offered=True)
+    for _k in ("horizon", "skydome"):                                 # 0.1.23: new tabs shown once (Ivan asked for them)
+        if _saved is not None and _k not in _saved and not openems_local.load_settings().get(f"tabs_{_k}_offered"):
+            _saved = list(_saved) + [_k]
+            openems_local.save_settings(tabs=_saved, **{f"tabs_{_k}_offered": True})
     if _saved is None and os.environ.get("EMELAB_TABS") == "all":     # tests: every tab on a fresh PC
         _saved = [k for k, _, _ in TABS[2:]]
     S["tabs_on"] = [k for k, _, _ in TABS[2:] if (_saved is None and k in DEFAULT_ON) or (_saved and k in _saved)]
@@ -169,7 +173,8 @@ def _save_tabs():
         openems_local.save_settings(tabs=S["tabs_on"], tabs_order=S["tabs_order"], tabs_defaults_0110=True,
                                     tabs_gpsdo_offered=True, tabs_moon_offered=True,
                                     tabs_q65lab_offered=True, tabs_nanoham_offered=True,
-                                    tabs_radio_offered=True)  # a choice: no more offers
+                                    tabs_radio_offered=True, tabs_horizon_offered=True,
+                                    tabs_skydome_offered=True)  # a choice: no more offers
     except Exception:
         pass
 
