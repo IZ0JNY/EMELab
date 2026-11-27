@@ -6,6 +6,7 @@ terrain as the free horizon of the whole program (Planner, «Chi posso collegare
 from __future__ import annotations
 
 import html
+import time
 from datetime import datetime, timedelta, timezone
 
 import plotly.graph_objects as go
@@ -45,7 +46,21 @@ def _track(lat, lon, h, hours=24.0, step=5.0):
     return [(s.t, s.moon.az, s.moon.el_radio) for s in astro.track(t0, hours, step, lat, lon, h)]
 
 
-def _plot(hz, track, manual, title, dx_hz=None, height=380):
+_PEAKS_FAILED: dict = {}          # place → time of the last failed download (retry after 10 minutes, not at every rerun)
+
+
+def _peaks(hz):
+    key = (round(hz["lat"], 3), round(hz["lon"], 3), hz.get("max_km", 60.0))
+    if time.time() - _PEAKS_FAILED.get(key, 0) < 600:
+        return None
+    try:
+        return terrain.visible_peaks(hz, terrain.fetch_peaks(*key))
+    except Exception:                                           # no internet the first time: the profile without names
+        _PEAKS_FAILED[key] = time.time()
+        return None
+
+
+def _plot(hz, track, manual, title, dx_hz=None, height=380, peaks=None):
     fig = go.Figure()
     az, el = hz["az"] + [360.0], hz["el"] + [hz["el"][0]]
     fig.add_trace(go.Scatter(x=az, y=el, fill="tozeroy", mode="lines", line=dict(color=TERRAIN_COLOR, width=1),
@@ -82,10 +97,20 @@ def _plot(hz, track, manual, title, dx_hz=None, height=380):
         fig.add_trace(go.Scatter(x=[track[0][1]], y=[track[0][2]], mode="markers+text", text=["🌙"],
                                  textposition="top center", marker=dict(size=14, color="#f5f0d0", line=dict(color="#555", width=1)),
                                  name=i18n.tr("Luna adesso")))
-    ymax = max(20.0, max(hz["el"]) + 6, max((p[2] for p in track), default=0) + 2 if track else 0)
+    if peaks:
+        fig.add_trace(go.Scatter(x=[p["az"] for p in peaks], y=[p["el"] for p in peaks], mode="markers",
+                                 marker=dict(symbol="triangle-up", size=7, color="#4e342e"), name=i18n.tr("Cime (OpenStreetMap)"),
+                                 customdata=[[p["name"], p["ele"], p["dist_km"]] for p in peaks],
+                                 hovertemplate="%{customdata[0]} · %{customdata[1]:.0f} m · %{customdata[2]:.1f} km · "
+                                               "AZ %{x:.0f}° · EL %{y:.1f}°<extra></extra>"))
+        for p in peaks:
+            fig.add_annotation(x=p["az"], y=p["el"], text=html.escape(p["name"]), showarrow=False, textangle=-60,
+                               xanchor="left", yanchor="bottom", xshift=-2, yshift=4, font=dict(size=9, color="#4e342e"))
+    ymax = max(20.0, max(hz["el"]) + (12 if peaks else 6), max((p[2] for p in track), default=0) + 2 if track else 0)
     fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10),
-                      xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 45)),
-                                 ticktext=_compass(), title="Azimut"),
+                      xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 15)),
+                                 ticktext=[f"{a}°" for a in range(0, 361, 15)], title="Azimut (°)",
+                                 showgrid=True, gridcolor="rgba(0,0,0,0.12)", tickfont=dict(size=10)),
                       yaxis=dict(range=[min(0.0, min(hz["el"]) - 1), min(ymax, 90)], title="Elevazione (°)"),
                       legend=dict(orientation="h", y=-0.25))
     return i18n.translate_plotly(fig)
@@ -119,10 +144,10 @@ def tab(D):
     lat, lon, h = float(stn["lat"]), float(stn["lon"]), float(stn.get("height_m") or 0.0)
     cfg = openems_local.load_settings()
     st.markdown("### 🏔️ Orizzonte dal terreno")
-    st.caption("Lo skyline delle montagne e delle colline intorno a te, calcolato dal modello del terreno (SRTM, ≈30 m) "
-               "con la curvatura terrestre e la rifrazione radio standard (k = 4/3). Case, alberi e il tuo tetto non ci "
-               "sono: quelli restano da aggiungere a mano nell'orizzonte libero. Le tessere del terreno si scaricano una "
-               "volta sola (circa 3 MB) e restano nella cartella di EMELab.")
+    st.caption("Lo skyline delle montagne e delle colline intorno a te, calcolato dal modello del terreno Copernicus "
+               "(≈30 m vicino, ≈90 m lontano) con la curvatura terrestre e la rifrazione radio standard (k = 4/3), con i "
+               "nomi delle cime di OpenStreetMap. Case, alberi e il tuo tetto non ci sono: quelli restano da aggiungere a "
+               "mano nell'orizzonte libero. Il terreno si scarica una volta sola (circa 30 MB) e resta nella cartella di EMELab.")
     c = st.columns([1, 1, 2])
     agl = c[0].number_input("Altezza della parabola dal suolo (m)", 0.0, 100.0, float(cfg.get("terrain_agl_m", 3.0)), 0.5,
                             key="hz_agl", help="il centro della parabola, sopra il terreno sotto di te")
@@ -163,7 +188,11 @@ def tab(D):
         st.dataframe([{"Sorge": _hm(p["rise"]) if p["rise"] > track[0][0] else i18n.tr("già alta"), "Esce dalle montagne": (_hm(p["clear_from"]) if p["clear_from"] != track[0][0] else i18n.tr("già fuori")),
                        "Entra dietro le montagne": _hm(p["clear_to"]), "Tramonta": _hm(p["set"]),
                        "Minuti persi": int(p["minutes_blocked"])} for p in bl["passes"]], hide_index=True, width="stretch")
-    st.plotly_chart(_plot(hz, track, manual, i18n.tr("Il tuo orizzonte e la Luna (ore locali)")), width="stretch", key="hz_me")
+    peaks = _peaks(hz)
+    st.plotly_chart(_plot(hz, track, manual, i18n.tr("Il tuo orizzonte e la Luna (ore locali)"), peaks=peaks),
+                    width="stretch", key="hz_me")
+    if peaks is None:
+        st.caption("Nomi delle montagne non disponibili: servono internet la prima volta (OpenStreetMap).")
 
     with st.expander("⛰️ Gli ostacoli principali, settore per settore"):
         rows = []
@@ -174,7 +203,8 @@ def tab(D):
                          "Elevazione (°)": hz["el"][i], "Distanza (km)": hz["dist_km"][i], "Quota (m)": int(hz["obs_h_m"][i]),
                          "Locator": astro.latlon_to_locator(hz["obs_lat"][i], hz["obs_lon"][i], 8)})
         st.dataframe(rows, hide_index=True, width="stretch")
-        st.caption(i18n.tr("Terreno") + ": " + terrain.SOURCE + ". " + i18n.tr("Idea da YAEC di IC8TEM."))
+        st.caption(i18n.tr("Terreno") + ": " + i18n.tr(hz.get("source") or terrain.SOURCE) + ". " + i18n.tr("Cime") + ": " +
+                   terrain.PEAKS_SOURCE + ". " + i18n.tr("Idea da YAEC di IC8TEM."))
 
     with st.expander("💾 Usa il terreno come orizzonte libero di EMELab"):
         st.caption("L'orizzonte libero lo usano il Pianificatore, «Chi posso collegare», la scheda Luna e l'Assistente. "
@@ -226,7 +256,8 @@ def tab(D):
     st.markdown(f"<span style='color:{ASSUMED_COLOR}'>" + i18n.tr("Posizione del DX dal centro del locator") +
                 f" {html.escape(loc_dx)}" + (" (" + i18n.tr("±2 km: gli ostacoli vicini sono approssimati") + ")" if len(loc_dx) < 8 else "") +
                 "</span>", unsafe_allow_html=True)
-    st.plotly_chart(_plot(hzd, trd, None, f"{pick or loc_dx}: " + i18n.tr("orizzonte e Luna (ore locali tue)")),
+    st.plotly_chart(_plot(hzd, trd, None, f"{pick or loc_dx}: " + i18n.tr("orizzonte e Luna (ore locali tue)"),
+                          peaks=_peaks(hzd)),
                     width="stretch", key="hz_dx_plot")
     win, base = _windows(track, hz, manual, trd, hzd, 5.0)
     tot = sum((w["end"] - w["start"]).total_seconds() / 60 + 5 for w in win)

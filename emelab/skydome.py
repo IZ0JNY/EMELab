@@ -188,17 +188,25 @@ def gmax_dbi(f_ghz: float, D_m: float, eta_ap: float) -> float:
 
 def noise_when_pointing(target: str, dt: datetime, lat: float, lon: float, h_m: float, f_ghz: float, D_m: float,
                         eta_ap: float, edge_taper_db: float = 12.0, sun_sfu: float | None = None,
-                        moon_tb: float | None = None, bl: list[dict] | None = None) -> dict:
-    """With the dish on target ("Luna" or "Sole"): every other body with its distance from the beam axis and the
-    noise it adds (K), largest first."""
+                        moon_tb: float | None = None, bl: list[dict] | None = None,
+                        az_el: tuple[float, float] | None = None, exclude: str | None = None) -> dict:
+    """With the dish on target ("Luna" or "Sole"), or towards az_el = (AZ, EL) (the dish position read from
+    DriverDish, or typed by hand): every other body with its distance from the beam axis and the noise it adds (K),
+    largest first. exclude: the body being tracked, left out of the list (with az_el)."""
     from . import sky
     bl = bl or bodies(dt, lat, lon, h_m, f_ghz)
     hp = sky.hpbw_deg(f_ghz, D_m, edge_taper_db)
     g = gmax_dbi(f_ghz, D_m, eta_ap)
-    tgt = next(b for b in bl if b["name"] == target)
+    if az_el is not None:
+        az, el = float(az_el[0]) % 360.0, float(az_el[1])
+        a, e = math.radians(az), math.radians(el)
+        u = astro._enu(lat, lon).T @ np.array([math.sin(a) * math.cos(e), math.cos(a) * math.cos(e), math.sin(e)])
+        tgt = {"name": "Parabola", "kind": "dish", "az": az, "el": el, "el_radio": el, "u": _unit(u), "diam_deg": 0.0}
+    else:
+        tgt = next(b for b in bl if b["name"] == target)
     rows = []
     for b in bl:
-        if b is tgt:
+        if b is tgt or (exclude and b["name"] == exclude):
             continue
         th = _sep(tgt["u"], b["u"])
         t0 = t_on_axis(b, f_ghz, D_m, eta_ap, hp, sun_sfu, moon_tb)
