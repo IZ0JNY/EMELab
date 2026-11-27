@@ -6,6 +6,7 @@ dish points at the Moon or at the Sun, which bodies are near the beam and how ma
 the coming 30 days."""
 from __future__ import annotations
 
+import html
 import math
 from datetime import datetime, timedelta, timezone
 
@@ -56,6 +57,21 @@ def _t_atm(f, wx, el):
 SKY_SCALE = [[0.0, "#050b1a"], [0.25, "#0b1736"], [0.5, "#1d1f4d"], [0.7, "#4a2160"], [0.85, "#a8396b"], [1.0, "#f08c4a"]]
 PLANET_COL = {"Venere": "#fff3c4", "Marte": "#ff6b4a", "Giove": "#e9c99a", "Saturno": "#f2d27a"}
 BG, FG = "#050b1a", "#dfe6ff"
+# daytime sky: the same steps as SKY_SCALE, blue above and a pale warm horizon (atmosphere noise) below
+DAY_SCALE = [[0.0, "#1f5fae"], [0.25, "#2f74c4"], [0.5, "#4b8fd6"], [0.7, "#7aaee0"], [0.85, "#d39a8a"], [1.0, "#f0a25a"]]
+DAY_BG = "#1f5fae"
+
+
+def daylight(sun_el: float) -> float:
+    """0 = night (Sun below −18°, astronomical twilight over), 1 = full day (Sun above +6°), smooth in between."""
+    x = min(1.0, max(0.0, (sun_el + 18.0) / 24.0))
+    return x * x * (3 - 2 * x)
+
+
+def _mix(c1: str, c2: str, k: float) -> str:
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * k):02x}" for x, y in zip(a, b))
 
 
 def _icon(b):
@@ -91,25 +107,30 @@ def _glow(fig, x, y, color, sizes, opac, name=None, text=None, hover=None, symbo
                                  hovertext=hover if last else None, hoverinfo="text" if (last and hover) else "skip"))
 
 
-def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl):
+def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=False):
     fig = go.Figure()
+    sun = next((b for b in bl if b["kind"] == "sun"), None)
+    day = daylight(sun["el"]) if sun else 0.0          # night ↔ day from the real Sun at your station
+    scale = [[a, _mix(c, d, day)] for (a, c), (_, d) in zip(SKY_SCALE, DAY_SCALE)]
+    bg = _mix(BG, DAY_BG, day)
+    night = 1.0 - day
     els = np.arange(0, 91, 1.0)
     tsky = [[_t_atm(f, wx, e)] * 2 for e in els]
-    fig.add_trace(go.Heatmap(x=[0.0, 360.0], y=els, z=tsky, colorscale=SKY_SCALE, zmin=2.7, zmax=max(30.0, tsky[0][0]),
+    fig.add_trace(go.Heatmap(x=[0.0, 360.0], y=els, z=tsky, colorscale=scale, zmin=2.7, zmax=max(30.0, tsky[0][0]),
                              colorbar=dict(title=dict(text="Rumore<br>atmosfera (K)", font=dict(color=FG, size=11)),
                                            len=0.75, thickness=10, tickfont=dict(color=FG, size=10), outlinewidth=0),
                              hoverinfo="skip"))
     up = [(a, e, w) for a, e, w in mw if e > 0]                       # Milky Way: overlapping soft dots
     fig.add_trace(go.Scatter(x=[a for a, _, _ in up], y=[e for _, e, _ in up], mode="markers", hoverinfo="skip",
-                             marker=dict(size=24, color=[f"rgba(190,205,255,{0.04 + 0.09 * w:.3f})" for _, _, w in up],
+                             marker=dict(size=24, color=[f"rgba(190,205,255,{(0.04 + 0.09 * w) * (0.15 + 0.85 * night):.3f})" for _, _, w in up],
                                          line=dict(width=0)), name=i18n.tr("Via Lattea")))
-    st_up = [s for s in stars if s[2] > 0]
+    st_up = [s for s in stars if s[2] > 0 and (night > 0.25 or s[3] < 0.5)]   # by day only the brightest show
     sz = [max(2.0, 2.2 + (2.2 - s[3]) * 1.6) for s in st_up]
     fig.add_trace(go.Scatter(x=[s[1] for s in st_up], y=[s[2] for s in st_up], mode="markers", showlegend=False,
-                             marker=dict(size=[z * 2.6 for z in sz], color="rgba(255,255,255,0.10)", line=dict(width=0)),
+                             marker=dict(size=[z * 2.6 for z in sz], color=f"rgba(255,255,255,{0.10 * night:.3f})", line=dict(width=0)),
                              hoverinfo="skip"))
     fig.add_trace(go.Scatter(x=[s[1] for s in st_up], y=[s[2] for s in st_up], mode="markers", name=i18n.tr("Stelle"),
-                             marker=dict(size=sz, color="#ffffff", line=dict(width=0)),
+                             marker=dict(size=sz, color=f"rgba(255,255,255,{0.25 + 0.75 * night:.2f})", line=dict(width=0)),
                              hovertext=[s[0] for s in st_up], hoverinfo="text"))
     xs, ys = _split(ecl)
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="rgba(255,214,102,0.55)", dash="dot", width=1.2),
@@ -151,15 +172,31 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl):
         else:
             _glow(fig, [b["az"]], [b["el"]], "#c77dff", [22, 10], [0.25, 1.0], None, [b["name"]],
                   hov + f"<br>{b['flux_jy']:.0f} Jy", symbol="diamond")
+    if point and point[1] > -1:                       # the dish: crosshair and beam ring (×3 so that it shows)
+        _glow(fig, [point[0]], [point[1]], "#00e5ff", [34], [0.18], None)
+        fig.add_trace(go.Scatter(x=[point[0]], y=[point[1]], mode="markers+text", text=[point[2]],
+                                 textposition="bottom center", textfont=dict(color="#00e5ff", size=12),
+                                 marker=dict(size=22, symbol="circle-open", color="#00e5ff", line=dict(width=2)),
+                                 name=point[2], hovertext=f"{point[2]} AZ {point[0]:.2f}° · EL {point[1]:.2f}°",
+                                 hoverinfo="text"))
+        fig.add_trace(go.Scatter(x=[point[0]], y=[point[1]], mode="markers", showlegend=False, hoverinfo="skip",
+                                 marker=dict(size=30, symbol="cross-thin-open", color="#00e5ff", line=dict(width=1.5))))
     # legend entries for the kinds drawn without a legend of their own
     for lab, col, sym, ln in ((i18n.tr("Pianeti"), "#e9c99a", "circle", None), (i18n.tr("Radiosorgenti"), "#c77dff", "diamond", None),
                               (i18n.tr("Buchi neri"), "#000000", "circle", dict(color="#ffb347", width=2.5))):
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=lab,
                                  marker=dict(color=col, size=10, symbol=sym, line=ln or dict(width=0))))
-    fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+    phase = ("☀️ " + i18n.tr("giorno")) if day > 0.95 else ("🌙 " + i18n.tr("notte")) if day < 0.05 else \
+        ("🌆 " + i18n.tr("crepuscolo"))
+    if sun:
+        fig.add_annotation(x=0.005, y=0.99, xref="paper", yref="paper", xanchor="left", yanchor="top", showarrow=False,
+                           text=f"{phase} · {i18n.tr('Sole a')} {sun['el']:+.0f}°", font=dict(color=FG, size=12),
+                           bgcolor="rgba(0,0,0,0.25)")
+    fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=bg, paper_bgcolor=bg,
                       font=dict(color=FG), hoverlabel=dict(bgcolor="#111a33", font=dict(color=FG)),
-                      xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 45)),
-                                 ticktext=_compass(), title="Azimut",
+                      xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 15 if degrees else 45)),
+                                 ticktext=[f"{a}°" for a in range(0, 361, 15)] if degrees else _compass(),
+                                 title="Azimut (°)" if degrees else "Azimut",
                                  showgrid=True, gridcolor="rgba(255,255,255,0.06)", zeroline=False),
                       yaxis=dict(range=[0, 90], title="Elevazione (°)", showgrid=True,
                                  gridcolor="rgba(255,255,255,0.06)", zeroline=False),
@@ -201,31 +238,119 @@ def _zoom(res, bl, span):
     return i18n.translate_plotly(fig)
 
 
+TRACK_FRESH_S = 10.0          # DriverDish status older than this: tracking considered not active
+LIVE_REFRESH_S = 3
+
+
+def _norm(x: str) -> str:
+    return "".join(ch for ch in (x or "").lower() if ch.isalnum())
+
+
+def _tracked_name(target: str, bl: list[dict]) -> str | None:
+    """DriverDish target («Moon», «Sun», «CasA», …) → name of a body on the dome, or None."""
+    t = _norm(target)
+    if not t:
+        return None
+    if t in ("moon", "luna", "lua", "lune", "mond"):
+        return "Luna"
+    if t in ("sun", "sole", "sol", "soleil", "sonne"):
+        return "Sole"
+    for b in bl:
+        n = _norm(b["name"].split("(")[0])
+        if n and (n == t or n in t or t in n):
+            return b["name"]
+    return None
+
+
+def _tracking() -> dict | None:
+    """What DriverDish (EA3HMJ) is tracking now, from the read-only monitor of the 🎯 Tracking tab: target text and
+    dish AZ/EL. None when «Leggi in tempo reale» is off, DriverDish does not answer, the data are old or
+    TRACKING is OFF."""
+    sets = openems_local.load_settings()
+    if not sets.get("dd_live"):
+        return None
+    try:
+        from emelab import ui_tracking
+        mon = ui_tracking._monitor(sets.get("dd_host", "127.0.0.1"), int(sets.get("dd_port", 9999)))
+        last = mon.last
+    except Exception:
+        return None
+    if not last or not last.get("tracking") or last.get("dish_az") is None or last.get("dish_el") is None:
+        return None
+    if (datetime.now(timezone.utc) - last["utc"]).total_seconds() > TRACK_FRESH_S:
+        return None
+    return {"target": last.get("target") or "", "az": float(last["dish_az"]), "el": float(last["dish_el"]),
+            "utc": last["utc"]}
+
+
 def tab(D):
     stn = D.station()
     if not stn.get("lat"):
         st.info("Inserisci nominativo e locator nella scheda Stazione: la volta celeste parte dalla tua posizione.")
         return
-    lat, lon, h = float(stn["lat"]), float(stn["lon"]), float(stn.get("height_m") or 0.0)
     st.markdown("### 🌌 Volta celeste")
     st.caption("Il cielo visto dalla tua stazione: azimut in orizzontale, elevazione in verticale. I colori sono il "
                "rumore del cielo dovuto all'atmosfera alla banda scelta (alle microonde è quasi tutto lì, più forte "
                "in basso). Sopra: Sole, Luna, i pianeti e le radiosorgenti più forti. Sotto: chi è vicino al fascio "
                "quando punti la Luna o il Sole, e quanti kelvin aggiunge.")
-    c = st.columns([1, 1, 2])
+    live = bool(openems_local.load_settings().get("dd_live"))
+    f = getattr(_st, "fragment", None)
+    if live and f:                       # DriverDish read in real time: the dome follows the dish every 3 s
+        f(run_every=LIVE_REFRESH_S)(_body)(D, stn)
+    else:
+        _body(D, stn)
+
+
+def _body(D, stn):
+    S = _st.session_state
+    lat, lon, h = float(stn["lat"]), float(stn["lon"]), float(stn.get("height_m") or 0.0)
+    trk_dd = _tracking()
+    c = st.columns([1, 1.3, 2.2])
     bands = {k: f for k, f in moon.BANDS}
     bk = c[0].radio("Banda", list(bands), format_func=band_label, horizontal=True, key="sd_band")
     f = bands[bk]
-    target = c[1].radio("Punto verso", ["Luna", "Sole"], horizontal=True, key="sd_tgt",
-                        format_func=lambda k: f"{ICON[k]} " + i18n.tr(k))
-    hours = c[2].slider("Fra quante ore", 0, 48, 0, key="sd_h", help="0 = adesso")
-    t = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(hours=hours)
+    opts = ["Luna", "Sole", "AZ/EL"]
+    labels = {"Luna": "🌙 " + i18n.tr("Luna"), "Sole": "☀️ " + i18n.tr("Sole"), "AZ/EL": "✍️ " + i18n.tr("AZ/EL a mano")}
+    t = datetime.now(timezone.utc).replace(microsecond=0)
+    if trk_dd:
+        bl = skydome.bodies(t, lat, lon, h, f)
+        tracked = _tracked_name(trk_dd["target"], bl)
+        if tracked in ("Luna", "Sole"):
+            S["sd_tgt"] = tracked                       # «Punto verso» follows what DriverDish is tracking
+        c[1].radio("Punto verso", opts, horizontal=True, key="sd_tgt", format_func=lambda k: labels[k], disabled=True,
+                   help="scelto da DriverDish (EA3HMJ): il corpo che sta tracciando")
+        c[2].markdown(f"🎯 **{i18n.tr('Tracking DriverDish')}**: {html.escape(trk_dd['target'] or '?')} · "
+                      f"{i18n.tr('parabola')} AZ {trk_dd['az']:.2f}° · EL {trk_dd['el']:.2f}° · "
+                      f"{trk_dd['utc'].astimezone(_local_tz()):%H:%M:%S}")
+        target = tracked if tracked in ("Luna", "Sole") else None
+        az_el, exclude, hours = (trk_dd["az"], trk_dd["el"]), tracked, 0
+    else:
+        bl = None
+        target = c[1].radio("Punto verso", opts, horizontal=True, key="sd_tgt", format_func=lambda k: labels[k],
+                            help="con DriverDish che traccia (🎯 Tracking, «Leggi in tempo reale») si sceglie da solo")
+        az_el, exclude, tracked = None, None, None
+        if target == "AZ/EL":                 # simulation: where the dish points, on the day and at the time you choose
+            cc = c[2].columns([1, 1, 1.3, 1])
+            az_el = (cc[0].number_input("AZ (°)", 0.0, 360.0, float(S.get("sd_man_az", 180.0)), 0.1, key="sd_man_az"),
+                     cc[1].number_input("EL (°)", -5.0, 90.0, float(S.get("sd_man_el", 30.0)), 0.1, key="sd_man_el"))
+            now_l = datetime.now().astimezone()
+            day_l = cc[2].date_input("Giorno", now_l.date(), key="sd_man_day", format="DD/MM/YYYY")
+            time_l = cc[3].time_input("Ora (locale)", now_l.time().replace(second=0, microsecond=0), key="sd_man_time",
+                                      step=300, help="ora del tuo PC (UTC+1 in inverno, UTC+2 in estate)")
+            t = datetime.combine(day_l, time_l).astimezone().astimezone(timezone.utc)
+            hours = None
+            target = None
+        else:
+            hours = c[2].slider("Fra quante ore", 0, 48, 0, key="sd_h", help="0 = adesso")
+        if hours is not None:
+            t = t.replace(second=0) + timedelta(hours=hours)
     su, su_assumed = _setup(D, f)
     wx, wx_assumed = _weather()
-    sfu = _st.session_state.get("em_flux")
+    sfu = S.get("em_flux")
     D_m, eta, taper = float(su["D_m"]), float(su.get("eta_ap") or 0.65), float(su.get("edge_taper_db") or 12.0)
     tsys = su.get("feedlab_tsys")
-    info = [f"⌀ {D_m:.2f} m · η {eta * 100:.0f} %", f"{t.astimezone(_local_tz()):%d/%m %H:%M}"]
+    info = [f"⌀ {D_m:.2f} m · η {eta * 100:.0f} %",
+            f"{t.astimezone(_local_tz()):%d/%m/%Y %H:%M:%S} ({t:%H:%M} UTC)"]
     assumed = []
     if su_assumed:
         assumed.append(i18n.tr("parabola 2,4 m η 65 % (nessuna configurazione per questa banda)"))
@@ -239,11 +364,22 @@ def tab(D):
                                     i18n.tr("presunto") + ": " + ", ".join(assumed) + "</span>"), unsafe_allow_html=True)
     tsys = float(tsys or 80.0)
 
-    bl = skydome.bodies(t, lat, lon, h, f)
-    res = skydome.noise_when_pointing(target, t, lat, lon, h, f, D_m, eta, taper, sfu, bl=bl)
+    bl = bl or skydome.bodies(t, lat, lon, h, f)
+    res = skydome.noise_when_pointing(target or "Luna", t, lat, lon, h, f, D_m, eta, taper, sfu, bl=bl,
+                                      az_el=az_el, exclude=exclude)
     tg = res["target"]
+    vis_rows = [r for r in res["rows"] if not r["hidden"]]
+    near = [r for r in vis_rows if r["dt_k"] >= 0.5 or r["sep_hpbw"] <= 3]
+    if trk_dd:                                          # the alarm first, where the eye goes while tracking
+        if near:
+            st.error("⚠️ " + i18n.tr("Vicino al fascio adesso") + ": " + " · ".join(
+                f"{_icon(next(b for b in bl if b['name'] == r['name']))} {i18n.tr(r['name'])} {r['sep_deg']:.2f}° "
+                f"(+{r['dt_k']:.2f} K)" for r in near[:4]))
+        else:
+            st.success("🎯 " + i18n.tr("Tracking in corso: nessun oggetto vicino al fascio") +
+                       f" ({sum(r['dt_k'] for r in vis_rows):.2f} K " + i18n.tr("in tutto") + ").")
     from emelab import astro
-    trk = astro.track(t, 24.0, 10.0, lat, lon, h)
+    trk = astro.track(t.replace(second=0), 24.0, 10.0, lat, lon, h)
     tracks = {"Luna": [(s.t, s.moon.az, s.moon.el) for s in trk], "Sole": [(s.t, s.sun.az, s.sun.el) for s in trk]}
     mw_rd = skydome.milky_way()
     mw = [(a, e, w) for (a, e), (_, _, w) in zip(skydome.radec_to_azel([(r, d) for r, d, _ in mw_rd], t, lat, lon), mw_rd)]
@@ -251,38 +387,47 @@ def tab(D):
              zip(skydome.STARS, skydome.radec_to_azel([(r, d) for _, r, d, _ in skydome.STARS], t, lat, lon))]
     ecl = skydome.radec_to_azel(skydome.ecliptic(t), t, lat, lon)
     hz = openems_local.load_settings().get("horizon") or None
-    st.plotly_chart(_dome(bl, f, wx, tracks, hz, tg, res["hpbw"], mw, stars, ecl), width="stretch", key="sd_dome")
+    point = (tg["az"], tg["el"], "🎯 " + i18n.tr("Parabola")) if az_el is not None else None
+    st.plotly_chart(_dome(bl, f, wx, tracks, hz, tg, res["hpbw"], mw, stars, ecl, point,
+                          degrees=az_el is not None), width="stretch", key="sd_dome")
 
     tot = sum(r["dt_k"] for r in res["rows"])
     t_atm = _t_atm(f, wx, tg["el"])
     m = st.columns(4)
-    m[0].metric(f"{ICON[target]} " + i18n.tr(target), f"AZ {tg['az']:.1f}° · EL {tg['el']:.1f}°")
+    lab = (f"{ICON[target]} " + i18n.tr(target)) if target and az_el is None else \
+        ("🎯 " + i18n.tr("Parabola (DriverDish)") if trk_dd else "✍️ " + i18n.tr("Puntamento a mano"))
+    m[0].metric(lab, f"AZ {tg['az']:.1f}° · EL {tg['el']:.1f}°")
     m[1].metric("Fascio a −3 dB", f"{res['hpbw']:.2f}°", f"G {res['gmax_dbi']:.1f} dBi", delta_color="off")
     m[2].metric("Rumore dagli altri corpi", f"{tot:.2f} K", f"{10 * math.log10((tsys + tot) / tsys):+.2f} dB " +
                 i18n.tr("su Tsys"), delta_color="inverse" if tot > 1 else "off")
     m[3].metric("Cielo (atmosfera) a quella EL", f"{t_atm:.0f} K", delta_color="off")
     if tg["el"] < 0:
-        st.warning(i18n.tr(target) + " " + i18n.tr("è sotto l'orizzonte in quel momento") + f" (EL {tg['el']:.1f}°).")
-    worst = res["rows"][0] if res["rows"] else None
-    if worst and worst["dt_k"] >= 1:
-        st.warning(f"{ICON.get(worst['name'], '')} {i18n.tr(worst['name'])} " + i18n.tr("a") +
-                   f" {worst['sep_deg']:.1f}° " + i18n.tr("dal fascio aggiunge") + f" {worst['dt_k']:.1f} K.")
-    else:
-        st.success(i18n.tr("Nessun corpo rumoroso vicino al fascio: meno di 1 K in tutto."))
+        st.warning(i18n.tr("Il puntamento è sotto l'orizzonte") + f" (EL {tg['el']:.1f}°).")
+    if not trk_dd:
+        worst = vis_rows[0] if vis_rows else None
+        if worst and worst["dt_k"] >= 1:
+            st.warning(f"{ICON.get(worst['name'], '')} {i18n.tr(worst['name'])} " + i18n.tr("a") +
+                       f" {worst['sep_deg']:.1f}° " + i18n.tr("dal fascio aggiunge") + f" {worst['dt_k']:.1f} K.")
+        else:
+            st.success(i18n.tr("Nessun corpo rumoroso vicino al fascio: meno di 1 K in tutto."))
 
     c = st.columns([1, 1])
     span = max(5.0, min(20.0, 12 * res["hpbw"]))
     c[0].plotly_chart(_zoom(res, bl, span), width="stretch", key="sd_zoom")
     by = {b["name"]: b for b in bl}
-    rows = [{"Corpo": f"{_icon(by[r['name']])} {i18n.tr(r['name'])}", "Distanza (°)": round(r["sep_deg"], 1),
+    rows = [{"Corpo": f"{_icon(by[r['name']])} {i18n.tr(r['name'])}", "Distanza (°)": round(r["sep_deg"], 2),
              "In fasci": round(r["sep_hpbw"], 1), "T se puntato (K)": round(r["t_on_axis_k"], 2),
              "Attenuazione (dB)": round(r["rel_db"], 1), "Aggiunge (K)": round(r["dt_k"], 3),
-             "EL (°)": round(r["el"], 1)} for r in res["rows"] if not r["hidden"]]
+             "EL (°)": round(r["el"], 1)} for r in vis_rows]
     c[1].dataframe(rows, hide_index=True, width="stretch", height=360)
     st.caption("«T se puntato»: temperatura d'antenna con la parabola puntata proprio su quel corpo. «Attenuazione»: "
                "lobo principale gaussiano, poi l'inviluppo dei lobi laterali ITU-R S.465 (32 − 25 log θ dBi): è un "
                "limite alto, i lobi veri sono quasi sempre più bassi. Alle microonde solo il Sole conta davvero: "
                "radiosorgenti e pianeti danno meno di 1 K a una parabola di 2–3 m.")
+    if trk_dd:
+        st.caption("Con DriverDish che traccia, il centro del fascio è la posizione vera della parabola letta da "
+                   "DriverDish (solo lettura) e la pagina si aggiorna ogni 3 secondi. Il corpo tracciato non è "
+                   "nell'elenco.")
 
     with st.expander("⚫ " + i18n.tr("I buchi neri nel cielo")):
         moon_b = by["Luna"]
@@ -292,16 +437,17 @@ def tab(D):
         st.caption("Alle microonde i buchi neri non disturbano l'EME: Sgr A* e M87 danno qualche decimo di kelvin, quelli "
                    "stellari (Cyg X-1, V404 Cyg, GRS 1915+105) sono millesimi di jansky. Si vedono nella volta per "
                    "curiosità; Sgr A* e Cen A da qui restano bassi, a sud.")
-    st.markdown("#### 📅 " + i18n.tr("Prossimi 30 giorni") + f": {ICON[target]} " + i18n.tr(target) + " " +
-                i18n.tr("vicino a corpi rumorosi"))
-    ev = _approaches(t.replace(minute=0).isoformat(), lat, lon, h, f, D_m, eta, taper, target, sfu)
-    if not ev:
-        st.info("Nessun passaggio vicino con il bersaglio sopra l'orizzonte.")
-    else:
-        tz = _local_tz()
-        st.dataframe([{"Quando": f"{e['t'].astimezone(tz):%d/%m %H:%M}", "Corpo": f"{_icon(by[e['name']])} {i18n.tr(e['name'])}",
-                       "Distanza min (°)": round(e["sep_deg"], 2), "Aggiunge (K)": round(e["dt_k"], 2),
-                       "EL bersaglio (°)": round(e["target_el"], 1)} for e in ev], hide_index=True, width="stretch")
+    if target in ("Luna", "Sole"):
+        st.markdown("#### 📅 " + i18n.tr("Prossimi 30 giorni") + f": {ICON[target]} " + i18n.tr(target) + " " +
+                    i18n.tr("vicino a corpi rumorosi"))
+        ev = _approaches(t.replace(minute=0, second=0).isoformat(), lat, lon, h, f, D_m, eta, taper, target, sfu)
+        if not ev:
+            st.info("Nessun passaggio vicino con il bersaglio sopra l'orizzonte.")
+        else:
+            tz = _local_tz()
+            st.dataframe([{"Quando": f"{e['t'].astimezone(tz):%d/%m %H:%M}", "Corpo": f"{_icon(by[e['name']])} {i18n.tr(e['name'])}",
+                           "Distanza min (°)": round(e["sep_deg"], 2), "Aggiunge (K)": round(e["dt_k"], 2),
+                           "EL bersaglio (°)": round(e["target_el"], 1)} for e in ev], hide_index=True, width="stretch")
     st.caption(i18n.tr("Sorgenti: Baars et al. 1977 (Cas A, Tau A, Cyg A, Vir A, con il calo secolare); Ori A e Sgr A "
                        "indicativi; pianeti de Pater 1990.") + " " + i18n.tr("Idea da YAEC di IC8TEM."))
 

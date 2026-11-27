@@ -96,3 +96,61 @@ def test_hidden_bodies_add_nothing_and_close_approaches():
     from emelab import moon
     for ra, dec in gp:
         assert abs(moon.galactic(ra, dec)[1]) < 1e-6
+
+
+def test_copernicus_tile_floating_point_predictor():
+    """A float32 tile encoded as TIFF predictor 3 (byte planes, rows differenced) + DEFLATE comes back intact."""
+    import zlib
+    from emelab import terrain
+    a = (np.arange(4 * 6, dtype="<f4").reshape(4, 6) * 37.25 + 120.5).astype("<f4")
+    be = a.view(np.uint8).reshape(4, 6, 4)[..., ::-1]                  # big-endian bytes of every value
+    planes = np.transpose(be, (0, 2, 1)).reshape(4, 24)                # byte planes, most significant first
+    diff = np.concatenate([planes[:, :1], np.diff(planes.astype(np.int16), axis=1).astype(np.uint8)], axis=1)
+    out = terrain.decode_tile(zlib.compress(diff.astype(np.uint8).tobytes()), 6, 4, 8, 3)
+    assert np.array_equal(out, a)
+    assert terrain.cop_name(41, 13, 30) == "Copernicus_DSM_COG_10_N41_00_E013_00_DEM"
+    assert terrain.cop_name(-1, -2, 90) == "Copernicus_DSM_COG_30_S01_00_W002_00_DEM"
+
+
+def test_peaks_on_the_skyline():
+    """Named OSM peaks: only those on the skyline, not hidden behind nearer terrain, spaced in azimuth."""
+    from emelab import terrain
+    lat, lon = 41.5, 13.0
+    hz = {"lat": lat, "lon": lon, "antenna_m": 200.0, "max_km": 60.0,
+          "az": [float(a) for a in range(360)], "el": [0.0] * 360}
+    hz["el"][90] = 5.0                                                  # a near ridge to the east hides what is behind
+    def at(az, d, ele, name):
+        la, lo = terrain.destination(lat, lon, np.array([az]), np.array([d]))
+        return {"type": "node", "lat": float(la[0]), "lon": float(lo[0]), "tags": {"natural": "peak", "name": name, "ele": ele}}
+    data = {"elements": [at(0, 10, "1200", "Monte Nord"), at(2, 12, "900 m", "Cima Vicina"),
+                         at(90, 20, "800", "Dietro la cresta"), at(180, 15, "1000", "Monte Sud"),
+                         {"type": "node", "lat": 41.6, "lon": 13.0, "tags": {"name": "Senza quota"}},
+                         {"type": "node", "lat": 41.6, "lon": 13.0, "tags": {"ele": "500"}}]}
+    peaks = terrain.parse_peaks(data)
+    assert [p["name"] for p in peaks] == ["Monte Nord", "Cima Vicina", "Dietro la cresta", "Monte Sud"]
+    assert peaks[1]["ele"] == 900.0
+    vis = terrain.visible_peaks(hz, peaks)
+    names = [p["name"] for p in vis]
+    assert names == ["Monte Nord", "Monte Sud"]                         # 2° from Monte Nord, lower: label dropped
+    assert vis[0]["az"] == pytest.approx(0.0, abs=0.2) and vis[0]["dist_km"] == pytest.approx(10.0, abs=0.1)
+    az, d = terrain.bearing_km(lat, lon, peaks[3]["lat"], peaks[3]["lon"])
+    assert az == pytest.approx(180.0, abs=0.01) and d == pytest.approx(15.0, abs=0.01)
+
+
+def test_dish_pointing_by_az_el_and_daylight():
+    from emelab import skydome, ui_skydome
+    t = datetime(2026, 11, 28, 11, 30, tzinfo=timezone.utc)
+    lat, lon = 41.5, 13.0
+    bl = skydome.bodies(t, lat, lon, 100.0, 10.368)
+    sun = next(b for b in bl if b["name"] == "Sole")
+    r = skydome.noise_when_pointing("Luna", t, lat, lon, 100.0, 10.368, 2.4, 0.65, bl=bl,
+                                    az_el=(sun["az"] + 0.3, sun["el"]))
+    assert r["target"]["name"] == "Parabola"
+    top = max(r["rows"], key=lambda x: x["dt_k"])
+    assert top["name"] == "Sole" and top["dt_k"] > 50                  # 0.3° from the Sun: the Sun dominates
+    r2 = skydome.noise_when_pointing("Luna", t, lat, lon, 100.0, 10.368, 2.4, 0.65, bl=bl,
+                                     az_el=(sun["az"], sun["el"]), exclude="Sole")
+    assert all(x["name"] != "Sole" for x in r2["rows"])                # the tracked body is not in the list
+    assert ui_skydome.daylight(-30) == 0 and ui_skydome.daylight(10) == 1 and 0 < ui_skydome.daylight(-6) < 1
+    assert ui_skydome._tracked_name("Moon", bl) == "Luna" and ui_skydome._tracked_name("SUN", bl) == "Sole"
+    assert ui_skydome._tracked_name("", bl) is None

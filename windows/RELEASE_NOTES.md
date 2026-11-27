@@ -1,3 +1,21 @@
+## EMELab 0.1.24 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.24.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.24-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🌌 Volta celeste in tempo reale col tracking:** quando DriverDish (EA3HMJ) traccia, la volta segue la posizione vera della parabola (solo lettura) e si aggiorna ogni 3 secondi. «Punto verso» si sceglie da solo dal corpo tracciato e un riquadro avvisa subito se c'è un oggetto rumoroso vicino al fascio.
+- **✍️ Simulazione AZ/EL a mano:** metti azimut, elevazione, giorno e ora e vedi cosa vede la parabola in quel momento. Con la parabola puntata, sotto ci sono i gradi ogni 15° al posto dei punti cardinali.
+- **☀️ Giorno e notte:** la volta si schiarisce di giorno e si scurisce di notte secondo l'altezza vera del Sole, con l'alba e il tramonto graduali.
+- **🏔️ Orizzonte:** ascisse in gradi AZ con griglia ogni 15°, terreno Copernicus DEM (≈30 m vicino, ≈90 m lontano; circa 30 MB una volta sola) e i nomi delle cime di OpenStreetMap sopra lo skyline, solo quelle che si vedono davvero.
+- Barra delle schede su due righe e scelta delle schede senza ricaricare la pagina; nuova icona per nanoHam.
+
+### 🇬🇧 What's new
+- **🌌 Sky dome live with tracking:** while DriverDish (EA3HMJ) is tracking, the dome follows the real dish position (read-only) and refreshes every 3 seconds. «Pointing at» is chosen from the tracked body and a box warns at once when a noisy object is near the beam.
+- **✍️ AZ/EL simulation by hand:** enter azimuth, elevation, day and time and see what the dish sees at that moment. With the dish pointed, the axis shows degrees every 15° instead of compass points.
+- **☀️ Day and night:** the dome brightens by day and darkens at night following the real Sun elevation, with gradual dawn and dusk.
+- **🏔️ Horizon:** AZ degrees on the x-axis with a 15° grid, Copernicus DEM terrain (≈30 m near, ≈90 m far; about 30 MB once) and OpenStreetMap peak names over the skyline, only for the peaks you really see.
+- Tab bar on two rows and tab choice without reloading the page; new nanoHam icon.
+
 ## EMELab 0.1.23 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.23.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.23-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

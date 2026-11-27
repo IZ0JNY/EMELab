@@ -3,9 +3,10 @@
 """🏔️ Automatic horizon from the terrain: the elevation of the skyline seen from a station, computed from a digital
 elevation model with the Earth's curvature and standard radio refraction (k = 4/3).
 
-Terrain: the free «Terrarium» elevation tiles of the AWS Open Data registry (Mapzen / Linux Foundation), which are
-SRTM 1″ (≈30 m) over Europe, with ETOPO1, GMTED and national models where SRTM has no data. Tiles are downloaded once
-into the EMELab folder (terrain/), then everything works without internet. Idea from YAEC by IC8TEM (SRTM1 horizon).
+Terrain: the Copernicus DEM (ESA / Airbus) of the AWS Open Data registry, GLO-30 (≈30 m) near the station and GLO-90
+farther away, read with HTTP range requests (only the 1024×1024 blocks needed); if Copernicus is not reachable, the
+free «Terrarium» tiles (Mapzen, SRTM 1″ over Europe). Downloaded once into the EMELab folder (terrain/), then
+everything works without internet. Mountain names from OpenStreetMap (natural=peak). Idea from YAEC by IC8TEM.
 
 Only the ground is in the model: houses, trees and the station's own building are not, so they still go in the
 free horizon by hand (🧭 Assistente)."""
@@ -95,6 +96,179 @@ class Mosaic:
                 (h[j + 1, i] * (1 - fx) + h[j + 1, i + 1] * fx) * fy)
 
 
+# ------------------------------------------------------------------ Copernicus DEM (GLO-30 / GLO-90)
+COP_URL = {30: "https://copernicus-dem-30m.s3.amazonaws.com/{n}/{n}.tif",
+           90: "https://copernicus-dem-90m.s3.amazonaws.com/{n}/{n}.tif"}
+COP_SOURCE = ("Copernicus DEM GLO-30 (≈30 m) vicino e GLO-90 (≈90 m) lontano, ESA / Airbus, AWS Open Data. "
+              "© DLR e.V. 2010-2014 e © Airbus Defence and Space GmbH 2014-2018, fornito nell'ambito del "
+              "programma COPERNICUS dall'Unione Europea e dall'ESA")
+COP_RINGS = ((15.0, 30), (60.0, 90))        # GLO-30 out to 15 km, GLO-90 beyond
+
+
+def cop_name(lat_i: int, lon_i: int, res: int) -> str:
+    ns = f"N{lat_i:02d}" if lat_i >= 0 else f"S{-lat_i:02d}"
+    ew = f"E{lon_i:03d}" if lon_i >= 0 else f"W{-lon_i:03d}"
+    return f"Copernicus_DSM_COG_{10 if res == 30 else 30}_{ns}_00_{ew}_00_DEM"
+
+
+def _http_range(url: str, start: int, end: int) -> bytes:
+    import urllib.error
+    import urllib.request
+    from .net import _contexts
+    err = None
+    for _, ctx in _contexts():
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; EMELab)",
+                                                       "Range": f"bytes={start}-{end}"})
+            with urllib.request.urlopen(req, timeout=40, context=ctx) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:            # 403/404: no file there (sea): no point in other contexts
+            raise FileNotFoundError(url) from e
+        except Exception as e:
+            err = e
+    raise err
+
+
+def parse_tiff_header(buf: bytes) -> dict:
+    """The tags of the first IFD of a little-endian classic TIFF (Copernicus COG): size, tiling, compression,
+    predictor and where the tile offsets/byte counts are (as (count, type, value-or-offset))."""
+    import struct
+    if buf[:4] != b"II*\x00":
+        raise ValueError("not a little-endian classic TIFF")
+    ifd = struct.unpack_from("<I", buf, 4)[0]
+    n = struct.unpack_from("<H", buf, ifd)[0]
+    tags = {}
+    for i in range(n):
+        tag, typ, cnt, val = struct.unpack_from("<HHII", buf, ifd + 2 + 12 * i)
+        if cnt == 1 and typ == 3:
+            val = struct.unpack_from("<H", buf, ifd + 2 + 12 * i + 8)[0]
+        tags[tag] = (cnt, typ, val)
+    g = lambda t, d=None: tags[t][2] if t in tags else d                       # noqa: E731
+    return {"width": g(256), "height": g(257), "tw": g(322), "th": g(323), "compression": g(259, 1),
+            "predictor": g(317, 1), "bits": g(258), "offsets": tags[324], "counts": tags[325]}
+
+
+def _array_at(buf_get, entry) -> list[int]:
+    import struct
+    cnt, typ, val = entry
+    size = 4 if typ == 4 else 8 if typ == 16 else 2
+    if cnt * size <= 4:
+        return [val]
+    raw = buf_get(val, val + cnt * size - 1)
+    fmt = {4: "I", 16: "Q", 3: "H"}[typ]
+    return list(struct.unpack(f"<{cnt}{fmt}", raw))
+
+
+def decode_tile(raw: bytes, tw: int, th: int, compression: int, predictor: int) -> np.ndarray:
+    """Float32 heights of one internal tile: DEFLATE (8 or 32946) and the floating-point predictor (3)."""
+    import zlib
+    data = zlib.decompress(raw) if compression in (8, 32946) else raw
+    if predictor == 3:                     # byte planes (most significant first), each row differenced
+        b = np.frombuffer(data, dtype=np.uint8).reshape(th, 4 * tw)
+        b = np.cumsum(b, axis=1, dtype=np.uint8)
+        planes = b.reshape(th, 4, tw)
+        le = np.stack([planes[:, 3], planes[:, 2], planes[:, 1], planes[:, 0]], axis=-1)
+        return np.ascontiguousarray(le).view("<f4").reshape(th, tw)
+    a = np.frombuffer(data, dtype="<f4").reshape(th, tw)
+    if predictor == 2:
+        a = np.cumsum(a, axis=1)
+    return a
+
+
+class CopFile:
+    """One 1°×1° Copernicus COG read by HTTP ranges: only the internal tiles that are needed, cached on disk."""
+
+    def __init__(self, lat_i: int, lon_i: int, res: int):
+        self.lat_i, self.lon_i, self.res = lat_i, lon_i, res
+        self.name = cop_name(lat_i, lon_i, res)
+        self.url = COP_URL[res].format(n=self.name)
+        self.dir = _cache_dir() / f"cop{res}" / self.name
+        self.missing = False
+        hdr_file = self.dir / "header.json"
+        try:
+            if hdr_file.exists():
+                self.h = json.loads(hdr_file.read_text(encoding="utf-8"))
+            else:
+                head = _http_range(self.url, 0, 65535)
+                h = parse_tiff_header(head)
+                get = lambda a, b: head[a:b + 1] if b < len(head) else _http_range(self.url, a, b)   # noqa: E731
+                h["offsets"], h["counts"] = _array_at(get, h["offsets"]), _array_at(get, h["counts"])
+                self.dir.mkdir(parents=True, exist_ok=True)
+                hdr_file.write_text(json.dumps(h), encoding="utf-8")
+                self.h = h
+        except FileNotFoundError:          # no tile: open sea
+            self.missing = True
+
+    def tile(self, ti: int, tj: int) -> np.ndarray:
+        h = self.h
+        f = self.dir / f"t{tj}_{ti}.bin"
+        k = tj * ((h["width"] + h["tw"] - 1) // h["tw"]) + ti
+        if f.exists():
+            raw = f.read_bytes()
+        else:
+            o, c = h["offsets"][k], h["counts"][k]
+            raw = _http_range(self.url, o, o + c - 1) if c else b""
+            f.write_bytes(raw)
+        if not raw:
+            return np.zeros((h["th"], h["tw"]), dtype=np.float32)
+        return decode_tile(raw, h["tw"], h["th"], h["compression"], h["predictor"])
+
+
+class CopGrid:
+    """Heights on a regular lat/lon grid around a point (Copernicus pixel spacing), with bilinear sampling.
+    Pixel (row r, col c) of a file is the point (lat_i + 1 − r/H, lon_i + c/W)."""
+
+    def __init__(self, lat: float, lon: float, radius_km: float, res: int):
+        import math as _m
+        step = (1 / 3600 if res == 30 else 3 / 3600)
+        dlat = radius_km / 111.2
+        dlon = radius_km / (111.2 * max(0.05, _m.cos(_m.radians(lat))))
+        self.lat1, self.lon0 = lat + dlat, lon - dlon
+        self.dy = step
+        self.dx = step                                         # refined per file below (wider pixels north of 50°)
+        self.ny = int(2 * dlat / step) + 2
+        files = {}
+        self.tiles = 0
+        # grid in the step of the first file's longitude spacing
+        f0 = CopFile(_m.floor(lat), _m.floor(lon), res)
+        if not f0.missing:
+            self.dx = 1.0 / f0.h["width"]
+        self.nx = int(2 * dlon / self.dx) + 2
+        self.h = np.zeros((self.ny, self.nx), dtype=np.float32)
+        lats = self.lat1 - np.arange(self.ny) * self.dy
+        lons = self.lon0 + np.arange(self.nx) * self.dx
+        for la_i in range(_m.floor(lats.min()), _m.floor(lats.max()) + 1):
+            for lo_i in range(_m.floor(lons.min()), _m.floor(lons.max()) + 1):
+                cf = f0 if (la_i, lo_i) == (f0.lat_i, f0.lon_i) else CopFile(la_i, lo_i, res)
+                files[(la_i, lo_i)] = cf
+                if cf.missing:
+                    continue
+                H, W, tw, th = cf.h["height"], cf.h["width"], cf.h["tw"], cf.h["th"]
+                ry = np.where((lats > la_i) & (lats <= la_i + 1))[0]
+                cx = np.where((lons >= lo_i) & (lons < lo_i + 1))[0]
+                if not len(ry) or not len(cx):
+                    continue
+                r_f = np.clip(np.round((la_i + 1 - lats[ry]) * H).astype(int), 0, H - 1)
+                c_f = np.clip(np.round((lons[cx] - lo_i) * W).astype(int), 0, W - 1)
+                for tj in range(r_f.min() // th, r_f.max() // th + 1):
+                    for ti in range(c_f.min() // tw, c_f.max() // tw + 1):
+                        t = cf.tile(ti, tj)
+                        self.tiles += 1
+                        sr = (r_f // th) == tj
+                        sc = (c_f // tw) == ti
+                        if sr.any() and sc.any():
+                            self.h[np.ix_(ry[sr], cx[sc])] = t[np.ix_(r_f[sr] - tj * th, c_f[sc] - ti * tw)]
+
+    def sample(self, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+        y = np.clip((self.lat1 - lat) / self.dy, 0, self.ny - 1.001)
+        x = np.clip((lon - self.lon0) / self.dx, 0, self.nx - 1.001)
+        i, j = x.astype(int), y.astype(int)
+        fx, fy = x - i, y - j
+        h = self.h
+        return ((h[j, i] * (1 - fx) + h[j, i + 1] * fx) * (1 - fy) +
+                (h[j + 1, i] * (1 - fx) + h[j + 1, i + 1] * fx) * fy)
+
+
 def destination(lat: float, lon: float, az_deg: np.ndarray, d_km: np.ndarray):
     """Points at distance d along azimuth az from (lat, lon), on the sphere."""
     p1, l1 = math.radians(lat), math.radians(lon)
@@ -127,12 +301,23 @@ def horizon(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 
 
     Returns {"ground_m", "antenna_m", "az": [...], "el": [...], "dist_km": [...], "lat": [...], "lon": [...],
     "h_m": [...], "tiles": n}: for each azimuth the highest terrain elevation angle and where that obstacle is."""
-    rings = []
-    for r, z in RINGS:                       # only the rings needed to reach max_km
-        rings.append((min(r, max_km), z))
-        if r >= max_km:
-            break
-    mos = [Mosaic(lat, lon, r * 1.02 + 0.2, z, fetch) for r, z in rings]
+    rings, mos, source = [], [], SOURCE
+    if fetch is None:                        # Copernicus DEM (the tests pass their own Terrarium tiles)
+        try:
+            for r, res in COP_RINGS:
+                rings.append((min(r, max_km), res))
+                mos.append(CopGrid(lat, lon, min(r, max_km) * 1.02 + 0.2, res))
+                if r >= max_km:
+                    break
+            source = COP_SOURCE
+        except Exception:                    # Copernicus not reachable: the Terrarium tiles (SRTM)
+            rings, mos = [], []
+    if not mos:
+        for r, z in RINGS:                   # only the rings needed to reach max_km
+            rings.append((min(r, max_km), z))
+            if r >= max_km:
+                break
+        mos = [Mosaic(lat, lon, r * 1.02 + 0.2, z, fetch) for r, z in rings]
     ground = float(mos[0].sample(np.array([lat]), np.array([lon]))[0])
     h_obs = ground + antenna_agl_m
     d = distances_km(max_km=max_km)
@@ -153,11 +338,11 @@ def horizon(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 
             "antenna_agl_m": antenna_agl_m, "max_km": max_km,
             "az": az.tolist(), "el": np.round(el[rows, k], 2).tolist(), "dist_km": np.round(Dd[rows, k], 2).tolist(),
             "obs_lat": np.round(plat[rows, k], 5).tolist(), "obs_lon": np.round(plon[rows, k], 5).tolist(),
-            "obs_h_m": np.round(h[rows, k], 0).tolist(), "tiles": sum(m.tiles for m in mos), "source": SOURCE}
+            "obs_h_m": np.round(h[rows, k], 0).tolist(), "tiles": sum(m.tiles for m in mos), "source": source}
 
 
 def _hz_file(lat, lon, antenna_agl_m, max_km) -> Path:
-    return _cache_dir() / f"hz_{lat:.5f}_{lon:.5f}_{antenna_agl_m:.1f}_{max_km:.0f}.json"
+    return _cache_dir() / f"hzc_{lat:.5f}_{lon:.5f}_{antenna_agl_m:.1f}_{max_km:.0f}.json"   # c: Copernicus
 
 
 def is_cached(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 60.0) -> bool:
@@ -241,3 +426,87 @@ def moon_blocked(track: list[tuple], hz: dict) -> dict:
     ps = moon_passes(track, hz)
     return {"minutes_up": sum(p["minutes_up"] for p in ps), "minutes_blocked": sum(p["minutes_blocked"] for p in ps),
             "passes": ps}
+
+
+# --- Mountain names: the peaks of OpenStreetMap (natural=peak), the same data PeakVisor and most peak apps start from.
+# PeakVisor has no public API; the Overpass API of OSM is free. Downloaded once per place, then offline.
+OVERPASS_URLS = ("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
+                 "https://overpass.private.coffee/api/interpreter")
+PEAKS_SOURCE = "© OpenStreetMap contributors (ODbL), natural=peak via Overpass API"
+
+
+def _ele(tag) -> float | None:
+    try:
+        return float(str(tag).replace(",", ".").split()[0].rstrip("m"))
+    except Exception:
+        return None
+
+
+def parse_peaks(data: dict) -> list[dict]:
+    """Overpass JSON → [{"name", "lat", "lon", "ele"}] (peaks without a name or a height are left out)."""
+    out = []
+    for e in data.get("elements", []):
+        t = e.get("tags") or {}
+        name = t.get("name") or t.get("name:it") or t.get("name:en")
+        ele = _ele(t.get("ele")) if t.get("ele") is not None else None
+        if name and ele is not None and "lat" in e:
+            out.append({"name": name, "lat": float(e["lat"]), "lon": float(e["lon"]), "ele": ele})
+    return out
+
+
+def fetch_peaks(lat: float, lon: float, radius_km: float = 60.0) -> list[dict]:
+    """Named peaks within radius_km, cached in terrain/peaks_*.json (the first time needs internet)."""
+    f = _cache_dir() / f"peaks_{lat:.3f}_{lon:.3f}_{radius_km:.0f}.json"
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    import urllib.parse
+    import urllib.request
+    from .net import _contexts
+    q = f'[out:json][timeout:60];node["natural"~"^(peak|volcano)$"](around:{radius_km * 1000:.0f},{lat:.5f},{lon:.5f});out;'
+    body = urllib.parse.urlencode({"data": q}).encode()
+    err = None
+    for url in OVERPASS_URLS:
+        for _, ctx in _contexts():
+            try:
+                req = urllib.request.Request(url, data=body, headers={"User-Agent": "EMELab (EME station tool)"})
+                with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
+                    peaks = parse_peaks(json.loads(r.read().decode("utf-8")))
+                f.write_text(json.dumps(peaks), encoding="utf-8")
+                return peaks
+            except Exception as e:
+                err = e
+    raise err or RuntimeError("Overpass")
+
+
+def bearing_km(lat: float, lon: float, lat2: float, lon2: float) -> tuple[float, float]:
+    """Initial azimuth (deg) and great-circle distance (km) from (lat, lon) to (lat2, lon2)."""
+    p1, p2, dl = math.radians(lat), math.radians(lat2), math.radians(lon2 - lon)
+    az = math.degrees(math.atan2(math.sin(dl) * math.cos(p2),
+                                 math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl))) % 360
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return az, 2 * R_EARTH_KM * math.asin(min(1.0, math.sqrt(a)))
+
+
+def visible_peaks(hz: dict, peaks: list[dict], tol_deg: float = 0.35, min_sep_deg: float = 4.0,
+                  max_n: int = 30) -> list[dict]:
+    """The peaks that are on the skyline (not hidden behind nearer terrain), the highest first, at least
+    min_sep_deg apart in azimuth so that the labels do not overlap."""
+    cand = []
+    for p in peaks:
+        az, d = bearing_km(hz["lat"], hz["lon"], p["lat"], p["lon"])
+        if not 0.3 <= d <= hz.get("max_km", 60.0):
+            continue
+        el = float(elevation_angle(p["ele"], hz["antenna_m"], d))
+        if el >= el_at(hz, az) - tol_deg:
+            cand.append({**p, "az": round(az, 1), "el": round(el, 2), "dist_km": round(d, 1)})
+    cand.sort(key=lambda c: -c["el"])
+    out = []
+    for c in cand:
+        if all(min(abs(c["az"] - o["az"]), 360 - abs(c["az"] - o["az"])) >= min_sep_deg for o in out):
+            out.append(c)
+        if len(out) >= max_n:
+            break
+    return sorted(out, key=lambda c: c["az"])
