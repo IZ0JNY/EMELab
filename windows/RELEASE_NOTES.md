@@ -1,3 +1,19 @@
+## EMELab 0.1.21 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.21.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.21-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📟 Radio, nuovo pannello:** livelli a cursore, tasti delle funzioni con la spia, display come quello dell'IC-9700 (solo MAIN, frequenza al Hz), banda del transverter, meter, transverter con IF e LO.
+- **Spectrum scope e waterfall** dall'audio di ricezione della radio (USB Audio CODEC, condiviso con WSJT-X).
+- Sotto la frequenza **NB, NR, SPLIT e filtro**, e la **frequenza di TX con il Doppler** dell'eco.
+- **Corretto:** con rigctld NB, NR e le altre funzioni spente risultavano accese; ora OFF, e «n.d.» quando la radio non dà il valore.
+
+### 🇬🇧 What's new
+- **📟 Radio, new panel:** level sliders, function keys with their light, a display like the IC-9700's (MAIN only, frequency to the Hz), transverter band, meters, transverter with IF and LO.
+- **Spectrum scope and waterfall** from the radio's receive audio (USB Audio CODEC, shared with WSJT-X).
+- Under the frequency **NB, NR, SPLIT and filter**, and the **TX frequency with the echo Doppler**.
+- **Fixed:** with rigctld NB, NR and the other functions showed ON while off; now OFF, and «n.d.» when the radio does not give the value.
+
 ## EMELab 0.1.20 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.20.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.20-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

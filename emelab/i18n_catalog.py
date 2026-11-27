@@ -2675,4 +2675,8 @@ ENTRIES = [
     ('In alto compaiono solo le funzioni accese (NB, NR, P.AMP…), come sulla radio. Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore. Lo scope mostra la banda passante audio (0–3 kHz sopra la frequenza).', 'At the top only the functions that are on appear (NB, NR, P.AMP…), as on the radio. In the table «n.d.» = not available: the radio (or rigctld) does not give that value. The scope shows the audio passband (0–3 kHz above the frequency).'),
     ('Spectrum scope spento o scheda audio non trovata.', 'Spectrum scope off or sound card not found.'),
     ('Spectrum scope spento: accendilo sopra il display.', 'Spectrum scope off: switch it on above the display.'),
+    ('Livelli', 'Levels'),
+    ('Funzioni', 'Functions'),
+    ('Collegamento', 'Connection'),
+    ('📋 Tutte le impostazioni lette', '📋 All the settings read'),
 ]

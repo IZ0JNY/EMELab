@@ -107,6 +107,12 @@ _CSS = """
 .ic97 .agc{font-size:16px;color:#e8e8e8;text-align:right;padding-right:6px}
 .ic97 .big{font-size:78px;font-weight:700;letter-spacing:1px;font-variant-numeric:tabular-nums}
 .ic97 .big small{font-size:50px}
+.ic97 .st{display:flex;justify-content:flex-end;gap:6px;margin-top:4px}
+.ic97 .ch{font-size:14px;padding:1px 6px;border:1px solid #59626d;color:#9aa4b0;border-radius:2px}
+.ic97 .ch.on{background:#e8eef4;color:#000;border-color:#e8eef4;font-weight:700}
+.ic97 .ch.on2{color:#fff;border-color:#9aa4b0}
+.ic97 .ch.nd{opacity:.5}
+.ic97 .txf{text-align:right;font-size:15px;color:#ffb3b3;margin-top:3px;font-variant-numeric:tabular-nums}
 .ic97 .side{text-align:right;font-size:18px;line-height:1.25;padding-bottom:10px}
 .ic97 .side .ifq{font-size:13px;white-space:nowrap;color:#c9ced4}
 .ic97 .side .band{color:#7fd3ff}
@@ -162,13 +168,27 @@ def render_display(state: dict, now: datetime | None = None, scope: dict | None 
     if v.get("if_hz"):
         i1, i2 = fmt_freq(v["if_hz"])
         ifq = f'<div class="ifq">IF {i1}{i2}</div>'
+    def chip(k, val):
+        cls = "nd" if val is None else ("on" if val else "")
+        return f'<span class="ch {cls}">{k} {"n.d." if val is None else ("ON" if val else "OFF")}</span>'
+    split = None if state.get("split") is None else state.get("split") == "SPLIT"
+    status = (chip("NB", state.get("nb")) + chip("NR", state.get("nr")) + chip("SPLIT", split)
+              + f'<span class="ch on2">{html.escape(fil)}</span>')
+    tx_hz = (uns if v is sel else sel).get("freq_hz") if split else v.get("freq_hz")
+    txline = ""
+    if tx_hz:
+        t1, t2 = fmt_freq(tx_hz)
+        txline = f"TX {t1}{t2}"
+        if state.get("doppler_hz") is not None:
+            txline += f" · Doppler {state['doppler_hz']:+,.0f} Hz".replace(",", ".")
     head = (f'<div class="top"><span class="tx {"" if tx else "off"}">TX</span>{icons}'
             f'<span class="clk">{now:%H:%M}</span><span class="pbt">UTC</span></div>'
             f'<div class="vfo"><div><div class="boxes"><span class="mode"{mode_st}>{html.escape(mode)}</span>'
             f'<span class="fil">{html.escape(fil)}</span></div>'
             f'<div class="meter"><div class="sc">{scale_}</div><div class="bar"><i style="width:{max(0, min(1, frac)) * 100:.0f}%"></i></div>'
             f'<div class="lab">{html.escape(lab)}</div></div></div>'
-            f'<div class="fq"><div class="agc">{agc}</div><div class="big">{f1}<small>{f2}</small></div></div>'
+            f'<div class="fq"><div class="agc">{agc}</div><div class="big">{f1}<small>{f2}</small></div>'
+            f'<div class="st">{status}</div><div class="txf">{txline}</div></div>'
             f'<div class="side">VFO A'
             f'<div class="band">{_band(v.get("freq_hz"))}</div>{ifq}</div></div>')
     sc = scope or {}
@@ -200,6 +220,139 @@ def render_display(state: dict, now: datetime | None = None, scope: dict | None 
             + '</div>')
     return (_css() + '<div class="ic97box"><div class="ic97">' + head + scope_html + keys
             + '</div><div class="ic97-name">IC-9700 · EMELab</div></div>')
+
+
+# ------------------------------------------------------------------ control panel around the display (original design)
+_PANEL_CSS = """
+<style>
+.rp{display:grid;grid-template-columns:200px 1fr 300px;gap:14px;padding:14px;border-radius:16px;
+ background:linear-gradient(160deg,#2b2f35 0%,#17191d 55%,#0f1114 100%);box-shadow:0 10px 30px rgba(0,0,0,.35),
+ inset 0 1px 0 rgba(255,255,255,.08);font-family:"Roboto Condensed","Arial Narrow",Arial,sans-serif;color:#dfe5ec}
+.rp h4{margin:0 0 6px;font-size:11px;letter-spacing:2px;color:#8d98a5;font-weight:600;text-transform:uppercase}
+.rp .card{background:linear-gradient(#202328,#181a1e);border:1px solid #2e333a;border-radius:10px;padding:10px;margin-bottom:12px;
+ box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.rp .knobs{display:flex;flex-direction:column;gap:9px}
+.rp .sl{display:grid;grid-template-columns:1fr auto;font-size:11px;color:#9aa6b2;row-gap:4px}
+.rp .sl b{color:#fff;font-weight:600;font-size:12px}
+.rp .sl .trk{grid-column:1/3;position:relative;height:6px;border-radius:3px;background:#0d0f12;box-shadow:inset 0 1px 2px #000}
+.rp .sl .trk i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;opacity:.85}
+.rp .sl .trk u{position:absolute;top:-5px;width:22px;height:16px;margin-left:-11px;border-radius:4px;
+ background:linear-gradient(#e7ebef,#9aa3ad);box-shadow:0 1px 3px rgba(0,0,0,.7);text-decoration:none}
+.rp .sl.nd{opacity:.5}
+.rp .knob{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:#9aa6b2}
+.rp .dial{width:64px;height:64px;border-radius:50%;position:relative;
+ background:conic-gradient(from 225deg,var(--c) calc(var(--v)*0.75turn),#2b3038 0 0.75turn,transparent 0);}
+.rp .dial::before{content:"";position:absolute;inset:6px;border-radius:50%;
+ background:radial-gradient(circle at 35% 30%,#4a5059,#1b1e22 70%);box-shadow:0 2px 6px rgba(0,0,0,.6)}
+.rp .dial::after{content:"";position:absolute;left:50%;top:50%;width:3px;height:22px;margin-left:-1.5px;background:#e9eef3;
+ border-radius:2px;transform-origin:50% 0;transform:rotate(calc(var(--v)*270deg + 45deg)) ;box-shadow:0 0 4px rgba(255,255,255,.4)}
+.rp .dial.nd{background:conic-gradient(from 225deg,#2b3038 0.75turn,transparent 0)}
+.rp .dial.nd::after{display:none}
+.rp .knob b{font-size:15px;color:#fff;font-weight:600}
+.rp .keys{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.rp .bands{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.rp .bands span{text-align:center;padding:7px 0;border-radius:6px;font-size:13px;background:linear-gradient(#3a3f47,#25292f);
+ border:1px solid #4a515a;color:#c4ccd5;box-shadow:0 2px 0 #0b0c0e}
+.rp .bands span.on{background:linear-gradient(#3d7fd6,#1d55a8);border-color:#8bb8f0;color:#fff;box-shadow:0 0 10px rgba(61,127,214,.5)}
+.rp .key{display:flex;align-items:center;gap:6px;background:linear-gradient(#3a3f47,#25292f);border:1px solid #4a515a;
+ border-radius:6px;padding:5px 7px;font-size:12px;color:#e6ebf0;box-shadow:0 2px 0 #0b0c0e}
+.rp .led{width:4px;height:14px;border-radius:2px;background:#2a2f35;box-shadow:inset 0 1px 2px #000}
+.rp .key.on .led{background:#38c6ff;box-shadow:0 0 6px #38c6ff}
+.rp .key.nd{opacity:.45}
+.rp .center{min-width:0}
+.rp .modes{display:flex;gap:6px;margin-top:10px}
+.rp .modes span{flex:1;text-align:center;padding:6px 0;border-radius:6px;font-size:13px;background:linear-gradient(#34383f,#202328);
+ border:1px solid #454c55;color:#c4ccd5}
+.rp .modes span.on{background:linear-gradient(#3d7fd6,#1d55a8);border-color:#8bb8f0;color:#fff;box-shadow:0 0 10px rgba(61,127,214,.5)}
+.rp .txrx{display:flex;gap:8px;margin-bottom:12px}
+.rp .txrx span{flex:1;text-align:center;font-weight:700;font-size:18px;padding:8px 0;border-radius:8px;letter-spacing:2px;
+ background:#202328;border:1px solid #2e333a;color:#4b535c}
+.rp .txrx .rx.on{background:linear-gradient(#1f6b37,#124222);color:#d9ffe5;border-color:#3cff7a;box-shadow:0 0 12px rgba(60,255,122,.35)}
+.rp .txrx .tx.on{background:linear-gradient(#a3171b,#5e0b0d);color:#fff;border-color:#ff6b6b;box-shadow:0 0 14px rgba(255,80,80,.5)}
+.rp .m{display:grid;grid-template-columns:44px 1fr 64px;align-items:center;gap:6px;font-size:12px;margin:5px 0}
+.rp .m .tr{height:9px;border-radius:5px;background:#2a2f36;overflow:hidden}
+.rp .m .tr i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#38c6ff,#3cff7a 60%,#ffd23c 80%,#ff4d4d)}
+.rp .m em{font-style:normal;text-align:right;color:#fff}
+.rp .m em.as{color:#ff9a4d}
+.rp .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px}
+.rp .kv span{color:#8d98a5}.rp .kv b{color:#fff;font-weight:500;text-align:right}
+.rp .src{display:flex;align-items:center;gap:8px;font-size:12px}
+.rp .src .dot{width:10px;height:10px;border-radius:50%;background:#3cff7a;box-shadow:0 0 8px #3cff7a}
+.rp .src .dot.warn{background:#ffb000;box-shadow:0 0 8px #ffb000}
+</style>"""
+
+
+def _knob(label, val, color="#38c6ff"):
+    """A horizontal slider with its value (n.d. when the radio did not give it)."""
+    if val is None:
+        return (f'<div class="sl nd"><span>{html.escape(label)}</span><b>n.d.</b>'
+                f'<div class="trk"></div></div>')
+    v = max(0.0, min(1.0, float(val) / 100))
+    return (f'<div class="sl"><span>{html.escape(label)}</span><b>{int(round(float(val)))}%</b>'
+            f'<div class="trk"><i style="width:{v * 100:.0f}%;background:{color}"></i>'
+            f'<u style="left:{v * 100:.0f}%"></u></div></div>')
+
+
+def _key(label, val):
+    cls = "nd" if val is None else ("on" if val else "")
+    return f'<span class="key {cls}"><span class="led"></span>{html.escape(label)}</span>'
+
+
+def _meter(name, val, frac, unit="", assumed=False):
+    shown = "n.d." if val is None else f"{val}{unit}"
+    w = 0 if val is None else max(0.0, min(1.0, frac)) * 100
+    return (f'<div class="m"><span>{name}</span><span class="tr"><i style="width:{w:.0f}%"></i></span>'
+            f'<em class="{"as" if assumed and val is not None else ""}">{shown}</em></div>')
+
+
+def render_panel(state: dict, scope: dict | None = None, now: datetime | None = None) -> str:
+    """The whole Radio panel: knobs and function keys on the left, the IC-9700 screen in the middle, TX/RX, meters,
+    transverter and connection on the right. Drawn by EMELab; values the radio did not give show «n.d.»."""
+    sel, uns = state.get("sel") or {}, state.get("unsel") or {}
+    v = sel if (state.get("main_sub") or "MAIN") == "MAIN" else uns
+    att = state.get("att")
+    keys = "".join([
+        _key("P.AMP", state.get("preamp")), _key("ATT", None if att is None else att != "OFF"),
+        _key("NB", state.get("nb")), _key("NR", state.get("nr")), _key("AN", state.get("anf")),
+        _key("NOTCH", state.get("mnf")), _key("COMP", state.get("comp")), _key("VOX", state.get("vox")),
+        _key("DUAL", state.get("dualwatch")), _key("SAT", state.get("satmode")),
+        _key("SPLIT", None if state.get("split") is None else state.get("split") == "SPLIT"),
+        _key("LOCK", state.get("lock"))])
+    left = ('<div><div class="card"><h4>' + html.escape(i18n.tr("Livelli")) + '</h4><div class="knobs">'
+            + _knob("AF", state.get("af_pct")) + _knob("RF", state.get("rf_pct"), "#3cff7a")
+            + _knob("SQL", state.get("sql_pct"), "#ffd23c") + _knob("RF PWR", state.get("power_pct"), "#ff6b6b")
+            + '</div></div><div class="card"><h4>' + html.escape(i18n.tr("Funzioni")) + '</h4><div class="keys">'
+            + keys + '</div></div></div>')
+    mode = v.get("mode")
+    modes = "".join(f'<span class="{"on" if mode == m else ""}">{m}</span>' for m in ("USB", "LSB", "CW", "FM", "AM", "DV"))
+    center = ('<div class="center">' + render_display(state, now=now, scope=scope)
+              + f'<div class="modes">{modes}</div></div>')
+    tx = bool(state.get("tx"))
+    swr_v = state.get("swr")
+    meters = (_meter("S", state.get("s_meter"), _s_frac(state)) + _meter("Po", state.get("po_pct"), (state.get("po_pct") or 0) / 100, "%")
+              + _meter("SWR", swr_v, ((swr_v or 1) - 1) / 2) + _meter("ALC", state.get("alc_pct"), (state.get("alc_pct") or 0) / 100, "%")
+              + _meter("Vd", state.get("vd_v"), (state.get("vd_v") or 0) / 16, " V")
+              + _meter("Id", state.get("id_a"), (state.get("id_a") or 0) / 20, " A", assumed=True))
+    trv = ""
+    if v.get("if_hz"):
+        f1, f2 = fmt_freq(v["if_hz"])
+        trv = (f'<div class="card"><h4>Transverter</h4><div class="kv"><span>{html.escape(i18n.tr("Modello"))}</span>'
+               f'<b>{html.escape(v.get("trv_model") or v.get("trv") or "")}</b><span>IF</span><b>{f1}{f2}</b>'
+               f'<span>LO</span><b>{(v["freq_hz"] - v["if_hz"]) / 1e6:,.3f} MHz</b></div></div>').replace(",", ".")
+    src = {"serial": "CI-V USB", "rigctld": "rigctld · Hamlib", "wsjtx": "WSJT-X (UDP)", "lan": "LAN · Ethernet"}.get(
+        state.get("source"), "—")
+    warn = bool(state.get("error"))
+    from emelab import icom as _icom
+    trvs = openems_local.load_settings().get("radio_trvs") or _icom.DEFAULT_TRANSVERTERS
+    cur_band = _band(v.get("freq_hz"))
+    bands = "".join(f'<span class="{"on" if x["name"] == cur_band or _band(x["rf_mhz"] * 1e6) == cur_band else ""}">'
+                    f'{html.escape(x["name"])}</span>' for x in trvs if x.get("on", True))
+    right = (f'<div><div class="txrx"><span class="rx {"" if tx else "on"}">RX</span><span class="tx {"on" if tx else ""}">TX</span></div>'
+             f'<div class="card"><h4>Band</h4><div class="bands">{bands}</div></div>'
+             f'<div class="card"><h4>Meter</h4>{meters}</div>{trv}'
+             f'<div class="card"><h4>{html.escape(i18n.tr("Collegamento"))}</h4><div class="src"><span class="dot {"warn" if warn else ""}">'
+             f'</span>{html.escape(src)}</div></div></div>')
+    return _PANEL_CSS + f'<div class="rp">{left}{center}{right}</div>'
 
 
 # ------------------------------------------------------------------ settings table
@@ -392,6 +545,26 @@ def _catalog_table():
     st.caption("✅ dati dalla pagina del costruttore; in arancione i modelli con i soli valori presunti (banda e IF usuali).")
 
 
+def _own_doppler(state, sets):
+    """Own-echo Doppler (Hz) at the RF frequency shown, from the Moon position for this station; None if unknown."""
+    try:
+        from emelab import astro, db as edb
+        me = edb.DB().station() or {}
+        if not me.get("lat"):
+            return None
+        hz = (state.get("sel") or {}).get("freq_hz")
+        if not hz:
+            return None
+        trvs = sets.get("radio_trvs") or icom.DEFAULT_TRANSVERTERS
+        rf = icom.apply_transverters({"source": state.get("source"), "main_sub": "MAIN", "sel": {"freq_hz": hz}}, trvs,
+                                     sets.get("radio_trv_main", "auto"), "OFF",
+                                     ((_wsjtx_status() or {}).get("dial_hz")))["sel"]["freq_hz"]
+        s = astro.sky(datetime.now(timezone.utc), me["lat"], me["lon"], me.get("height_m") or 0.0)
+        return s.doppler_hz_per_ghz * rf / 1e9
+    except Exception:
+        return None
+
+
 def _read(sets):
     """At most one reading per REFRESH_S, shared by the display and the table in the same run."""
     last = S.get("rad_state")
@@ -399,6 +572,7 @@ def _read(sets):
         return last
     w = _wsjtx_status()
     st_ = icom.read(sets, w)
+    st_["doppler_hz"] = _own_doppler(st_, sets)
     S["rad_state"] = icom.apply_transverters(st_, sets.get("radio_trvs") or icom.DEFAULT_TRANSVERTERS,
                                              sets.get("radio_trv_main", "auto"), sets.get("radio_trv_sub", "auto"),
                                              (w or {}).get("dial_hz"))
@@ -491,23 +665,20 @@ def tab(D=None):
     @_frag(REFRESH_S if live else None)
     def _panel():
         state = _read(openems_local.load_settings())
-        left, right = st.columns([5, 3])
-        with left:
-            h = render_display(state, scope=_scope_frame())
-            st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
-            if state.get("error"):
-                st.warning(i18n.tr("Lettura dalla radio non riuscita") + f": {i18n.tr(state['error'])}. "
-                           + i18n.tr("Mostro quello che dice WSJT-X."))
-            elif not state.get("sel"):
-                st.info("Nessun dato: WSJT-X non trasmette lo stato e il CAT non è configurato.")
-            st.caption(i18n.tr("In alto compaiono solo le funzioni accese (NB, NR, P.AMP…), come sulla radio. "
-                               "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore. "
-                               "Lo scope mostra la banda passante audio (0–3 kHz sopra la frequenza)."))
-            st.caption(i18n.tr("In arancione i valori presunti (modo da WSJT-X, scala di Id).")
-                       + " " + i18n.tr("Con il firmware SQ6EMM la radio mostra e passa via CI-V la frequenza RF del transverter."))
-        with right:
+        h = render_panel(state, scope=_scope_frame())
+        st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
+        if state.get("error"):
+            st.warning(i18n.tr("Lettura dalla radio non riuscita") + f": {i18n.tr(state['error'])}. "
+                       + i18n.tr("Mostro quello che dice WSJT-X."))
+        elif not state.get("sel"):
+            st.info("Nessun dato: WSJT-X non trasmette lo stato e il CAT non è configurato.")
+        st.caption(i18n.tr("In alto compaiono solo le funzioni accese (NB, NR, P.AMP…), come sulla radio. "
+                           "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore. "
+                           "Lo scope mostra la banda passante audio (0–3 kHz sopra la frequenza).")
+                   + " " + i18n.tr("In arancione i valori presunti (modo da WSJT-X, scala di Id)."))
+        with st.expander("📋 Tutte le impostazioni lette"):
             rows = settings_rows(state)
-            h = '<table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.25">'
+            h = '<table style="width:100%;border-collapse:collapse;font-size:13px;line-height:1.3">'
             last = None
             for g, n, v in rows:
                 if g != last:
