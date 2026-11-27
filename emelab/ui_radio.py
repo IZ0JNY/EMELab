@@ -98,11 +98,15 @@ def render_display(state: dict, now: datetime | None = None) -> str:
         dig = (f'<span class="dig" style="color:{ASSUMED}">{html.escape(v["digital"])}</span>'
                if v.get("digital") else "")
         txb = '<span class="txb">TX</span>' if (tx and active) else ""
+        ifx = ""
+        if v.get("if_hz"):
+            i1, i2 = fmt_freq(v["if_hz"])
+            ifx = f'<span class="ifq">IF {i1}{i2}</span>'
         return (f'<div class="ro {"big" if big else "small"} {"act" if active else ""}">'
                 f'<div class="left"><span class="vfo">{name}</span><span class="mode"{mode_style}>{html.escape(mode)}</span>'
                 f'<span class="fil">{html.escape(v.get("filter") or "")}</span>{dig}</div>'
                 f'<div class="freq">{f1}<small>{f2}</small></div>'
-                f'<div class="right">{txb}<span class="band">{_band(v.get("freq_hz"))}</span></div></div>')
+                f'<div class="right">{txb}<span class="band">{_band(v.get("freq_hz"))}</span>{ifx}</div></div>')
 
     icons = "".join([
         _icon("P.AMP", state.get("preamp")), _icon("ATT", state.get("att") not in (None, "OFF")),
@@ -161,8 +165,9 @@ def render_display(state: dict, now: datetime | None = None) -> str:
 .ic97 .freq{flex:1;text-align:right;font-weight:700;letter-spacing:1px;font-variant-numeric:tabular-nums;line-height:1}
 .ic97 .big .freq{font-size:10.21cqw}.ic97 .small .freq{font-size:6.04cqw;color:#cfd8e2}
 .ic97 .freq small{font-size:.55em;margin-left:2px}
-.ic97 .right{width:8.96cqw;display:flex;flex-direction:column;align-items:flex-end;gap:0.62cqw}
+.ic97 .right{width:13cqw;display:flex;flex-direction:column;align-items:flex-end;gap:0.62cqw}
 .ic97 .band{font-size:1.67cqw;color:#7fd3ff}
+.ic97 .ifq{font-size:1.35cqw;color:#9fb3c8;white-space:nowrap}
 .ic97 .txb{background:#e02424;color:#fff;font-weight:700;font-size:2.08cqw;padding:0 1.04cqw;border-radius:0.31cqw}
 .ic97 .meter{padding:0.83cqw 1.25cqw 2px 1.25cqw}
 .ic97 .mrow{display:flex;align-items:center;gap:0.83cqw;font-size:1.56cqw}
@@ -190,6 +195,12 @@ def render_display(state: dict, now: datetime | None = None) -> str:
 
 
 # ------------------------------------------------------------------ settings table
+def _trv(v):
+    if not v.get("if_hz"):
+        return "—"
+    return f"{v['trv']} · IF " + "{:,.0f} Hz".format(v["if_hz"]).replace(",", ".")
+
+
 def _yn(v):
     return "—" if v is None else ("ON" if v is True else ("OFF" if v is False else str(v)))
 
@@ -207,6 +218,8 @@ def settings_rows(state: dict) -> list[tuple[str, str, str]]:
             ("MAIN/SUB", "Frequenza non selezionata", fq(uns)),
             ("MAIN/SUB", "Modo non selezionato", icom.mode_label(uns.get("mode"), uns.get("data"))
              + (f" · {uns['filter']}" if uns.get("filter") else "")),
+            ("MAIN/SUB", "Transverter sul selezionato", _trv(sel)),
+            ("MAIN/SUB", "Transverter sul non selezionato", _trv(uns)),
             ("MAIN/SUB", "Dualwatch", _yn(state.get("dualwatch"))),
             ("MAIN/SUB", "Modo satellite", _yn(state.get("satmode"))),
             ("MAIN/SUB", "Split / Duplex", state.get("split") or "—"),
@@ -306,12 +319,52 @@ def _connection(sets):
             sets.update(new)
 
 
+def _transverters(sets):
+    """Transverters with the IF on the radio (e.g. 10368 − 144 MHz): the radio shows 144, EMELab shows 10368."""
+    trvs = sets.get("radio_trvs") or icom.DEFAULT_TRANSVERTERS
+    with st.expander("🔁 Transverter (offset IF → RF)"):
+        st.caption("Per ogni transverter la frequenza RF e la IF sull'IC-9700: EMELab somma l'offset (RF − IF) alla "
+                   "frequenza letta dalla radio quando questa è nella banda IF (IF … IF + 2 MHz). Con il firmware "
+                   "SQ6EMM, che passa già la RF via CI-V, l'offset non viene applicato.")
+        import pandas as pd
+        df = pd.DataFrame([{"on": bool(x.get("on", True)), "name": x["name"], "rf_mhz": float(x["rf_mhz"]),
+                            "if_mhz": float(x["if_mhz"])} for x in trvs])
+        df["lo_mhz"] = df["rf_mhz"] - df["if_mhz"]
+        ed = st.data_editor(df, key="rad_trv_ed", num_rows="dynamic", hide_index=True, column_config={
+            "on": _st.column_config.CheckboxColumn(i18n.tr("Attivo"), width="small"),
+            "name": _st.column_config.TextColumn(i18n.tr("Nome")),
+            "rf_mhz": _st.column_config.NumberColumn("RF MHz", format="%.3f"),
+            "if_mhz": _st.column_config.NumberColumn("IF MHz", format="%.3f"),
+            "lo_mhz": _st.column_config.NumberColumn(i18n.tr("Offset MHz"), format="%.3f", disabled=True)})
+        new = [{"on": bool(r["on"]), "name": str(r["name"]).strip(), "rf_mhz": float(r["rf_mhz"]),
+                "if_mhz": float(r["if_mhz"])} for r in ed.to_dict("records")
+               if str(r.get("name") or "").strip() and r.get("rf_mhz") == r.get("rf_mhz") and r.get("if_mhz") == r.get("if_mhz")]
+        names = ["auto", "OFF"] + [x["name"] for x in new]
+        lab = {"auto": i18n.tr("auto (banda da WSJT-X)"), "OFF": i18n.tr("nessuno (mostra la IF)")}
+        c = st.columns(2)
+        cur_m, cur_s = sets.get("radio_trv_main", "auto"), sets.get("radio_trv_sub", "auto")
+        m = c[0].selectbox("Transverter su MAIN", names, index=names.index(cur_m) if cur_m in names else 0,
+                           format_func=lambda k: lab.get(k, k), key="rad_trv_main")
+        s_ = c[1].selectbox("Transverter su SUB", names, index=names.index(cur_s) if cur_s in names else 0,
+                            format_func=lambda k: lab.get(k, k), key="rad_trv_sub")
+        st.caption("«auto» sceglie il transverter dalla frequenza di WSJT-X (se WSJT-X ha il suo offset transverter); "
+                   "con più transverter sulla stessa IF e WSJT-X spento serve sceglierlo qui.")
+        if new != trvs or m != cur_m or s_ != cur_s:
+            openems_local.save_settings(radio_trvs=new, radio_trv_main=m, radio_trv_sub=s_)
+            sets.update(radio_trvs=new, radio_trv_main=m, radio_trv_sub=s_)
+            S.pop("rad_state", None)
+
+
 def _read(sets):
     """At most one reading per REFRESH_S, shared by the display and the table in the same run."""
     last = S.get("rad_state")
     if last and time.time() - last.get("read_utc", 0) < REFRESH_S - 0.2:
         return last
-    S["rad_state"] = icom.read(sets, _wsjtx_status())
+    w = _wsjtx_status()
+    st_ = icom.read(sets, w)
+    S["rad_state"] = icom.apply_transverters(st_, sets.get("radio_trvs") or icom.DEFAULT_TRANSVERTERS,
+                                             sets.get("radio_trv_main", "auto"), sets.get("radio_trv_sub", "auto"),
+                                             (w or {}).get("dial_hz"))
     return S["rad_state"]
 
 
@@ -329,8 +382,9 @@ def _commands(sets, state):
         c = st.columns([3, 1, 2, 1, 3, 1])
         f = c[0].number_input("Frequenza (Hz)", 0, 200_000_000_000, int(sel.get("freq_hz") or 0), 10, key="rad_set_f",
                               disabled=disabled)
-        if c[1].button("Invia", key="rad_go_f", disabled=disabled):
-            _send(sets, "freq_hz", f)
+        if c[1].button("Invia", key="rad_go_f", disabled=disabled,
+                       help="una frequenza RF del transverter viene inviata alla radio come IF"):
+            _send(sets, "freq_hz", icom.rf_to_if(int(f), sets.get("radio_trvs") or icom.DEFAULT_TRANSVERTERS))
         modes = ["USB", "LSB", "CW", "CW-R", "FM", "AM", "RTTY"]
         m = c[2].selectbox("Modo", modes, index=modes.index(sel["mode"]) if sel.get("mode") in modes else 0,
                            key="rad_set_m", disabled=disabled)
@@ -364,6 +418,7 @@ def tab(D=None):
     sets = openems_local.load_settings()
     st.subheader("📟 Radio · Icom IC-9700")
     _connection(sets)
+    _transverters(sets)
     live = st.toggle("Aggiornamento automatico", value=True, key="rad_live",
                      help=f"legge la radio ogni {REFRESH_S} secondi")
 

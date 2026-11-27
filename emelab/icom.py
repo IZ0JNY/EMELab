@@ -509,3 +509,56 @@ def start_rigctld(exe: str, port: str, baud: int = 115200, tcp: int = 4532):
             return False, "rigctld si è chiuso: " + (err or "porta COM occupata da WSJT-X? Chiudi prima WSJT-X")
         time.sleep(0.25)
     return False, "rigctld non risponde"
+
+
+# ------------------------------------------------------------------ transverters (IF on the radio, RF in EMELab)
+DEFAULT_TRANSVERTERS = [{"name": "10GHz", "rf_mhz": 10368.0, "if_mhz": 144.0, "on": True},
+                        {"name": "24GHz", "rf_mhz": 24048.0, "if_mhz": 144.0, "on": True},
+                        {"name": "47GHz", "rf_mhz": 47088.0, "if_mhz": 144.0, "on": True}]
+IF_SPAN_MHZ = 2.0          # a transverter's IF band: if_mhz … if_mhz + 2 MHz (144–146)
+
+
+def lo_hz(trv: dict) -> int:
+    """Local-oscillator offset added to the IF: 10368 − 144 MHz = 10224 MHz."""
+    return round((float(trv["rf_mhz"]) - float(trv["if_mhz"])) * 1e6)
+
+
+def pick_transverter(trvs: list[dict], choice: str | None, if_hz: int | None, wsjtx_hz: int | None = None):
+    """The transverter to apply to a receiver: the one chosen by name, or with «auto» the one whose RF band holds
+    WSJT-X's dial frequency (when WSJT-X has its own transverter offset); only if the radio is inside its IF band."""
+    if not if_hz or if_hz >= 1_400_000_000:          # already RF (SQ6EMM firmware) or nothing read
+        return None
+    fit = [t for t in trvs if t.get("on", True)
+           and float(t["if_mhz"]) * 1e6 <= if_hz <= (float(t["if_mhz"]) + IF_SPAN_MHZ) * 1e6]
+    if not fit or not choice or choice == "OFF":
+        return None
+    if choice == "auto":
+        if wsjtx_hz and wsjtx_hz >= 1_000_000_000:
+            near = min(fit, key=lambda t: abs(float(t["rf_mhz"]) * 1e6 - wsjtx_hz))
+            if abs(float(near["rf_mhz"]) * 1e6 - wsjtx_hz) < 50e6:
+                return near
+        return fit[0] if len(fit) == 1 else None
+    return next((t for t in fit if t["name"] == choice), None)
+
+
+def apply_transverters(state: dict, trvs: list[dict], main: str | None = "auto", sub: str | None = "auto",
+                       wsjtx_hz: int | None = None) -> dict:
+    """Adds the RF frequency to the MAIN and SUB readouts: freq_hz becomes RF, if_hz keeps what the radio shows."""
+    s = dict(state)
+    ms = s.get("main_sub") or "MAIN"
+    for key, rx in (("sel", ms), ("unsel", "SUB" if ms == "MAIN" else "MAIN")):
+        v = s.get(key)
+        if not v or not v.get("freq_hz") or s.get("source") == "wsjtx":
+            continue
+        t = pick_transverter(trvs, main if rx == "MAIN" else sub, v["freq_hz"], wsjtx_hz)
+        if t:
+            s[key] = dict(v, if_hz=v["freq_hz"], freq_hz=v["freq_hz"] + lo_hz(t), trv=t["name"])
+    return s
+
+
+def rf_to_if(hz: int, trvs: list[dict]) -> int:
+    """For a frequency command: an RF frequency typed in EMELab becomes the IF to send to the radio."""
+    for t in trvs:
+        if t.get("on", True) and abs(hz - float(t["rf_mhz"]) * 1e6) < 50e6:
+            return int(hz - lo_hz(t))
+    return int(hz)

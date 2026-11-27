@@ -150,3 +150,22 @@ def test_find_rigctld_in_wsjtx_bin(tmp_path):
     assert icom.find_rigctld([str(tmp_path)]).endswith("rigctld-wsjtx.exe")
     assert icom.rigctld_command(str(tmp_path), "COM4") .endswith("-m 3081 -r COM4 -s 115200 -t 4532")
     assert not icom.rigctld_alive("127.0.0.1", 1)
+
+
+def test_transverter_offsets_if_144():
+    trvs = icom.DEFAULT_TRANSVERTERS
+    assert icom.lo_hz(trvs[0]) == 10_224_000_000
+    st = {"source": "rigctld", "main_sub": "MAIN", "sel": {"freq_hz": 144_100_000}, "unsel": {"freq_hz": 144_160_000}}
+    out = icom.apply_transverters(st, trvs, "10GHz", "24GHz")
+    assert out["sel"]["freq_hz"] == 10_368_100_000 and out["sel"]["if_hz"] == 144_100_000
+    assert out["unsel"]["freq_hz"] == 24_048_160_000 and out["unsel"]["trv"] == "24GHz"
+    # auto: the band from WSJT-X's dial (WSJT-X with its own transverter offset)
+    out = icom.apply_transverters(st, trvs, "auto", "OFF", wsjtx_hz=47_088_100_000)
+    assert out["sel"]["freq_hz"] == 47_088_100_000 and out["unsel"]["freq_hz"] == 144_160_000
+    # auto without a hint and three transverters on 144: nothing is guessed
+    assert icom.apply_transverters(st, trvs, "auto", "auto")["sel"]["freq_hz"] == 144_100_000
+    # SQ6EMM firmware already gives RF: left alone; outside the IF band: left alone
+    st2 = {"source": "serial", "sel": {"freq_hz": 10_368_100_000}, "unsel": {"freq_hz": 432_100_000}}
+    out = icom.apply_transverters(st2, trvs, "10GHz", "10GHz")
+    assert out["sel"]["freq_hz"] == 10_368_100_000 and out["unsel"]["freq_hz"] == 432_100_000
+    assert icom.rf_to_if(24_048_200_000, trvs) == 144_200_000 and icom.rf_to_if(432_000_000, trvs) == 432_000_000
