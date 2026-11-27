@@ -512,9 +512,35 @@ def start_rigctld(exe: str, port: str, baud: int = 115200, tcp: int = 4532):
 
 
 # ------------------------------------------------------------------ transverters (IF on the radio, RF in EMELab)
-DEFAULT_TRANSVERTERS = [{"name": "10GHz", "rf_mhz": 10368.0, "if_mhz": 144.0, "on": True},
-                        {"name": "24GHz", "rf_mhz": 24048.0, "if_mhz": 144.0, "on": True},
-                        {"name": "47GHz", "rf_mhz": 47088.0, "if_mhz": 144.0, "on": True}]
+# Commercial transverters. verified=True: values from the maker's product page (Kuhne shop, read 2026-11-27);
+# verified=False: only band and usual IF, shown in orange as assumed.
+KUHNE = "https://shop.kuhne-electronic.com/kuhne/en/shop/konverter-transverte/transverter/"
+TRANSVERTER_CATALOG = [
+    {"maker": "Kuhne electronic", "model": "MKU 10 G5", "band": "10GHz", "rf_range": "10000–10500 MHz",
+     "if_range": "28–440 MHz", "rf_mhz": 10368.0, "if_mhz": 144.0, "lo": "PLL interno (ref. 10 MHz esterna)",
+     "pout_w": 0.2, "nf_db": 1.3, "drive": "0.5–5 W", "rf_conn": "SMA (RX/TX separati)",
+     "supply": "13.8 V, 580 mA", "verified": True,
+     "url": "https://shop.kuhne-electronic.de/funk/en/shop/konverter-transverte/transverter/MKU+10+G5+3+cm+Transverter/?card=2018"},
+    {"maker": "Kuhne electronic", "model": "MKU 24 G3", "band": "24GHz", "rf_range": "24048–24050 MHz",
+     "if_range": "144–146 MHz", "rf_mhz": 24048.0, "if_mhz": 144.0, "lo": "LO esterno 11952 MHz (×2 = 23904)",
+     "pout_w": 2.0, "nf_db": 3.5, "drive": "0.5–5 W", "rf_conn": "SMA", "supply": "13.8 V, 2 A in TX",
+     "verified": True, "url": KUHNE + "MKU+24+G3+Transverter/?card=1757"},
+    {"maker": "Kuhne electronic", "model": "MKU 47 G2", "band": "47GHz", "rf_range": "47088–47090 MHz",
+     "if_range": "144–146 MHz", "rf_mhz": 47088.0, "if_mhz": 144.0, "lo": "LO esterno 11736 MHz (×4 = 46944)",
+     "pout_w": 0.03, "nf_db": 6.0, "drive": "1–5 W", "rf_conn": "guida WR-19 (UG383/U)", "supply": "13.8 V, 400 mA in TX",
+     "verified": True, "url": KUHNE + "MKU+47+G2+Transverter/?card=1611"},
+    {"maker": "Down East Microwave", "model": "DEM 10368-144", "band": "10GHz", "rf_range": "10368 MHz",
+     "if_range": "144 MHz", "rf_mhz": 10368.0, "if_mhz": 144.0, "lo": "10224 MHz", "verified": False, "url": ""},
+    {"maker": "SG Lab", "model": "Transverter 10 GHz", "band": "10GHz", "rf_range": "10368 MHz",
+     "if_range": "144 / 432 MHz", "rf_mhz": 10368.0, "if_mhz": 144.0, "lo": "10224 MHz", "verified": False, "url": ""},
+]
+DEFAULT_TRANSVERTERS = [{"name": "10GHz", "model": "Kuhne MKU 10 G5", "rf_mhz": 10368.0, "if_mhz": 144.0, "on": True},
+                        {"name": "24GHz", "model": "Kuhne MKU 24 G3", "rf_mhz": 24048.0, "if_mhz": 144.0, "on": True},
+                        {"name": "47GHz", "model": "Kuhne MKU 47 G2", "rf_mhz": 47088.0, "if_mhz": 144.0, "on": True}]
+
+
+def catalog_label(c: dict) -> str:
+    return f"{c['maker'].split()[0]} {c['model']}"
 IF_SPAN_MHZ = 2.0          # a transverter's IF band: if_mhz … if_mhz + 2 MHz (144–146)
 
 
@@ -552,7 +578,8 @@ def apply_transverters(state: dict, trvs: list[dict], main: str | None = "auto",
             continue
         t = pick_transverter(trvs, main if rx == "MAIN" else sub, v["freq_hz"], wsjtx_hz)
         if t:
-            s[key] = dict(v, if_hz=v["freq_hz"], freq_hz=v["freq_hz"] + lo_hz(t), trv=t["name"])
+            s[key] = dict(v, if_hz=v["freq_hz"], freq_hz=v["freq_hz"] + lo_hz(t), trv=t["name"],
+                          trv_model=t.get("model") or "")
     return s
 
 

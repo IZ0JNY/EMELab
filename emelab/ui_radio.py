@@ -198,7 +198,8 @@ def render_display(state: dict, now: datetime | None = None) -> str:
 def _trv(v):
     if not v.get("if_hz"):
         return "—"
-    return f"{v['trv']} · IF " + "{:,.0f} Hz".format(v["if_hz"]).replace(",", ".")
+    return (f"{v['trv']}" + (f" ({v['trv_model']})" if v.get("trv_model") else "") + " · IF "
+            + "{:,.0f} Hz".format(v["if_hz"]).replace(",", "."))
 
 
 def _yn(v):
@@ -327,16 +328,19 @@ def _transverters(sets):
                    "frequenza letta dalla radio quando questa è nella banda IF (IF … IF + 2 MHz). Con il firmware "
                    "SQ6EMM, che passa già la RF via CI-V, l'offset non viene applicato.")
         import pandas as pd
-        df = pd.DataFrame([{"on": bool(x.get("on", True)), "name": x["name"], "rf_mhz": float(x["rf_mhz"]),
-                            "if_mhz": float(x["if_mhz"])} for x in trvs])
+        models = [""] + [icom.catalog_label(c) for c in icom.TRANSVERTER_CATALOG]
+        df = pd.DataFrame([{"on": bool(x.get("on", True)), "name": x["name"], "model": x.get("model") or "",
+                            "rf_mhz": float(x["rf_mhz"]), "if_mhz": float(x["if_mhz"])} for x in trvs])
         df["lo_mhz"] = df["rf_mhz"] - df["if_mhz"]
         ed = st.data_editor(df, key="rad_trv_ed", num_rows="dynamic", hide_index=True, column_config={
             "on": _st.column_config.CheckboxColumn(i18n.tr("Attivo"), width="small"),
             "name": _st.column_config.TextColumn(i18n.tr("Nome")),
+            "model": _st.column_config.SelectboxColumn(i18n.tr("Modello"), options=models),
             "rf_mhz": _st.column_config.NumberColumn("RF MHz", format="%.3f"),
             "if_mhz": _st.column_config.NumberColumn("IF MHz", format="%.3f"),
             "lo_mhz": _st.column_config.NumberColumn(i18n.tr("Offset MHz"), format="%.3f", disabled=True)})
-        new = [{"on": bool(r["on"]), "name": str(r["name"]).strip(), "rf_mhz": float(r["rf_mhz"]),
+        new = [{"on": bool(r["on"]), "name": str(r["name"]).strip(), "model": str(r.get("model") or ""),
+                "rf_mhz": float(r["rf_mhz"]),
                 "if_mhz": float(r["if_mhz"])} for r in ed.to_dict("records")
                if str(r.get("name") or "").strip() and r.get("rf_mhz") == r.get("rf_mhz") and r.get("if_mhz") == r.get("if_mhz")]
         names = ["auto", "OFF"] + [x["name"] for x in new]
@@ -347,12 +351,37 @@ def _transverters(sets):
                            format_func=lambda k: lab.get(k, k), key="rad_trv_main")
         s_ = c[1].selectbox("Transverter su SUB", names, index=names.index(cur_s) if cur_s in names else 0,
                             format_func=lambda k: lab.get(k, k), key="rad_trv_sub")
+        _catalog_table()
         st.caption("«auto» sceglie il transverter dalla frequenza di WSJT-X (se WSJT-X ha il suo offset transverter); "
                    "con più transverter sulla stessa IF e WSJT-X spento serve sceglierlo qui.")
         if new != trvs or m != cur_m or s_ != cur_s:
             openems_local.save_settings(radio_trvs=new, radio_trv_main=m, radio_trv_sub=s_)
             sets.update(radio_trvs=new, radio_trv_main=m, radio_trv_sub=s_)
             S.pop("rad_state", None)
+
+
+def _catalog_table():
+    """Transverters on the market: the Kuhne values come from the maker's pages, the others are assumed (orange)."""
+    st.markdown("**" + i18n.tr("Transverter in commercio") + "**")
+    head = ["Modello", "Banda", "RF", "IF", "LO", "Pout", "NF", "Pilotaggio IF", "Uscita RF"]
+    h = ('<table style="width:100%;border-collapse:collapse;font-size:13px"><tr>'
+         + "".join(f'<th style="text-align:left;padding:2px 6px;border-bottom:1px solid #ccc">{html.escape(i18n.tr(x))}</th>'
+                   for x in head) + "</tr>")
+    for c in icom.TRANSVERTER_CATALOG:
+        col = "" if c.get("verified") else f"color:{ASSUMED};"
+        name = html.escape(icom.catalog_label(c))
+        if c.get("url"):
+            name = f'<a href="{html.escape(c["url"])}" target="_blank">{name}</a>'
+        name += " ✅" if c.get("verified") else ""
+        cells = [name, c["band"], c["rf_range"], c["if_range"], i18n.tr(c.get("lo") or "—"),
+                 "—" if c.get("pout_w") is None else f"{c['pout_w'] * 1000:.0f} mW" if c["pout_w"] < 1 else f"{c['pout_w']:g} W",
+                 "—" if c.get("nf_db") is None else f"{c['nf_db']:g} dB", c.get("drive") or "—",
+                 i18n.tr(c.get("rf_conn") or "—")]
+        h += "<tr>" + "".join(f'<td style="padding:1px 6px;{col}">{x if i == 0 else html.escape(str(x))}</td>'
+                              for i, x in enumerate(cells)) + "</tr>"
+    h += "</table>"
+    st.html(h) if hasattr(_st, "html") else _st.markdown(h, unsafe_allow_html=True)
+    st.caption("✅ dati dalla pagina del costruttore; in arancione i modelli con i soli valori presunti (banda e IF usuali).")
 
 
 def _read(sets):

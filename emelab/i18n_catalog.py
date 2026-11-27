@@ -2606,4 +2606,13 @@ ENTRIES = [
     ('Transverter su MAIN', 'Transverter on MAIN'),
     ('Transverter su SUB', 'Transverter on SUB'),
     ('«auto» sceglie il transverter dalla frequenza di WSJT-X (se WSJT-X ha il suo offset transverter); con più transverter sulla stessa IF e WSJT-X spento serve sceglierlo qui.', "«auto» picks the transverter from WSJT-X's frequency (if WSJT-X has its own transverter offset); with several transverters on the same IF and WSJT-X off, choose it here."),
+    ('Transverter in commercio', 'Transverters on the market'),
+    ('Pilotaggio IF', 'IF drive'),
+    ('Uscita RF', 'RF output'),
+    ('PLL interno (ref. 10 MHz esterna)', 'internal PLL (external 10 MHz ref.)'),
+    ('LO esterno 11952 MHz (×2 = 23904)', 'external LO 11952 MHz (×2 = 23904)'),
+    ('LO esterno 11736 MHz (×4 = 46944)', 'external LO 11736 MHz (×4 = 46944)'),
+    ('SMA (RX/TX separati)', 'SMA (separate RX/TX)'),
+    ('guida WR-19 (UG383/U)', 'WR-19 waveguide (UG383/U)'),
+    ('✅ dati dalla pagina del costruttore; in arancione i modelli con i soli valori presunti (banda e IF usuali).', "✅ data from the maker's page; in orange the models with assumed values only (usual band and IF)."),
 ]

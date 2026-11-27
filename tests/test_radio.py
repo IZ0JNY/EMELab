@@ -169,3 +169,11 @@ def test_transverter_offsets_if_144():
     out = icom.apply_transverters(st2, trvs, "10GHz", "10GHz")
     assert out["sel"]["freq_hz"] == 10_368_100_000 and out["unsel"]["freq_hz"] == 432_100_000
     assert icom.rf_to_if(24_048_200_000, trvs) == 144_200_000 and icom.rf_to_if(432_000_000, trvs) == 432_000_000
+
+
+def test_transverter_catalog_kuhne():
+    by = {c["model"]: c for c in icom.TRANSVERTER_CATALOG}
+    for m, rf in (("MKU 10 G5", 10368), ("MKU 24 G3", 24048), ("MKU 47 G2", 47088)):
+        assert by[m]["verified"] and by[m]["rf_mhz"] == rf and by[m]["if_mhz"] == 144
+    assert [t["model"] for t in icom.DEFAULT_TRANSVERTERS] == ["Kuhne MKU 10 G5", "Kuhne MKU 24 G3", "Kuhne MKU 47 G2"]
+    assert all(t["model"] in [icom.catalog_label(c) for c in icom.TRANSVERTER_CATALOG] for t in icom.DEFAULT_TRANSVERTERS)
