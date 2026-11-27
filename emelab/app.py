@@ -134,7 +134,8 @@ if "tabs_on" not in S and _saved is not None and not openems_local.load_settings
     _saved = [k for k in DEFAULT_ON if k != "station"]               # once: the new defaults also on PCs already set up
     openems_local.save_settings(tabs=_saved, tabs_order=DEFAULT_ORDER, tabs_defaults_0110=True,
                                 tabs_gpsdo_offered=True, tabs_moon_offered=True, tabs_q65lab_offered=True,
-                                tabs_nanoham_offered=True, tabs_radio_offered=True)
+                                tabs_nanoham_offered=True, tabs_radio_offered=True, tabs_horizon_offered=True,
+                                tabs_skydome_offered=True)
 if "tabs_on" not in S:
     if _saved is not None and ({"sspa", "twt"} & set(_saved)):       # 0.1.1 had SSPA and TWT as two tabs
         _saved = [k for k in _saved if k not in ("sspa", "twt")] + ["power"]
