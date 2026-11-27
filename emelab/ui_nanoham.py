@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""🔌 nanoHam tab: the measurements of the setups (voltages, currents, temperatures, PTT and other logic states) sent
+"""nanoHam tab (printed circuit board icon): the measurements of the setups (voltages, currents, temperatures, PTT and other logic states) sent
 by the nanoHam reading boards over the optical fiber, one board per setup (10GHz, 24GHz, 47GHz), with the state of
 each fiber link. Read-only: EMELab only listens to the COM ports.
 
@@ -268,7 +268,7 @@ def _board_editor(cfg: dict, i: int, b: nh.Board):
     if b.port not in names:
         names.append(b.port)
     desc = dict(ports)
-    with st.expander(f"🔌 {b.name} · {b.port or i18n.tr('porta da scegliere')}"):
+    with st.expander(f":material/developer_board: {b.name} · {b.port or i18n.tr('porta da scegliere')}"):
         c = st.columns([3, 3, 2, 1])
         name = c[0].text_input("Nome (banda del setup)", b.name, key=f"nh_name_{i}")
         port = c[1].selectbox("Porta COM", names, index=names.index(b.port), key=f"nh_port_{i}",

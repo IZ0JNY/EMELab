@@ -119,7 +119,7 @@ with st.sidebar:
 
 TABS = [  # key, label, function — "wizard" and "station" are always shown
     ("wizard", "🧭 Assistente", ui._wizard), ("station", "🏠 Stazione", None), ("live", "🔴 Live", ui_live.tab), ("moon", "🌙 Luna", ui_moon.tab), ("horizon", "🏔️ Orizzonte", ui_horizon.tab), ("skydome", "🌌 Volta celeste", ui_skydome.tab), ("setups", "🛰️ Configurazioni", ui._setups),
-    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("radio", "📟 Radio", ui_radio.tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("nanoham", "🔌 nanoHam", ui_nanoham.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
+    ("planner", "🗓️ Pianificatore", ui._planner_tab), ("log", "📡 Log QSO", ui._logbook_tab), ("wsjtx", "📻 WSJT-X", ui._wsjtx_tab), ("radio", "📟 Radio", ui_radio.tab), ("q65lab", "🧪 Q65 Lab", ui_q65lab.tab), ("gpsdo", "🛰️ GPSDO", ui_gpsdo.tab), ("nanoham", ":material/developer_board: nanoHam", ui_nanoham.tab), ("stations", "👥 Stazioni EME", ui._stations_tab),
     ("new", "➕ Nuova misura", ui._new), ("diary", "📒 Diario misure", ui._log), ("analysis", "📊 Analisi", ui._analysis),
     ("charts", "📈 Grafici", ui._charts_tab), ("stats", "📉 Statistiche QSO", ui._qso_stats_tab),
     ("pointing", "🎯 Tracking", ui._pointing_tab), ("camera", "📷 Telecamera Astronomica", ui_camera.tab), ("lna", "🔊 LNA", ui._lna_tab), ("power", "⚡ RF Power", ui._power_tab),
@@ -196,24 +196,48 @@ def _reset_tab_order():
     _save_tabs()
 
 
-def _tabs_settings():
-    """In the Assistant: which tabs to show and in which order (🧭 Assistente stays first, 🏠 Stazione always shown)."""
-    with st.expander("⚙️ Schede da mostrare e ordine"):
-        st.caption("Spunta le schede che usi e spostale con ⬆️ ⬇️: la scelta resta salvata su questo PC. "
-                   "🧭 Assistente resta sempre la prima.")
-        labels = {k: l for k, l, _ in TABS}
-        order = S["tabs_order"]
-        for i, k in enumerate(order):
-            S[f"tabvis_{k}"] = k == "station" or k in S["tabs_on"]
-            c = st.columns([8, 1, 1], vertical_alignment="center")
-            c[0].checkbox(labels[k], key=f"tabvis_{k}", on_change=_toggle_tab, args=(k,), disabled=k == "station",
-                          help="sempre visibile" if k == "station" else None)
-            c[1].button("⬆️", key=f"tabup_{k}", on_click=_move_tab, args=(k, -1), disabled=i == 0, help="sposta prima")
-            c[2].button("⬇️", key=f"tabdn_{k}", on_click=_move_tab, args=(k, 1), disabled=i == len(order) - 1,
-                        help="sposta dopo")
-        st.button("↩️ Ordine originale", key="tab_order_reset", on_click=_reset_tab_order,
-                  help="rimette le schede nell'ordine di EMELab (la scelta di quelle visibili resta)")
+# The main tab bar goes onto more rows (two with the usual tabs) instead of scrolling sideways. Rows are a little lower
+# (30 px instead of 40) and the gap under the bar smaller, so 🔴 Live still fits a 1920×1030 screen without scrolling.
+_TABS_CSS = """<style>
+.st-key-main_tab>div>[role=tablist],.st-key-main_tab>div>[data-baseweb=tab-list]{flex-wrap:wrap !important;overflow:visible !important}
+.st-key-main_tab>div>[role=tablist]{row-gap:0 !important}
+.st-key-main_tab>div>[role=tablist]>[role=tab],.st-key-main_tab>div>[data-baseweb=tab-list]>[role=tab]{flex:0 0 auto;height:30px !important}
+.st-key-main_tab>div>[data-testid=stTabPanel]{padding-top:6px !important}
+</style>"""
 
+
+def _tabs_settings():
+    """In the Assistant: which tabs to show and in which order (🧭 Assistente stays first, 🏠 Stazione always shown).
+    Ivan: ticking or moving a tab must not reload the page, so the list is a fragment (only it reruns) and the tab bar
+    changes with «Aggiorna la barra delle schede» (or at the next click anywhere else)."""
+    with st.expander("⚙️ Schede da mostrare e ordine", expanded=S.pop("_tabs_keep_open", False)):
+        _frag_tabs_list()
+
+
+def _tabs_list():
+    st.caption("Spunta le schede che usi e spostale con ⬆️ ⬇️, anche più di una: la pagina resta ferma e la scelta "
+               "resta salvata su questo PC. 🧭 Assistente resta sempre la prima.")
+    labels = {k: l for k, l, _ in TABS}
+    order = S["tabs_order"]
+    for i, k in enumerate(order):
+        S[f"tabvis_{k}"] = k == "station" or k in S["tabs_on"]
+        c = st.columns([8, 1, 1], vertical_alignment="center")
+        c[0].checkbox(labels[k], key=f"tabvis_{k}", on_change=_toggle_tab, args=(k,), disabled=k == "station",
+                      help="sempre visibile" if k == "station" else None)
+        c[1].button("⬆️", key=f"tabup_{k}", on_click=_move_tab, args=(k, -1), disabled=i == 0, help="sposta prima")
+        c[2].button("⬇️", key=f"tabdn_{k}", on_click=_move_tab, args=(k, 1), disabled=i == len(order) - 1,
+                    help="sposta dopo")
+    c = st.columns(2)
+    c[0].button("↩️ Ordine originale", key="tab_order_reset", on_click=_reset_tab_order,
+                help="rimette le schede nell'ordine di EMELab (la scelta di quelle visibili resta)")
+    pending = (list(S["tabs_on"]), list(S["tabs_order"])) != S.get("_tabs_shown")
+    if c[1].button("✅ Aggiorna la barra delle schede", key="tab_bar_apply", type="primary" if pending else "secondary",
+                   disabled=not pending, help="mostra in alto le schede scelte"):
+        S["_tabs_keep_open"] = True           # the list stays open after the reload
+        st.rerun()
+
+
+_frag_tabs_list = getattr(_st, "fragment", lambda f: f)(_tabs_list)
 
 if not openems_local.load_settings().get("cam_enabled"):
     from emelab import moontrack as _mt
@@ -230,6 +254,9 @@ if not S.pop("_update_dialog", False):
     _ui_tracking.popup()                         # alarm when DriverDish (EA3HMJ) stops working (read-only check)
 _by_key = {t[0]: t for t in TABS}
 shown = [TABS[0]] + [_by_key[k] for k in S["tabs_order"] if k == "station" or k in S["tabs_on"]]
+S["_tabs_shown"] = (list(S["tabs_on"]), list(S["tabs_order"]))   # what the tab bar shows (the chooser compares)
+with _st.sidebar:                                    # in the sidebar: no empty gap above the tab bar
+    _st.markdown(_TABS_CSS, unsafe_allow_html=True)   # Ivan: the tab bar wraps onto two rows instead of scrolling
 try:      # with a key the active tab can be switched from the code (e.g. «Chi posso collegare» → Pianificatore)
     tabs = st.tabs([l for _, l, _ in shown], key="main_tab", on_change="rerun")
 except TypeError:                                   # Streamlit without state on tabs

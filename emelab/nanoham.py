@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ivan De Cesaris, IZ0JNY
-"""nanoHam boards in EMELab (core of the 🔌 nanoHam tab): reads each reading board's lines from a serial (COM) port,
+"""nanoHam boards in EMELab (core of the nanoHam tab): reads each reading board's lines from a serial (COM) port,
 keeps the latest values and a short history, checks the alarm thresholds and writes a CSV log. Read-only: EMELab
 never sends anything to the boards.
 
