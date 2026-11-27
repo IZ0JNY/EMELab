@@ -143,3 +143,10 @@ def test_display_html():
     assert ui_radio.fmt_freq(None) == ("----.---", ".--")
     rows = ui_radio.settings_rows(st)
     assert any(n == "Frequenza selezionata" and v == "10.368.100.000 Hz" for _, n, v in rows)
+
+
+def test_find_rigctld_in_wsjtx_bin(tmp_path):
+    (tmp_path / "rigctld-wsjtx.exe").write_bytes(b"")
+    assert icom.find_rigctld([str(tmp_path)]).endswith("rigctld-wsjtx.exe")
+    assert icom.rigctld_command(str(tmp_path), "COM4") .endswith("-m 3081 -r COM4 -s 115200 -t 4532")
+    assert not icom.rigctld_alive("127.0.0.1", 1)

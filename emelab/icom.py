@@ -459,3 +459,53 @@ def rigctld_command(wsjtx_dir: str, port: str, baud: int = 115200, tcp: int = 45
     """Command line to start rigctld-wsjtx (shipped with WSJT-X) for the IC-9700, to share the port."""
     exe = (wsjtx_dir.rstrip("\\/") + "\\rigctld-wsjtx.exe") if wsjtx_dir else "rigctld-wsjtx.exe"
     return f'"{exe}" -m {HAMLIB_IC9700} -r {port} -s {int(baud)} -t {int(tcp)}'
+
+
+RIGCTLD_DIRS = [r"C:\WSJT\wsjtx\bin", r"C:\Program Files\wsjtx\bin", r"C:\Program Files (x86)\wsjtx\bin",
+                r"C:\WSJT\wsjtx-improved\bin"]
+
+
+def find_rigctld(extra_dirs: list[str] | None = None) -> str | None:
+    """Path of rigctld-wsjtx.exe (shipped with WSJT-X), or of a Hamlib rigctld on the PATH."""
+    import os
+    import shutil
+    for d in (extra_dirs or []) + RIGCTLD_DIRS:
+        p = os.path.join(d, "rigctld-wsjtx.exe")
+        if d and os.path.isfile(p):
+            return p
+    return shutil.which("rigctld-wsjtx") or shutil.which("rigctld")
+
+
+def rigctld_alive(host: str = "127.0.0.1", port: int = 4532) -> bool:
+    try:
+        with socket.create_connection((host, int(port)), 0.5):
+            return True
+    except OSError:
+        return False
+
+
+_RIGCTLD_PROC = None
+
+
+def start_rigctld(exe: str, port: str, baud: int = 115200, tcp: int = 4532):
+    """Starts rigctld for the IC-9700 (only from the «Avvia rigctld» button). (ok, message)."""
+    global _RIGCTLD_PROC
+    import subprocess
+    import sys
+    if rigctld_alive("127.0.0.1", tcp):
+        return True, "rigctld è già in ascolto"
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+    try:
+        _RIGCTLD_PROC = subprocess.Popen([exe, "-m", str(HAMLIB_IC9700), "-r", port, "-s", str(int(baud)),
+                                          "-t", str(int(tcp))], creationflags=flags,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except Exception as e:
+        return False, str(e)
+    for _ in range(20):
+        if rigctld_alive("127.0.0.1", tcp):
+            return True, "rigctld avviato"
+        if _RIGCTLD_PROC.poll() is not None:
+            err = (_RIGCTLD_PROC.stderr.read() or b"").decode(errors="replace").strip()[-300:]
+            return False, "rigctld si è chiuso: " + (err or "porta COM occupata da WSJT-X? Chiudi prima WSJT-X")
+        time.sleep(0.25)
+    return False, "rigctld non risponde"

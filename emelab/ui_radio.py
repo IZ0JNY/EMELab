@@ -260,13 +260,40 @@ def _connection(sets):
             st.caption("Con WSJT-X aperto la porta USB è occupata: usa la presa REMOTE con un cavo CI-V "
                        "(menu SET › Connectors › CI-V › CI-V USB Port = Link to [REMOTE]) oppure rigctld.")
         elif src == "rigctld":
-            host = c[0].text_input("Host", sets.get("radio_host", "127.0.0.1"), key="rad_host")
-            rport = c[1].number_input("Porta TCP", 1, 65535, int(sets.get("radio_rport", 4532)), key="rad_rport")
-            new = dict(radio_host=host, radio_rport=int(rport))
+            try:
+                from emelab import gpsdo
+                ports = [p for p, _ in gpsdo.serial_ports()]
+            except Exception:
+                ports = []
+            cur_port = sets.get("radio_port") or "COM3"
+            port = c[0].selectbox("Porta COM della radio", list(dict.fromkeys(ports + [cur_port])),
+                                  index=list(dict.fromkeys(ports + [cur_port])).index(cur_port), key="rad_rport_com")
+            bauds = [115200, 57600, 38400, 19200, 9600]
+            baud = c[1].selectbox("Velocità", bauds, index=bauds.index(int(sets.get("radio_baud", 115200))),
+                                  key="rad_rbaud")
+            host = c[2].text_input("Host", sets.get("radio_host", "127.0.0.1"), key="rad_host")
+            rport = c[3].number_input("Porta TCP", 1, 65535, int(sets.get("radio_rport", 4532)), key="rad_rport")
+            new = dict(radio_port=port, radio_baud=int(baud), radio_host=host, radio_rport=int(rport))
             st.markdown(i18n.tr("rigctld fa da centralino: apre lui la porta della radio e la condivide con WSJT-X e "
-                                "EMELab. Avvialo così (è nella cartella bin di WSJT-X):"))
-            st.code(icom.rigctld_command(r"C:\WSJT\wsjtx\bin", sets.get("radio_port") or "COM3",
-                                         sets.get("radio_baud", 115200), int(rport)))
+                                "EMELab. Va avviato con WSJT-X chiuso (o con il CAT di WSJT-X già su rigctld)."))
+            exe = icom.find_rigctld([sets.get("wsjtx_bin_dir") or ""])
+            alive = icom.rigctld_alive(host, int(rport))
+            c = st.columns([2, 5])
+            if c[0].button("▶️ Avvia rigctld", key="rad_rig_start", disabled=alive or not exe,
+                           help="avvia rigctld-wsjtx.exe della cartella di WSJT-X per l'IC-9700"):
+                ok, msg = icom.start_rigctld(exe, port, int(baud), int(rport))
+                S["rad_rig_msg"] = (ok, i18n.tr(msg))
+                alive = icom.rigctld_alive(host, int(rport))
+            if alive:
+                c[1].success(i18n.tr("rigctld in ascolto su") + f" {host}:{int(rport)}")
+            elif not exe:
+                c[1].warning("rigctld-wsjtx.exe non trovato: è nella cartella bin di WSJT-X.")
+            else:
+                c[1].info(i18n.tr("rigctld non è avviato") + f" · {exe}")
+            if S.get("rad_rig_msg") and not alive:
+                (st.success if S["rad_rig_msg"][0] else st.error)(S["rad_rig_msg"][1])
+            st.code(icom.rigctld_command(exe.rsplit("\\", 1)[0] if exe and "\\" in exe else r"C:\WSJT\wsjtx\bin",
+                                         port, int(baud), int(rport)))
             st.caption("Poi in WSJT-X › Settings › Radio scegli «Hamlib NET rigctl», server 127.0.0.1:4532. "
                        "Questo lo fai tu: EMELab non cambia le impostazioni di WSJT-X.")
         else:

@@ -2586,4 +2586,13 @@ ENTRIES = [
     ('inviato', 'sent'),
     ('la radio ha rifiutato il comando', 'the radio refused the command'),
     ('con la sola lettura da WSJT-X non si possono inviare comandi', 'reading from WSJT-X only, no commands can be sent'),
+    ('Porta COM della radio', "Radio's COM port"),
+    ('rigctld fa da centralino: apre lui la porta della radio e la condivide con WSJT-X e EMELab. Va avviato con WSJT-X chiuso (o con il CAT di WSJT-X già su rigctld).', "rigctld acts as a switchboard: it opens the radio's port and shares it with WSJT-X and EMELab. Start it with WSJT-X closed (or with WSJT-X's CAT already on rigctld)."),
+    ('▶️ Avvia rigctld', '▶️ Start rigctld'),
+    ('rigctld in ascolto su', 'rigctld listening on'),
+    ('rigctld-wsjtx.exe non trovato: è nella cartella bin di WSJT-X.', "rigctld-wsjtx.exe not found: it is in WSJT-X's bin folder."),
+    ('rigctld non è avviato', 'rigctld is not running'),
+    ('rigctld è già in ascolto', 'rigctld is already listening'),
+    ('rigctld avviato', 'rigctld started'),
+    ('rigctld non risponde', 'rigctld does not answer'),
 ]
