@@ -39,11 +39,47 @@ SOURCES = [
      "flux": lambda f, y: _baars(4.695, 0.085, -0.178)(f)},
     {"name": "Ori A", "ra": 83.82, "dec": -5.39, "diam_deg": 0.06, "kind": "HII region (thermal)",
      "flux": lambda f, y: 400.0 * (f / 10.0) ** -0.1},
-    {"name": "Vir A (M87)", "ra": 187.706, "dec": 12.391, "diam_deg": 0.03, "kind": "radio galaxy",
+    {"name": "M87 (Vir A)", "ra": 187.706, "dec": 12.391, "diam_deg": 0.03, "kind": "radio galaxy", "bh": True,
+     "bh_note": "M87*: 6,5 miliardi di masse solari, la prima foto di un buco nero (EHT 2019)",
      "flux": lambda f, y: _baars(5.023, -0.856)(f)},
-    {"name": "Sgr A", "ra": 266.417, "dec": -29.008, "diam_deg": 0.3, "kind": "galactic centre",
+    {"name": "Sgr A*", "ra": 266.417, "dec": -29.008, "diam_deg": 0.3, "kind": "galactic centre", "bh": True,
+     "bh_note": "il buco nero al centro della Via Lattea, 4 milioni di masse solari (con la regione Sgr A intorno)",
      "flux": lambda f, y: 300.0 * (f / 10.0) ** -0.6},
+    # other black holes: supermassive (quasars, radio galaxies) and stellar (X-ray binaries). Fluxes indicative,
+    # the quasars and the binaries are variable.
+    {"name": "Cen A", "ra": 201.365, "dec": -43.019, "diam_deg": 0.2, "kind": "radio galaxy", "bh": True,
+     "bh_note": "buco nero di 55 milioni di masse solari, la radiogalassia più vicina", "flux": lambda f, y: 200.0 * (f / 10.0) ** -0.7},
+    {"name": "3C 273", "ra": 187.278, "dec": 2.052, "diam_deg": 0.01, "kind": "quasar", "bh": True,
+     "bh_note": "il primo quasar scoperto: buco nero di 900 milioni di masse solari", "flux": lambda f, y: 40.0 * (f / 10.0) ** -0.3},
+    {"name": "3C 279", "ra": 194.047, "dec": -5.789, "diam_deg": 0.01, "kind": "quasar (blazar)", "bh": True,
+     "bh_note": "blazar: il getto del buco nero punta verso di noi", "flux": lambda f, y: 20.0 * (f / 10.0) ** -0.2},
+    {"name": "Cyg X-1", "ra": 299.590, "dec": 35.202, "diam_deg": 0.001, "kind": "X-ray binary", "bh": True,
+     "bh_note": "il primo buco nero stellare scoperto, 21 masse solari", "flux": lambda f, y: 0.015},
+    {"name": "GRS 1915+105", "ra": 288.798, "dec": 10.946, "diam_deg": 0.001, "kind": "microquasar", "bh": True,
+     "bh_note": "microquasar: getti quasi alla velocità della luce", "flux": lambda f, y: 0.05},
+    {"name": "V404 Cyg", "ra": 306.016, "dec": 33.867, "diam_deg": 0.001, "kind": "X-ray binary", "bh": True,
+     "bh_note": "buco nero stellare di 9 masse solari, a tratti in esplosione (2015)", "flux": lambda f, y: 0.001},
 ]
+
+# brightest stars, for the look of the dome only (J2000 RA, Dec, visual magnitude)
+STARS = [("Sirio", 101.287, -16.716, -1.46), ("Canopo", 95.988, -52.696, -0.74), ("Arturo", 213.915, 19.182, -0.05),
+         ("Vega", 279.235, 38.784, 0.03), ("Capella", 79.172, 45.998, 0.08), ("Rigel", 78.634, -8.202, 0.13),
+         ("Procione", 114.825, 5.225, 0.34), ("Betelgeuse", 88.793, 7.407, 0.5), ("Achernar", 24.429, -57.237, 0.46),
+         ("Altair", 297.696, 8.868, 0.77), ("Aldebaran", 68.980, 16.509, 0.85), ("Antares", 247.352, -26.432, 0.96),
+         ("Spica", 201.298, -11.161, 0.97), ("Polluce", 116.329, 28.026, 1.14), ("Fomalhaut", 344.413, -29.622, 1.16),
+         ("Deneb", 310.358, 45.280, 1.25), ("Regolo", 152.093, 11.967, 1.35), ("Castore", 113.650, 31.888, 1.58),
+         ("Bellatrix", 81.283, 6.350, 1.64), ("Elnath", 81.573, 28.608, 1.65), ("Alnilam", 84.053, -1.202, 1.69),
+         ("Alnitak", 85.190, -1.943, 1.77), ("Mintaka", 83.002, -0.299, 2.23), ("Alioth", 193.507, 55.960, 1.76),
+         ("Dubhe", 165.932, 61.751, 1.79), ("Mirfak", 51.081, 49.861, 1.79), ("Alkaid", 206.885, 49.313, 1.86),
+         ("Polaris", 37.955, 89.264, 1.98), ("Mizar", 200.981, 54.925, 2.04), ("Merak", 165.460, 56.382, 2.37),
+         ("Phecda", 178.458, 53.695, 2.44), ("Megrez", 183.857, 57.033, 3.31), ("Hamal", 31.793, 23.462, 2.0),
+         ("Alpheratz", 2.097, 29.091, 2.06), ("Schedar", 10.127, 56.537, 2.24), ("Caph", 2.295, 59.150, 2.28),
+         ("Ruchbah", 21.454, 60.235, 2.68), ("Navi", 14.177, 60.717, 2.47), ("Denebola", 177.265, 14.572, 2.13),
+         ("Algol", 47.042, 40.956, 2.1), ("Rasalhague", 263.734, 12.560, 2.08), ("Kochab", 222.676, 74.156, 2.08),
+         ("Sadr", 305.557, 40.257, 2.23), ("Eltanin", 269.152, 51.489, 2.23), ("Alphecca", 233.672, 26.715, 2.23),
+         ("Albireo", 292.680, 27.960, 3.08), ("Markab", 346.190, 15.205, 2.49), ("Scheat", 345.944, 28.083, 2.42),
+         ("Shaula", 263.402, -37.104, 1.62), ("Kaus Australis", 276.043, -34.385, 1.85), ("Nunki", 283.816, -26.297, 2.05)]
+
 
 # planets: erfa.plan94 number, radius (km), disk brightness temperature (K) at 10 / 24 / 47 GHz (indicative,
 # de Pater 1990; Venus from the cm-wave spectrum, Jupiter thermal without the synchrotron belts)
@@ -111,7 +147,8 @@ def bodies(dt: datetime, lat: float, lon: float, h_m: float = 0.0, f_ghz: float 
     for s in SOURCES:
         v = m @ radec_vec(s["ra"], s["dec"])
         az, el = _azel(enu, v)
-        out.append({"name": s["name"], "kind": "source", "az": az, "el": el,
+        out.append({"name": s["name"], "kind": "source", "bh": s.get("bh", False), "bh_note": s.get("bh_note", ""),
+                    "az": az, "el": el,
                     "el_radio": el + (astro.radio_refraction_deg(el, h_m / 1000) if el > -1 else 0.0),
                     "u": _unit(v), "diam_deg": s["diam_deg"], "flux_jy": s["flux"](f_ghz, year), "what": s["kind"]})
     return out
@@ -202,12 +239,12 @@ def close_approaches(start: datetime, days: float, lat: float, lon: float, h_m: 
     return out
 
 
-def galactic_plane(n: int = 181) -> list[tuple[float, float]]:
-    """(RA, Dec) of the galactic equator, J2000 (inverse of moon.galactic)."""
+def galactic_plane(n: int = 181, b_deg: float = 0.0) -> list[tuple[float, float]]:
+    """(RA, Dec) of the galactic parallel b_deg (0 = galactic equator), J2000 (inverse of moon.galactic)."""
     ra_p, dec_p, l_ncp = math.radians(192.85948), math.radians(27.12825), math.radians(122.93192)
     out = []
     for i in range(n):
-        lg, b = math.radians(i * 360 / (n - 1)), 0.0
+        lg, b = math.radians(i * 360 / (n - 1)), math.radians(b_deg)
         sd = math.sin(b) * math.sin(dec_p) + math.cos(b) * math.cos(dec_p) * math.cos(l_ncp - lg)
         dec = math.asin(sd)
         y = math.cos(b) * math.sin(l_ncp - lg)
@@ -226,6 +263,18 @@ def ecliptic(dt: datetime, n: int = 181) -> list[tuple[float, float]]:
         ra = math.atan2(math.sin(lam) * math.cos(eps), math.cos(lam))
         dec = math.asin(math.sin(eps) * math.sin(lam))
         out.append((math.degrees(ra) % 360, math.degrees(dec)))
+    return out
+
+
+def milky_way(step_l: float = 1.5) -> list[tuple[float, float, float]]:
+    """(RA, Dec, brightness 0–1) of a soft band along the galactic plane, brighter towards the centre (l = 0)."""
+    out = []
+    n = int(360 / step_l) + 1
+    for b in (-10, -7, -5, -3.5, -2, -1, 0, 1, 2, 3.5, 5, 7, 10):
+        for (ra, dec), i in zip(galactic_plane(n, b), range(n)):
+            lg = i * step_l
+            w = math.exp(-(b / 4.5) ** 2) * (0.35 + 0.65 * math.exp(-((((lg + 180) % 360) - 180) / 70) ** 2))
+            out.append((ra, dec, w))
     return out
 
 

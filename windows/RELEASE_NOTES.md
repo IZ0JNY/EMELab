@@ -1,3 +1,17 @@
+## EMELab 0.1.23 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.23.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.23-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🏔️ Orizzonte, nuova scheda:** lo skyline delle montagne calcolato dal terreno SRTM (≈30 m) fino a 60 km, con curvatura terrestre e rifrazione radio. La Luna delle prossime 24 ore sopra il profilo, i minuti persi dietro le montagne per ogni passaggio, l'orizzonte del DX e le finestre comuni con i due terreni. Un pulsante lo salva come orizzonte libero di EMELab (o lo unisce al tuo). Il terreno si scarica una volta sola (circa 3 MB).
+- **🌌 Volta celeste, nuova scheda:** il cielo come in un planetario, con Sole, Luna, pianeti, radiosorgenti, Via Lattea, stelle e **buchi neri** (Sgr A*, M87*, Cen A, 3C 273, 3C 279, Cyg X-1, V404 Cyg, GRS 1915+105). Quando punti Luna o Sole: chi è vicino al fascio e quanti kelvin aggiunge con la tua parabola, e i passaggi vicini dei prossimi 30 giorni.
+- Idee da YAEC di Costantino IC8TEM.
+
+### 🇬🇧 What's new
+- **🏔️ Horizon, new tab:** the mountain skyline computed from SRTM terrain (≈30 m) out to 60 km, with Earth curvature and radio refraction. The Moon of the next 24 hours over it, the minutes lost behind the mountains for each pass, the DX horizon and the common windows with both terrains. A button saves it as EMELab's free horizon (or merges it with yours). The terrain is downloaded once (about 3 MB).
+- **🌌 Sky dome, new tab:** the sky as in a planetarium, with Sun, Moon, planets, radio sources, Milky Way, stars and **black holes** (Sgr A*, M87*, Cen A, 3C 273, 3C 279, Cyg X-1, V404 Cyg, GRS 1915+105). When you point at the Moon or the Sun: what is near the beam and how many kelvin it adds with your dish, and the close passes of the next 30 days.
+- Ideas from YAEC by Costantino IC8TEM.
+
 ## EMELab 0.1.22 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.22.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.22-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

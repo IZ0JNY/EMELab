@@ -156,10 +156,17 @@ def horizon(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 
             "obs_h_m": np.round(h[rows, k], 0).tolist(), "tiles": sum(m.tiles for m in mos), "source": SOURCE}
 
 
+def _hz_file(lat, lon, antenna_agl_m, max_km) -> Path:
+    return _cache_dir() / f"hz_{lat:.5f}_{lon:.5f}_{antenna_agl_m:.1f}_{max_km:.0f}.json"
+
+
+def is_cached(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 60.0) -> bool:
+    return _hz_file(lat, lon, antenna_agl_m, max_km).exists()
+
+
 def cached_horizon(lat: float, lon: float, antenna_agl_m: float = 3.0, max_km: float = 60.0, fetch=None) -> dict:
     """horizon() saved next to the tiles, so that it is computed once per place and antenna height."""
-    key = f"hz_{lat:.5f}_{lon:.5f}_{antenna_agl_m:.1f}_{max_km:.0f}.json"
-    f = _cache_dir() / key
+    f = _hz_file(lat, lon, antenna_agl_m, max_km)
     if f.exists():
         try:
             return json.loads(f.read_text(encoding="utf-8"))

@@ -19,6 +19,11 @@ ASSUMED_COLOR = "#e8590c"
 TERRAIN_COLOR = "#8d6e63"
 
 
+def _compass():
+    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"] if i18n.get_lang() == "en" else \
+        ["N", "NE", "E", "SE", "S", "SO", "O", "NO", "N"]
+
+
 def _local_tz():
     return datetime.now().astimezone().tzinfo
 
@@ -80,7 +85,7 @@ def _plot(hz, track, manual, title, dx_hz=None, height=380):
     ymax = max(20.0, max(hz["el"]) + 6, max((p[2] for p in track), default=0) + 2 if track else 0)
     fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10),
                       xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 45)),
-                                 ticktext=["N", "NE", "E", "SE", "S", "SO", "O", "NO", "N"], title="Azimut"),
+                                 ticktext=_compass(), title="Azimut"),
                       yaxis=dict(range=[min(0.0, min(hz["el"]) - 1), min(ymax, 90)], title="Elevazione (°)"),
                       legend=dict(orientation="h", y=-0.25))
     return i18n.translate_plotly(fig)
@@ -111,7 +116,6 @@ def tab(D):
     if not stn.get("lat"):
         st.info("Inserisci nominativo e locator nella scheda Stazione: l'orizzonte parte dalla tua posizione.")
         return
-    S = _st.session_state
     lat, lon, h = float(stn["lat"]), float(stn["lon"]), float(stn.get("height_m") or 0.0)
     cfg = openems_local.load_settings()
     st.markdown("### 🏔️ Orizzonte dal terreno")
@@ -131,6 +135,11 @@ def tab(D):
                    "</span>"), unsafe_allow_html=True)
     if agl != cfg.get("terrain_agl_m", 3.0):
         openems_local.save_settings(terrain_agl_m=agl)
+    S = _st.session_state
+    if not terrain.is_cached(round(lat, 5), round(lon, 5), float(agl), float(max_km)) and not S.get("hz_go"):
+        st.button("🏔️ Scarica il terreno e calcola l'orizzonte", key="hz_go_btn", type="primary",
+                  on_click=lambda: S.__setitem__("hz_go", True))
+        return
     with st.spinner(i18n.tr("Calcolo dell'orizzonte dal terreno…")):
         hz, err = _compute(lat, lon, agl, max_km)
     if hz is None:

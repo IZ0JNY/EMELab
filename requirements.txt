@@ -6,6 +6,7 @@ streamlit>=1.35
 pandas>=2.0
 pyerfa>=2.0
 pypdf>=4.0
+pillow>=9.0
 timezonefinder>=6.0
 tzdata
 zwoasi>=0.2

@@ -23,6 +23,11 @@ MARK = {"moon": ("#f5f0d0", 18), "sun": ("#ffb300", 18), "planet": ("#26a69a", 9
 ICON = {"Luna": "🌙", "Sole": "☀️"}
 
 
+def _compass():
+    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"] if i18n.get_lang() == "en" else \
+        ["N", "NE", "E", "SE", "S", "SO", "O", "NO", "N"]
+
+
 def _local_tz():
     return datetime.now().astimezone().tzinfo
 
@@ -48,67 +53,117 @@ def _t_atm(f, wx, el):
     return atmos.sky_temperature(atmos.slant_attenuation(z, max(el, 0.5)), wx["t_c"])
 
 
-def _dome(bl, f, wx, tracks, hz, tgt, hp, gal, ecl):
+SKY_SCALE = [[0.0, "#050b1a"], [0.25, "#0b1736"], [0.5, "#1d1f4d"], [0.7, "#4a2160"], [0.85, "#a8396b"], [1.0, "#f08c4a"]]
+PLANET_COL = {"Venere": "#fff3c4", "Marte": "#ff6b4a", "Giove": "#e9c99a", "Saturno": "#f2d27a"}
+BG, FG = "#050b1a", "#dfe6ff"
+
+
+def _icon(b):
+    if b["name"] in ICON:
+        return ICON[b["name"]]
+    if b.get("bh"):
+        return "⚫"
+    return "🪐" if b["kind"] == "planet" else "📡"
+
+
+def _split(pts):
+    """Az/El polyline with breaks below the horizon and across north (0/360°)."""
+    xs, ys = [], []
+    for a, e in pts:
+        if e < 0 or (xs and xs[-1] is not None and abs(a - xs[-1]) > 180):
+            xs.append(None)
+            ys.append(None)
+            if e < 0:
+                continue
+        xs.append(a)
+        ys.append(e)
+    return xs, ys
+
+
+def _glow(fig, x, y, color, sizes, opac, name=None, text=None, hover=None, symbol="circle", line=None):
+    for i, (sz, op) in enumerate(zip(sizes, opac)):
+        last = i == len(sizes) - 1
+        fig.add_trace(go.Scatter(x=x, y=y, mode="markers+text" if (last and text) else "markers",
+                                 marker=dict(size=sz, color=color, opacity=op, symbol=symbol,
+                                             line=line if last and line else dict(width=0)),
+                                 text=text if last else None, textposition="top center",
+                                 textfont=dict(color=FG, size=11), name=name, showlegend=bool(last and name),
+                                 hovertext=hover if last else None, hoverinfo="text" if (last and hover) else "skip"))
+
+
+def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl):
     fig = go.Figure()
     els = np.arange(0, 91, 1.0)
     tsky = [[_t_atm(f, wx, e)] * 2 for e in els]
-    fig.add_trace(go.Heatmap(x=[0.0, 360.0], y=els, z=tsky, colorscale="Turbo", zmin=0, zmax=max(60, tsky[0][0]),
-                             colorbar=dict(title="T cielo (K)", len=0.8), opacity=0.55, hoverinfo="skip"))
+    fig.add_trace(go.Heatmap(x=[0.0, 360.0], y=els, z=tsky, colorscale=SKY_SCALE, zmin=2.7, zmax=max(30.0, tsky[0][0]),
+                             colorbar=dict(title=dict(text="Rumore<br>atmosfera (K)", font=dict(color=FG, size=11)),
+                                           len=0.75, thickness=10, tickfont=dict(color=FG, size=10), outlinewidth=0),
+                             hoverinfo="skip"))
+    up = [(a, e, w) for a, e, w in mw if e > 0]                       # Milky Way: overlapping soft dots
+    fig.add_trace(go.Scatter(x=[a for a, _, _ in up], y=[e for _, e, _ in up], mode="markers", hoverinfo="skip",
+                             marker=dict(size=24, color=[f"rgba(190,205,255,{0.04 + 0.09 * w:.3f})" for _, _, w in up],
+                                         line=dict(width=0)), name=i18n.tr("Via Lattea")))
+    st_up = [s for s in stars if s[2] > 0]
+    sz = [max(2.0, 2.2 + (2.2 - s[3]) * 1.6) for s in st_up]
+    fig.add_trace(go.Scatter(x=[s[1] for s in st_up], y=[s[2] for s in st_up], mode="markers", showlegend=False,
+                             marker=dict(size=[z * 2.6 for z in sz], color="rgba(255,255,255,0.10)", line=dict(width=0)),
+                             hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=[s[1] for s in st_up], y=[s[2] for s in st_up], mode="markers", name=i18n.tr("Stelle"),
+                             marker=dict(size=sz, color="#ffffff", line=dict(width=0)),
+                             hovertext=[s[0] for s in st_up], hoverinfo="text"))
+    xs, ys = _split(ecl)
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="rgba(255,214,102,0.55)", dash="dot", width=1.2),
+                             name=i18n.tr("Eclittica"), hoverinfo="skip"))
+    tz = _local_tz()
+    for name, tr in tracks.items():
+        pts = [(a, e) for _, a, e in tr]
+        xs, ys = _split(pts)
+        col = "rgba(220,225,240,{})" if name == "Luna" else "rgba(255,190,60,{})"
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=col.format(0.18), width=7), hoverinfo="skip",
+                                 showlegend=False))
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=col.format(0.85), width=1.6),
+                                 name=f"{ICON[name]} " + i18n.tr("prossime 24 ore"), hoverinfo="skip"))
+        marks = [(t, a, e) for t, a, e in tr if e > 0 and t.minute < 10 and t.hour % 3 == 0]
+        fig.add_trace(go.Scatter(x=[a for _, a, _ in marks], y=[e for _, _, e in marks], mode="text", showlegend=False,
+                                 text=[f"{t.astimezone(tz):%H}" for t, _, _ in marks], textposition="bottom center",
+                                 textfont=dict(color=col.format(0.8), size=9), hoverinfo="skip"))
     if hz:
         a = list(range(0, 361))
         fig.add_trace(go.Scatter(x=a, y=[min(wizard.el_min(hz, x), 90) for x in a], fill="tozeroy", mode="lines",
-                                 line=dict(color="#6d4c41", width=1), fillcolor="rgba(109,76,65,0.75)",
+                                 line=dict(color="#6d4c41", width=1.5), fillcolor="rgba(2,4,9,0.92)",
                                  name=i18n.tr("Orizzonte libero"), hoverinfo="skip"))
-    for pts, name, col, dash in ((gal, i18n.tr("Piano galattico"), "white", "dot"),
-                                 (ecl, i18n.tr("Eclittica"), "#fff59d", "dash")):
-        xs, ys = [], []
-        for a, e in pts:
-            if e < 0:
-                xs.append(None)
-                ys.append(None)
-                continue
-            if xs and xs[-1] is not None and abs(a - xs[-1]) > 180:
-                xs.append(None)
-                ys.append(None)
-            xs.append(a)
-            ys.append(e)
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=col, dash=dash, width=1.5), name=name,
-                                 hoverinfo="skip"))
-    tz = _local_tz()
-    for name, tr in tracks.items():
-        xs, ys, tx = [], [], []
-        for t, a, e in tr:
-            if e < 0 or (xs and xs[-1] is not None and abs(a - xs[-1]) > 180):
-                xs.append(None)
-                ys.append(None)
-                tx.append("")
-                if e < 0:
-                    continue
-            xs.append(a)
-            ys.append(e)
-            tx.append(f"{t.astimezone(tz):%H:%M}")
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", text=tx, name=f"{ICON[name]} " + i18n.tr("prossime 24 ore"),
-                                 line=dict(color="#bdbdbd" if name == "Luna" else "#ffca28", width=1.5),
-                                 hovertemplate="%{text} · AZ %{x:.0f}° · EL %{y:.1f}°<extra></extra>"))
-    up = [b for b in bl if b["el"] > -1]
-    for kind in ("source", "planet", "sun", "moon"):
-        bs = [b for b in up if b["kind"] == kind]
-        if not bs:
-            continue
-        col, size = MARK[kind]
-        fig.add_trace(go.Scatter(x=[b["az"] for b in bs], y=[b["el"] for b in bs], mode="markers+text",
-                                 text=[ICON.get(b["name"], "") + " " + i18n.tr(b["name"]) for b in bs],
-                                 textposition="top center", textfont=dict(color="white", size=11),
-                                 marker=dict(color=col, size=size, line=dict(color="#333", width=1)),
-                                 name={"source": i18n.tr("Radiosorgenti"), "planet": i18n.tr("Pianeti"),
-                                       "sun": i18n.tr("Sole"), "moon": i18n.tr("Luna")}[kind],
-                                 hovertemplate="%{text} · AZ %{x:.1f}° · EL %{y:.1f}°<extra></extra>"))
-    fig.update_layout(height=470, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="#0b1a33",
+    vis = [b for b in bl if b["el"] > 0]
+    for b in vis:
+        hov = f"{_icon(b)} {i18n.tr(b['name'])}<br>AZ {b['az']:.1f}° · EL {b['el']:.1f}°"
+        if b["kind"] == "sun":
+            _glow(fig, [b["az"]], [b["el"]], "#ffb300", [70, 44, 26], [0.10, 0.25, 1.0], i18n.tr("Sole"),
+                  ["☀️ " + i18n.tr("Sole")], hov)
+        elif b["kind"] == "moon":
+            _glow(fig, [b["az"]], [b["el"]], "#f2efe2", [56, 34, 22], [0.08, 0.22, 1.0], i18n.tr("Luna"),
+                  ["🌙 " + i18n.tr("Luna")], hov, line=dict(color="#bdbdbd", width=1))
+        elif b["kind"] == "planet":
+            _glow(fig, [b["az"]], [b["el"]], PLANET_COL.get(b["name"], "#26a69a"), [22, 9], [0.25, 1.0], None,
+                  [i18n.tr(b["name"])], hov)
+        elif b.get("bh"):
+            _glow(fig, [b["az"]], [b["el"]], "#ff8c1a", [30, 20], [0.12, 0.28], None, None, None)
+            _glow(fig, [b["az"]], [b["el"]], "#000000", [12], [1.0], None, [b["name"]],
+                  hov + "<br>" + i18n.tr(b.get("bh_note", "")), line=dict(color="#ffb347", width=2.5))
+        else:
+            _glow(fig, [b["az"]], [b["el"]], "#c77dff", [22, 10], [0.25, 1.0], None, [b["name"]],
+                  hov + f"<br>{b['flux_jy']:.0f} Jy", symbol="diamond")
+    # legend entries for the kinds drawn without a legend of their own
+    for lab, col, sym, ln in ((i18n.tr("Pianeti"), "#e9c99a", "circle", None), (i18n.tr("Radiosorgenti"), "#c77dff", "diamond", None),
+                              (i18n.tr("Buchi neri"), "#000000", "circle", dict(color="#ffb347", width=2.5))):
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=lab,
+                                 marker=dict(color=col, size=10, symbol=sym, line=ln or dict(width=0))))
+    fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+                      font=dict(color=FG), hoverlabel=dict(bgcolor="#111a33", font=dict(color=FG)),
                       xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 45)),
-                                 ticktext=["N", "NE", "E", "SE", "S", "SO", "O", "NO", "N"], title="Azimut",
-                                 showgrid=False),
-                      yaxis=dict(range=[0, 90], title="Elevazione (°)", showgrid=False),
-                      legend=dict(orientation="h", y=-0.2))
+                                 ticktext=_compass(), title="Azimut",
+                                 showgrid=True, gridcolor="rgba(255,255,255,0.06)", zeroline=False),
+                      yaxis=dict(range=[0, 90], title="Elevazione (°)", showgrid=True,
+                                 gridcolor="rgba(255,255,255,0.06)", zeroline=False),
+                      legend=dict(orientation="h", y=-0.2, font=dict(color=FG), bgcolor="rgba(0,0,0,0)"))
     return i18n.translate_plotly(fig)
 
 
@@ -130,17 +185,19 @@ def _zoom(res, bl, span):
         if abs(dx) <= span and abs(dy) <= span:
             xs.append(dx)
             ys.append(dy)
-            txt.append(ICON.get(b["name"], "") + " " + i18n.tr(b["name"]))
-            cols.append(MARK[b["kind"]][0])
+            txt.append(_icon(b) + " " + i18n.tr(b["name"]))
+            cols.append("#000000" if b.get("bh") else MARK[b["kind"]][0])
             sizes.append(max(8, min(60, b["diam_deg"] / span * 400)) if b["kind"] in ("sun", "moon") else 9)
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers+text", text=txt, textposition="top center",
-                             marker=dict(color=cols, size=sizes, line=dict(color="#333", width=1)), showlegend=False,
+                             textfont=dict(color=FG),
+                             marker=dict(color=cols, size=sizes, line=dict(color="#ffb347", width=1)), showlegend=False,
                              hovertemplate="%{text}: %{x:+.2f}°, %{y:+.2f}°<extra></extra>"))
-    fig.update_layout(height=360, margin=dict(l=10, r=10, t=30, b=10), plot_bgcolor="#0b1a33",
-                      title=i18n.tr("Intorno al puntamento") + f" (±{span:.0f}°)",
+    fig.update_layout(height=360, margin=dict(l=10, r=10, t=30, b=10), plot_bgcolor=BG, paper_bgcolor=BG,
+                      font=dict(color=FG),
+                      title=dict(text=i18n.tr("Intorno al puntamento") + f" (±{span:.0f}°)", font=dict(color=FG)),
                       xaxis=dict(range=[-span, span], title="ΔAZ·cos EL (°)", zeroline=False, showgrid=False),
                       yaxis=dict(range=[-span, span], title="ΔEL (°)", scaleanchor="x", zeroline=False, showgrid=False),
-                      legend=dict(orientation="h", y=-0.2))
+                      legend=dict(orientation="h", y=-0.2, font=dict(color=FG)))
     return i18n.translate_plotly(fig)
 
 
@@ -188,10 +245,13 @@ def tab(D):
     from emelab import astro
     trk = astro.track(t, 24.0, 10.0, lat, lon, h)
     tracks = {"Luna": [(s.t, s.moon.az, s.moon.el) for s in trk], "Sole": [(s.t, s.sun.az, s.sun.el) for s in trk]}
-    gal = skydome.radec_to_azel(skydome.galactic_plane(), t, lat, lon)
+    mw_rd = skydome.milky_way()
+    mw = [(a, e, w) for (a, e), (_, _, w) in zip(skydome.radec_to_azel([(r, d) for r, d, _ in mw_rd], t, lat, lon), mw_rd)]
+    stars = [(n, a, e, m) for (n, _, _, m), (a, e) in
+             zip(skydome.STARS, skydome.radec_to_azel([(r, d) for _, r, d, _ in skydome.STARS], t, lat, lon))]
     ecl = skydome.radec_to_azel(skydome.ecliptic(t), t, lat, lon)
     hz = openems_local.load_settings().get("horizon") or None
-    st.plotly_chart(_dome(bl, f, wx, tracks, hz, tg, res["hpbw"], gal, ecl), width="stretch", key="sd_dome")
+    st.plotly_chart(_dome(bl, f, wx, tracks, hz, tg, res["hpbw"], mw, stars, ecl), width="stretch", key="sd_dome")
 
     tot = sum(r["dt_k"] for r in res["rows"])
     t_atm = _t_atm(f, wx, tg["el"])
@@ -213,7 +273,8 @@ def tab(D):
     c = st.columns([1, 1])
     span = max(5.0, min(20.0, 12 * res["hpbw"]))
     c[0].plotly_chart(_zoom(res, bl, span), width="stretch", key="sd_zoom")
-    rows = [{"Corpo": f"{ICON.get(r['name'], '')} {i18n.tr(r['name'])}", "Distanza (°)": round(r["sep_deg"], 1),
+    by = {b["name"]: b for b in bl}
+    rows = [{"Corpo": f"{_icon(by[r['name']])} {i18n.tr(r['name'])}", "Distanza (°)": round(r["sep_deg"], 1),
              "In fasci": round(r["sep_hpbw"], 1), "T se puntato (K)": round(r["t_on_axis_k"], 2),
              "Attenuazione (dB)": round(r["rel_db"], 1), "Aggiunge (K)": round(r["dt_k"], 3),
              "EL (°)": round(r["el"], 1)} for r in res["rows"] if not r["hidden"]]
@@ -223,6 +284,14 @@ def tab(D):
                "limite alto, i lobi veri sono quasi sempre più bassi. Alle microonde solo il Sole conta davvero: "
                "radiosorgenti e pianeti danno meno di 1 K a una parabola di 2–3 m.")
 
+    with st.expander("⚫ " + i18n.tr("I buchi neri nel cielo")):
+        moon_b = by["Luna"]
+        st.dataframe([{"Buco nero": f"⚫ {b['name']}", "Cos'è": i18n.tr(b["bh_note"]), "AZ (°)": round(b["az"], 1),
+                       "EL (°)": round(b["el"], 1), "Dalla Luna (°)": round(skydome._sep(b["u"], moon_b["u"]), 1),
+                       "Flusso (Jy)": round(b["flux_jy"], 3)} for b in bl if b.get("bh")], hide_index=True, width="stretch")
+        st.caption("Alle microonde i buchi neri non disturbano l'EME: Sgr A* e M87 danno qualche decimo di kelvin, quelli "
+                   "stellari (Cyg X-1, V404 Cyg, GRS 1915+105) sono millesimi di jansky. Si vedono nella volta per "
+                   "curiosità; Sgr A* e Cen A da qui restano bassi, a sud.")
     st.markdown("#### 📅 " + i18n.tr("Prossimi 30 giorni") + f": {ICON[target]} " + i18n.tr(target) + " " +
                 i18n.tr("vicino a corpi rumorosi"))
     ev = _approaches(t.replace(minute=0).isoformat(), lat, lon, h, f, D_m, eta, taper, target, sfu)
@@ -230,11 +299,11 @@ def tab(D):
         st.info("Nessun passaggio vicino con il bersaglio sopra l'orizzonte.")
     else:
         tz = _local_tz()
-        st.dataframe([{"Quando": f"{e['t'].astimezone(tz):%d/%m %H:%M}", "Corpo": f"{ICON.get(e['name'], '')} {i18n.tr(e['name'])}",
+        st.dataframe([{"Quando": f"{e['t'].astimezone(tz):%d/%m %H:%M}", "Corpo": f"{_icon(by[e['name']])} {i18n.tr(e['name'])}",
                        "Distanza min (°)": round(e["sep_deg"], 2), "Aggiunge (K)": round(e["dt_k"], 2),
                        "EL bersaglio (°)": round(e["target_el"], 1)} for e in ev], hide_index=True, width="stretch")
-    st.caption(i18n.tr("Sorgenti") + ": Baars et al. 1977 (Cas A, Tau A, Cyg A, Vir A, con il calo secolare); Ori A e "
-               "Sgr A indicativi; pianeti de Pater 1990. " + i18n.tr("Idea da YAEC di IC8TEM."))
+    st.caption(i18n.tr("Sorgenti: Baars et al. 1977 (Cas A, Tau A, Cyg A, Vir A, con il calo secolare); Ori A e Sgr A "
+                       "indicativi; pianeti de Pater 1990.") + " " + i18n.tr("Idea da YAEC di IC8TEM."))
 
 
 @_st.cache_data(ttl=3600, show_spinner=False)
