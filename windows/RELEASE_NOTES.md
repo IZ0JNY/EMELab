@@ -1,3 +1,17 @@
+## EMELab 0.1.22 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.22.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.22-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **📟 Radio via Ethernet:** nuova sorgente «Ethernet» con il protocollo di rete Icom (Network Control). EMELab legge tutte le impostazioni dell'IC-9700 in rete mentre WSJT-X resta sulla USB (CAT e audio). Inserisci IP, utente e password di rete nella scheda: la password resta solo su questo PC.
+- **Scope RF e waterfall veri della radio:** con l'interruttore «Scope RF dalla radio» lo spectrum scope arriva dalla radio stessa (span, modo CENTER/FIX, linea rossa sulla frequenza), con le frequenze RF del transverter.
+- La radio accetta un solo programma in rete alla volta: chiudi RS-BA1 o wfview.
+
+### 🇬🇧 What's new
+- **📟 Radio over Ethernet:** new «Ethernet» source with Icom's network protocol (Network Control). EMELab reads every IC-9700 setting over the LAN while WSJT-X stays on USB (CAT and audio). Enter IP, network user and password in the tab: the password stays only on this PC.
+- **The radio's real RF scope and waterfall:** with the «RF scope from the radio» switch the spectrum scope comes from the radio itself (span, CENTER/FIX mode, red line on the frequency), with the transverter's RF frequencies.
+- The radio accepts one network program at a time: close RS-BA1 or wfview.
+
 ## EMELab 0.1.21 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.21.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.21-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.

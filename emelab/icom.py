@@ -3,13 +3,15 @@
 """Icom IC-9700 over CI-V: read the radio's state (frequencies, modes, meters, receiver and transmitter settings)
 for the 📻 Radio tab, and — only when the user presses a button with the commands switched on — change a setting.
 
-Three ways to reach the radio, because WSJT-X normally holds the radio's USB serial port (Windows opens a COM
+Four ways to reach the radio, because WSJT-X normally holds the radio's USB serial port (Windows opens a COM
 port for one program at a time):
 
 * ``serial``  — CI-V straight on a COM port (the IC-9700 USB port when WSJT-X is closed, or the REMOTE jack with a
   CI-V cable, «CI-V USB Port = Link to [REMOTE]»). Every setting can be read.
 * ``rigctld`` — Hamlib's rigctld, a small server that owns the port and lets several programs share it (WSJT-X
   ships it as rigctld-wsjtx.exe; WSJT-X then uses «Hamlib NET rigctl» on 127.0.0.1:4532). The usual settings.
+* ``lan``     — Ethernet (Icom network protocol, emelab/icom_lan.py): every setting and the radio's RF scope while
+  WSJT-X keeps the USB port. One network client at a time.
 * ``wsjtx``   — no CAT at all: frequency, mode and TX state from WSJT-X's UDP messages. Always works, few fields.
 
 Frequencies above 1.4 GHz use the 6-byte BCD format of the SQ6EMM custom firmware (transverter RF on the display
@@ -190,6 +192,35 @@ def derive(state: dict) -> dict:
 
 
 # ------------------------------------------------------------------ transports
+def read_civ(query, source: str) -> dict:
+    """Every setting of QUERIES through query(cmd, sub) (a COM port or the LAN CI-V stream)."""
+    st: dict = {"source": source}
+    for vfo, key in ((0x00, "sel"), (0x01, "unsel")):
+        f = query(0x25, vfo)
+        if f:
+            st[key] = _decode_vfo(bytes([vfo]) + f)
+            m = query(0x26, vfo)
+            if m:
+                st[key].update(_decode_mode(bytes([vfo]) + m))
+    if "sel" not in st:                        # older firmware: 0x03 / 0x04 on the selected receiver only
+        f = query(0x03)
+        if f is None:
+            raise IOError("la radio non risponde (indirizzo CI-V, velocità o «CI-V USB Echo Back»?)")
+        st["sel"] = {"freq_hz": bcd_to_int(f)}
+        m = query(0x04)
+        if m:
+            st["sel"]["mode"] = MODES.get(m[0], "?")
+            st["sel"]["filter"] = f"FIL{m[1]}" if len(m) > 1 else None
+    for key, (cmd, sub, dec) in QUERIES.items():
+        d = query(cmd, sub)
+        if d:
+            try:
+                st[key] = dec(d)
+            except Exception:
+                pass
+    return derive(st)
+
+
 class CivSerial:
     """CI-V on a COM port. Opened for one reading and closed again, so another program can use the port in between."""
 
@@ -231,31 +262,7 @@ class CivSerial:
         return None
 
     def read_state(self) -> dict:
-        st: dict = {"source": "serial"}
-        for vfo, key in ((0x00, "sel"), (0x01, "unsel")):
-            f = self.query(0x25, vfo)
-            if f:
-                st[key] = _decode_vfo(bytes([vfo]) + f)
-                m = self.query(0x26, vfo)
-                if m:
-                    st[key].update(_decode_mode(bytes([vfo]) + m))
-        if "sel" not in st:                        # older firmware: 0x03 / 0x04 on the selected receiver only
-            f = self.query(0x03)
-            if f is None:
-                raise IOError("la radio non risponde (indirizzo CI-V, velocità o «CI-V USB Echo Back»?)")
-            st["sel"] = {"freq_hz": bcd_to_int(f)}
-            m = self.query(0x04)
-            if m:
-                st["sel"]["mode"] = MODES.get(m[0], "?")
-                st["sel"]["filter"] = f"FIL{m[1]}" if len(m) > 1 else None
-        for key, (cmd, sub, dec) in QUERIES.items():
-            d = self.query(cmd, sub)
-            if d:
-                try:
-                    st[key] = dec(d)
-                except Exception:
-                    pass
-        return derive(st)
+        return read_civ(self.query, "serial")
 
     def send(self, cmd: int, sub: int | None, data: bytes = b"") -> bool:
         return self.query(cmd, sub, data) == b""
@@ -380,6 +387,15 @@ def from_wsjtx(status: dict | None) -> dict:
 
 
 # ------------------------------------------------------------------ reading with the chosen source
+def _lan(sets: dict):
+    """The open network session with the radio (IP, network user and password from the tab's settings)."""
+    from emelab import icom_lan
+    if not sets.get("radio_lan_host") or not sets.get("radio_lan_user"):
+        raise IOError("indirizzo IP o utente di rete della radio non impostati")
+    return icom_lan.get(sets["radio_lan_host"], sets["radio_lan_user"], sets.get("radio_lan_password") or "",
+                        int(sets.get("radio_lan_port") or 50001))
+
+
 def read(sets: dict, wsjtx_status: dict | None = None) -> dict:
     """The radio state with the source chosen in the tab; on failure the WSJT-X data and the error."""
     src = sets.get("radio_source", "wsjtx")
@@ -392,6 +408,8 @@ def read(sets: dict, wsjtx_status: dict | None = None) -> dict:
         elif src == "rigctld":
             with Rigctld(sets.get("radio_host", "127.0.0.1"), sets.get("radio_rport", 4532)) as r:
                 st = r.read_state()
+        elif src == "lan":
+            st = _lan(sets).read_state()
         else:
             st = None
         if st:
@@ -451,6 +469,8 @@ def write(sets: dict, key: str, value) -> tuple[bool, str]:
         elif src == "rigctld":
             with Rigctld(sets.get("radio_host", "127.0.0.1"), sets.get("radio_rport", 4532)) as r:
                 ok = r.send_line(rig(value))
+        elif src == "lan":
+            ok = _lan(sets).send(*civ(value))
         else:
             return False, "con la sola lettura da WSJT-X non si possono inviare comandi"
     except Exception as e:

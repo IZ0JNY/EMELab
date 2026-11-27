@@ -150,8 +150,10 @@ def demo_rows(seed: int = 1, n: int = WF_ROWS, traces: tuple = ((1000.0, 8.0, 14
     return rows
 
 
-def spectrum_png(spec: np.ndarray | None, lo: float, hi: float, w: int = 600, h: int = 110) -> str:
-    """Base64 PNG of the spectrum: grid and green trace on black, as on the radio's scope."""
+def spectrum_png(spec: np.ndarray | None, lo: float, hi: float, w: int = 600, h: int = 110,
+                 marker: float | None = None) -> str:
+    """Base64 PNG of the spectrum: grid and green trace on black, as on the radio's scope; marker = position of the
+    operating frequency (0…1 across the scope), drawn as the radio's red line."""
     from PIL import Image, ImageDraw
     img = Image.new("RGB", (w, h), (0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -159,6 +161,9 @@ def spectrum_png(spec: np.ndarray | None, lo: float, hi: float, w: int = 600, h:
         d.line([(x, 0), (x, h)], fill=(58, 66, 80))
     for y in range(0, h, h // 5):
         d.line([(0, y), (w, y)], fill=(58, 66, 80))
+    if marker is not None and 0 <= marker <= 1:
+        xm = marker * (w - 1)
+        d.line([(xm, 0), (xm, h)], fill=(230, 60, 60), width=1)
     if spec is not None and np.isfinite(spec).any():
         y = np.clip((np.nan_to_num(spec, nan=lo) - lo) / (hi - lo), 0, 1)
         xs = np.linspace(0, w - 1, len(y))

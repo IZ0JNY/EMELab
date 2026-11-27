@@ -19,7 +19,8 @@ st = i18n.wrap(_st)
 S = _st.session_state
 ASSUMED = "#e8590c"
 REFRESH_S = 2
-SOURCES = {"wsjtx": "Solo WSJT-X (nessun CAT, sempre senza conflitti)",
+SOURCES = {"lan": "Ethernet (rete LAN): tutte le impostazioni e lo scope RF, WSJT-X resta sulla USB",
+           "wsjtx": "Solo WSJT-X (nessun CAT, sempre senza conflitti)",
            "rigctld": "rigctld condiviso con WSJT-X (Hamlib NET rigctl)",
            "serial": "CI-V diretto su porta COM (WSJT-X chiuso o presa REMOTE)"}
 
@@ -129,6 +130,7 @@ _CSS = """
 .ic97 .keys span{background:linear-gradient(#3a3f46,#22262b);border:1px solid #6b737d;text-align:center;font-size:16px;
  padding:3px 0;border-radius:2px;white-space:nowrap}
 .ic97 .keys b{font-weight:400;color:#c9ced4;margin-right:4px}
+.ic97 .sh .oor{color:#ff5050;font-weight:700;margin-left:8px}
 .ic97 .noscope{display:flex;align-items:center;justify-content:center;height:240px;color:#8a929c;font-size:16px;
  background:#04070d;text-align:center;padding:0 30px}
 .ic97-name{text-align:center;font:600 12px Arial,sans-serif;letter-spacing:3px;color:#888;margin-top:4px}
@@ -193,7 +195,27 @@ def render_display(state: dict, now: datetime | None = None, scope: dict | None 
             f'<div class="band">{_band(v.get("freq_hz"))}</div>{ifq}</div></div>')
     sc = scope or {}
     rows = sc.get("rows") or []
-    if rows:
+    if rows and sc.get("rf"):
+        # the radio's own scope: edges from CI-V (IF), shown as RF with the transverter offset
+        lo, hi = radio_scope.scale(rows, span_db=70.0)     # auto scale on the noise floor, as on the radio
+        off = (v.get("freq_hz") - v["if_hz"]) if v.get("if_hz") and v.get("freq_hz") else 0
+        fl, fh = (sc.get("f_lo_hz") or 0) + off, (sc.get("f_hi_hz") or 0) + off
+        dial = v.get("freq_hz")
+        mark = (dial - fl) / (fh - fl) if dial and fh > fl and fl <= dial <= fh else None
+        ticks = [fl + (fh - fl) * k / 10 for k in (1, 3, 5, 7, 9)]
+        ax = "".join(f"<span>{t / 1e6:.3f}</span>" for t in ticks)
+        grid = (fh - fl) / 10
+        grid_s = f"{grid / 1000:g}kHz" if grid >= 1000 else f"{grid:.0f}Hz"
+        oor = '<span class="oor">OUT OF RANGE</span>' if sc.get("out_of_range") else ""
+        scope_html = (f'<div class="sh"><span class="main">MAIN</span><span class="ttl">SPECTRUM SCOPE</span>'
+                      f'<span class="ctr">{html.escape(sc.get("label") or "")}</span>{oor}'
+                      f'<span class="grid">Grid {grid_s}</span></div>'
+                      f'<div class="edge"><span>{"".join(fmt_freq(int(fl)))}</span>'
+                      f'<span>{"".join(fmt_freq(int(fh)))}</span></div>'
+                      f'<img class="spec" src="data:image/png;base64,{radio_scope.spectrum_png(sc.get("spec"), lo, hi, marker=mark)}"/>'
+                      f'<img class="wf" src="data:image/png;base64,{radio_scope.waterfall_png(rows, lo, hi)}"/>'
+                      f'<div class="ax">{ax}</div>')
+    elif rows:
         lo, hi = radio_scope.scale(rows)
         dial = v.get("freq_hz")
         ax = "".join(f"<span>{(dial + k) / 1e6:.4f}</span>" if dial else f"<span>+{k}</span>"
@@ -210,13 +232,13 @@ def render_display(state: dict, now: datetime | None = None, scope: dict | None 
     else:
         msg = sc.get("error") or i18n.tr("Spectrum scope spento: accendilo sopra il display.")
         scope_html = (f'<div class="sh"><span class="main">MAIN</span><span class="ttl">SPECTRUM SCOPE</span>'
-                      f'<span class="ctr">AUDIO</span></div><div class="noscope">{html.escape(i18n.tr(msg))}</div>')
+                      f'<span class="ctr">{html.escape(sc.get("label") or "AUDIO")}</span></div><div class="noscope">{html.escape(i18n.tr(msg))}</div>')
 
     def key(k, val, unit="%"):
         return f'<span><b>{k}</b>{"n.d." if val is None else str(val) + unit}</span>'
     keys = ('<div class="keys">' + key("AF", state.get("af_pct")) + key("RF", state.get("rf_pct"))
             + key("SQL", state.get("sql_pct")) + key("PWR", state.get("power_pct")) + key("MIC", state.get("mic_pct"))
-            + f'<span><b>CAT</b>{html.escape({"serial": "CI-V", "rigctld": "rigctld", "wsjtx": "WSJT-X"}.get(state.get("source"), "—"))}</span>'
+            + f'<span><b>CAT</b>{html.escape({"serial": "CI-V", "rigctld": "rigctld", "wsjtx": "WSJT-X", "lan": "LAN"}.get(state.get("source"), "—"))}</span>'
             + '</div>')
     return (_css() + '<div class="ic97box"><div class="ic97">' + head + scope_html + keys
             + '</div><div class="ic97-name">IC-9700 · EMELab</div></div>')
@@ -418,7 +440,35 @@ def _connection(sets):
         src = st.radio("Sorgente", list(SOURCES), index=list(SOURCES).index(cur) if cur in SOURCES else 0,
                        format_func=lambda k: i18n.tr(SOURCES[k]), key="rad_src", horizontal=True)
         c = st.columns(4)
-        if src == "serial":
+        if src == "lan":
+            host = c[0].text_input("Indirizzo IP della radio", sets.get("radio_lan_host") or "192.168.178.117",
+                                   key="rad_lan_host")
+            lport = c[1].number_input("Porta di controllo", 1, 65535, int(sets.get("radio_lan_port") or 50001),
+                                      key="rad_lan_port")
+            user = c[2].text_input("Utente di rete", sets.get("radio_lan_user") or "", key="rad_lan_user")
+            pw = c[3].text_input("Password di rete", sets.get("radio_lan_password") or "", type="password",
+                                 key="rad_lan_pw")
+            new = dict(radio_lan_host=host.strip(), radio_lan_port=int(lport), radio_lan_user=user.strip(),
+                       radio_lan_password=pw)
+            st.caption("Utente e password sono quelli del menu SET › Network › Network User1 della radio. La "
+                       "password resta solo nelle impostazioni di EMELab su questo PC. Sulla radio: Network Control "
+                       "ON, porte 50001/50002/50003. La radio accetta un solo programma in rete alla volta "
+                       "(chiudi RS-BA1 o wfview). WSJT-X resta sulla USB, CAT e audio, senza conflitti.")
+            from emelab import icom_lan
+            ses = icom_lan.current()
+            c = st.columns([2, 5])
+            if c[0].button("🔄 Ricollega", key="rad_lan_re", help="chiude la sessione di rete e la riapre"):
+                icom_lan.stop()
+                icom_lan._LAST_FAIL = None
+                S.pop("rad_state", None)
+                ses = None
+            if ses:
+                c[1].success(i18n.tr("Collegato in rete a") + f" {ses.radio_name or 'IC-9700'} · {ses.host}")
+            elif S.get("rad_state", {}).get("error"):
+                c[1].error(i18n.tr(S["rad_state"]["error"]))
+            else:
+                c[1].info("Non ancora collegato: il collegamento parte alla prima lettura.")
+        elif src == "serial":
             try:
                 from emelab import gpsdo
                 ports = [p for p, _ in gpsdo.serial_ports()]
@@ -586,7 +636,7 @@ def _commands(sets, state):
         on = st.toggle("Comandi verso la radio attivi", key="rad_cmd_on")
         disabled = not on or sets.get("radio_source", "wsjtx") == "wsjtx"
         if on and disabled:
-            st.warning("Con la sola lettura da WSJT-X non si possono inviare comandi: scegli rigctld o CI-V diretto.")
+            st.warning("Con la sola lettura da WSJT-X non si possono inviare comandi: scegli Ethernet, rigctld o CI-V diretto.")
         if on and state.get("tx"):
             st.warning("La radio è in trasmissione.")
         sel = state.get("sel") or {}
@@ -625,7 +675,37 @@ def _send(sets, key, value):
     S.pop("rad_state", None)            # read again at once
 
 
+def _rf_scope():
+    """The radio's own scope over the LAN, when switched on in this session (CI-V 27 11 01 sent by the switch)."""
+    if not S.get("rad_rfscope"):
+        return None
+    from emelab import icom_lan
+    ses = icom_lan.current()
+    if ses is None:
+        return {"error": "Scope RF: radio non collegata in rete.", "label": "RF"}
+    try:
+        if not ses.scope_on:                 # switched on now, or the session was opened again
+            if not ses.set_scope(True):
+                return {"error": "La radio non ha accettato l'uscita dati dello scope (27 11).", "label": "RF"}
+    except Exception as e:
+        return {"error": str(e), "label": "RF"}
+    return ses.scope.frame()
+
+
+def _rf_scope_off():
+    from emelab import icom_lan
+    ses = icom_lan.current()
+    if ses is not None and ses.scope_on:
+        try:
+            ses.set_scope(False)
+        except Exception:
+            pass
+
+
 def _scope_frame():
+    rf = _rf_scope()
+    if rf is not None:
+        return rf
     dev = S.get("rad_scope_dev")
     if not dev:
         return {"error": "Spectrum scope spento o scheda audio non trovata."} if S.get("rad_scope") else None
@@ -641,10 +721,20 @@ def tab(D=None):
     st.subheader("📟 Radio · Icom IC-9700")
     _connection(sets)
     _transverters(sets)
-    c = st.columns([2, 2, 4])
+    c = st.columns([2, 2, 2, 3])
     live = c[0].toggle("Aggiornamento automatico", value=True, key="rad_live",
                        help=f"legge la radio ogni {REFRESH_S} secondi")
-    scope_on = c[1].toggle("Spectrum scope e waterfall", value=bool(sets.get("radio_scope", True)), key="rad_scope",
+    if sets.get("radio_source") == "lan":
+        rf_on = c[2].toggle("Scope RF dalla radio", key="rad_rfscope",
+                            help="lo spectrum scope vero della radio, in rete: chiede alla radio i dati dello scope "
+                                 "(CI-V 27 11 01) e li spegne quando lo togli o chiudi EMELab. Vale per questa "
+                                 "sessione.")
+        if not rf_on:
+            _rf_scope_off()
+    else:
+        S["rad_rfscope"] = False
+        _rf_scope_off()
+    scope_on = c[1].toggle("Spectrum scope audio", value=bool(sets.get("radio_scope", True)), key="rad_scope",
                            help="dall'audio di ricezione dell'IC-9700 (USB Audio CODEC), condiviso con WSJT-X")
     if scope_on != bool(sets.get("radio_scope", True)):
         openems_local.save_settings(radio_scope=scope_on)
@@ -653,9 +743,9 @@ def tab(D=None):
         devs = q65lab.input_devices()
         best = q65lab.pick_device(devs, q65lab.ini_audio().get("device"))
         if best:
-            c[2].caption(i18n.tr("Audio dello scope") + f": {best['name']} · {best['api']}")
+            c[3].caption(i18n.tr("Audio dello scope") + f": {best['name']} · {best['api']}")
         else:
-            c[2].caption("Scheda audio dell'IC-9700 non trovata (USB Audio CODEC).")
+            c[3].caption("Scheda audio dell'IC-9700 non trovata (USB Audio CODEC).")
         S["rad_scope_dev"] = best
     else:
         from emelab import radio_scope
@@ -674,7 +764,8 @@ def tab(D=None):
             st.info("Nessun dato: WSJT-X non trasmette lo stato e il CAT non è configurato.")
         st.caption(i18n.tr("In alto compaiono solo le funzioni accese (NB, NR, P.AMP…), come sulla radio. "
                            "Nella tabella «n.d.» = non disponibile: la radio (o rigctld) non dà quel valore. "
-                           "Lo scope mostra la banda passante audio (0–3 kHz sopra la frequenza).")
+                           "Lo scope audio mostra la banda passante (0–3 kHz sopra la frequenza); lo scope RF, "
+                           "in rete, è quello della radio con la linea rossa sulla frequenza.")
                    + " " + i18n.tr("In arancione i valori presunti (modo da WSJT-X, scala di Id)."))
         with st.expander("📋 Tutte le impostazioni lette"):
             rows = settings_rows(state)
