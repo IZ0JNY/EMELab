@@ -195,7 +195,8 @@ def _health_box(D, mon, hp, now):
                                for c in checks))
     keys = sorted(c["key"] for c in probs)
     acked = S.setdefault("ea_acked", set())
-    acked &= set(keys)                               # a problem that went away and comes back alarms again
+    from emelab import dismiss
+    dismiss.prune(acked, keys, S.setdefault("ea_gone", {}))   # alarms again only if gone for 2 minutes and back
     if S.get("ea_alarm_on", True) and set(keys) - acked and keys != S.get("ea_alert_keys"):
         S["ea_alert_keys"] = keys
         _st.rerun(scope="app")                       # full run: app.py opens the pop-up
