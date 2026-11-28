@@ -2853,4 +2853,10 @@ ENTRIES = [
     ('in tutto', 'in total'),
     ("ora del tuo PC (UTC+1 in inverno, UTC+2 in estate): scrivila o sceglila dall'elenco", 'your PC time (UTC+1 in winter, UTC+2 in summer): type it or pick it from the list'),
     ('🕒 Adesso', '🕒 Now'),
+    ('Il tuo orizzonte, la Luna e il Sole (ore locali)', 'Your horizon, the Moon and the Sun (local times)'),
+    ('Sole, prossime 24 ore', 'Sun, next 24 hours'),
+    ('Sole: esce dalle montagne', 'Sun: comes out of the mountains'),
+    ('entra dietro le montagne', 'goes behind the mountains'),
+    ('minuti persi', 'minutes lost'),
+    ('Sole: già sopra le montagne', 'Sun: already above the mountains'),
 ]
