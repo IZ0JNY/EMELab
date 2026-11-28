@@ -11,7 +11,7 @@ import streamlit as _st
 import emelab
 from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_horizon, ui_moon, ui_nanoham, ui_q65lab, ui_radio, ui_skydome, ui_wsjtx_panel
 from emelab import settings as openems_local
-from emelab import charts, stallwatch, wsqueue
+from emelab import charts, dismiss, stallwatch, wsqueue
 
 charts.install()                             # wheel zoom on every Plotly chart, kept across refreshes
 wsqueue.lift()                               # Streamlit drops sessions whose send queue passes 500 messages
@@ -249,6 +249,8 @@ with st.sidebar:
     ui_live.watchdog_sidebar(D)               # watchdogs and camera alarm with any tab open
 nav.register({k: l for k, l, _ in TABS})          # a click on an alert opens Live (or the alert's tab)
 ui._wsjtx_banner()                   # WSJT-X settings that do not fit the band
+with _st.sidebar:
+    dismiss.hook()                               # «Chiudi» in the pop-ups closes them at once (see dismiss.py)
 if not S.pop("_update_dialog", False):
     ui_wsjtx_panel.popup(ui._wsjtx_service())   # pop-up when a QSO parameter is off (closed twice: never again)
     from emelab import ui_tracking as _ui_tracking

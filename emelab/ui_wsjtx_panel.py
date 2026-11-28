@@ -20,7 +20,7 @@ import streamlit as _st
 import os
 import time
 
-from emelab import gpsdo, i18n, refspec, stations, timesync, wsjtx_check, wsjtx_ini
+from emelab import dismiss, gpsdo, i18n, refspec, stations, timesync, wsjtx_check, wsjtx_ini
 from emelab import settings as openems_local
 
 st = i18n.wrap(_st)
@@ -193,16 +193,21 @@ def alerts(svc, sets: dict) -> list[dict]:
 
 
 def to_show(svc, sets: dict) -> list[dict]:
-    """Alerts for the pop-up: not closed twice, and not already closed while the problem lasts."""
+    """Alerts for the pop-up: not closed twice, and not already closed while the problem lasts (a problem must be
+    gone for dismiss.GRACE_S seconds before a closed alert can show again)."""
     al = alerts(svc, sets)
     closed = sets.get("wsjtx_popup_closed") or {}
     keys = {a["key"] for a in al}
     done = S.setdefault("wj_popup_done", set())
-    done &= keys                                   # a problem that went away and comes back shows again
+    dismiss.prune(done, keys, S.setdefault("wj_popup_gone", {}))   # back only if gone for 2 minutes and back again
     return [a for a in al if int(closed.get(a["key"], 0)) < 2 and a["key"] not in done]
 
 
 def _closed(keys):
+    done = S.setdefault("wj_popup_done", set())
+    keys = [k for k in keys if k not in done]          # one closing counts once («Chiudi» and ✕ both report it)
+    if not keys:
+        return
     sets = openems_local.load_settings()
     closed = dict(sets.get("wsjtx_popup_closed") or {})
     for k in keys:
