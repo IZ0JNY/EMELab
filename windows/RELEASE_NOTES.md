@@ -1,3 +1,15 @@
+## EMELab 0.1.27 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.27.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.27-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🔔 Avvisi a comparsa:** «Chiudi» e «Ho visto» chiudono subito l'avviso, e un avviso chiuso non torna più per un'assenza momentanea.
+- Contiene anche tutto della 0.1.26: zoom con la rotella su tutti i grafici, il Sole nell'Orizzonte e le montagne colorate.
+
+### 🇬🇧 What's new
+- **🔔 Pop-up alerts:** «Close» and «Seen» close the alert at once, and a closed alert no longer comes back for a momentary dropout.
+- Also includes everything from 0.1.26: mouse-wheel zoom on every chart, the Sun on the Horizon and coloured mountains.
+
 ## EMELab 0.1.26 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.26.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.26-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
