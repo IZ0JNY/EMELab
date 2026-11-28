@@ -38,6 +38,39 @@ Nella scheda **➕ Nuova misura** il pulsante **⚡ Leggi tutto adesso** (e l'ap
 #### 8. Ambiente da annotare sempre
 - Temperatura, umidità e pressione (vapore acqueo: a 24 GHz è il fattore principale), pioggia, nuvole, **acqua o rugiada su parabola e feed**, vento (vibrazioni e deformazioni), stabilità dell'oscillatore locale (a 24/47 GHz serve un riferimento GPS).
 
+#### 9. Spettro di riferimento di WSJT-X (Ref Spec) — procedura di Charlie DL3WDG
+Lo spettro di riferimento **appiattisce la risposta audio del ricevitore**. Secondo DL3WDG può allargare la banda audio utile, aiutare la decodifica dei segnali più deboli, rendere più precisi i rapporti S/N e permettere al modo Echo di trovare meglio le eco deboli e molto allargate. Serve anche con le SDR.
+
+**Prima di cominciare**
+
+- WSJT-X aperto con la configurazione che usi per l'EME («EME mm-wave»), nella banda in cui lavorerai (10GHz Q65-60D, 24GHz Q65-60E).
+- IC-9700 e transverter Kuhne accesi da qualche minuto, LNA alimentato, in ricezione.
+
+**Passo passo**
+
+1. Nella finestra **Wide Graph** spunta **Flatten**: va acceso **prima** di iniziare.
+2. **Togli l'antenna dalla Luna** (cielo freddo), oppure sintonizzati su una frequenza **perfettamente silenziosa, senza birdie**.
+3. Lascia il ricevitore **come lo usi sempre**: stessa larghezza del filtro IF, stesso guadagno, stessa regolazione della banda passante. **Noise blanker spento** (DL3WDG: se lo usi, meglio di no).
+4. Menu **Tools** di WSJT-X: **Erase reference spectrum** (cancella quello vecchio).
+5. Sempre nel menu **Tools**: **Measure reference spectrum**.
+6. Premi **Monitor** se è spento e **aspetta almeno 60 secondi**.
+7. Premi **Monitor** per **fermare** l'ascolto: lo spettro viene salvato in refspec.dat.
+8. Nel Wide Graph spunta **Ref Spec** (accanto a Flatten), poi riaccendi **Monitor** e torna sulla Luna.
+9. Se vuoi vedere la tua banda passante audio, scegli per un momento **Reference** nel menu dello spettro del Wide Graph, poi rimetti quello che usi.
+
+**Quando rifarlo**
+
+- **Ogni volta che cambi un'impostazione del ricevitore** (filtro, guadagno, banda passante, preamplificatore, attenuatore): la procedura va ripetuta (DL3WDG).
+- DL3WDG consiglia comunque di **registrarne uno nuovo periodicamente**. In EMELab il promemoria nella scheda 📻 WSJT-X te lo chiede a ogni sessione, finché refspec.dat non è più recente dell'inizio della sessione o finché non premi «✅ Ref Spec fatto».
+- *Nota di EMELab (non di DL3WDG):* a 10GHz e 24GHz passi da un transverter all'altro e il guadagno della catena cambia, mentre refspec.dat è uno solo per configurazione di WSJT-X. Rifallo quando cambi banda.
+
+**Cose da sapere**
+
+- I rapporti sono in dB su 2500 Hz. Con i sottomodi larghi (60E) e Rx/Tx a 700 Hz il S/N può sembrare migliore del vero, secondo il taglio basso della tua banda audio: due stazioni uguali possono leggere valori diversi per lo stesso segnale (DL3WDG).
+- I limiti sul bordo alto della banda passante si possono compensare in parte, ma **mai con un'equalizzazione in audio**, per non creare prodotti di distorsione (DL3WDG).
+
+*Fonte: Charlie Suckling DL3WDG, «Using WSJT-X for Microwave EME (Q65 and Echo mode)», presentazione EME 2022, aggiornamento n. 3 (7 dicembre 2022), sezione «Use of reference spectrum» — https://archive.org/details/eme2022_using-wsjt-x-for-microwave-eme. I nomi esatti dei comandi possono cambiare un poco tra le versioni di WSJT-X: con la 3.3.0-beta2 controlla nel menu Tools.*
+
 #### Cosa ti dice EMELab
 - G/T misurato contro atteso e dove perdi (elevazione, umidità, fuoco, puntamento, perdite).
 - Modello di puntamento con le correzioni da dare al programma di inseguimento.
