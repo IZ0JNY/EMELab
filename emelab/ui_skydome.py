@@ -178,7 +178,7 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=Fa
     if point and point[1] > -1:                       # the dish: crosshair and beam ring (×3 so that it shows)
         _glow(fig, [point[0]], [point[1]], "#00e5ff", [34], [0.18], None)
         fig.add_trace(go.Scatter(x=[point[0]], y=[point[1]], mode="markers+text", text=[point[2]],
-                                 textposition="bottom center", textfont=dict(color="#00e5ff", size=12),
+                                 textposition="bottom center", textfont=dict(color="#00e5ff" if day < 0.5 else "#00566b", size=12),
                                  marker=dict(size=22, symbol="circle-open", color="#00e5ff", line=dict(width=2)),
                                  name=point[2], hovertext=f"{point[2]} AZ {point[0]:.2f}° · EL {point[1]:.2f}°",
                                  hoverinfo="text"))
@@ -195,7 +195,7 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=Fa
         fig.add_annotation(x=0.005, y=0.99, xref="paper", yref="paper", xanchor="left", yanchor="top", showarrow=False,
                            text=f"{phase} · {i18n.tr('Sole a')} {sun['el']:+.0f}°", font=dict(color=FG, size=12),
                            bgcolor="rgba(0,0,0,0.25)" if day < 0.5 else "rgba(255,255,255,0.45)")
-    fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=bg, paper_bgcolor=bg,
+    fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=bg, paper_bgcolor=bg, uirevision="sd",
                       font=dict(color=FG), hoverlabel=dict(bgcolor="#111a33", font=dict(color=FG)),
                       xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 15 if degrees else 45)),
                                  ticktext=[f"{a}°" for a in range(0, 361, 15)] if degrees else _compass(),
@@ -252,6 +252,7 @@ def _zoom(res, bl, span):
 
 TRACK_FRESH_S = 10.0          # DriverDish status older than this: tracking considered not active
 LIVE_REFRESH_S = 3
+WATCH_S = 10                         # how often the still dome checks whether DriverDish started tracking
 
 
 def _norm(x: str) -> str:
@@ -272,6 +273,21 @@ def _tracked_name(target: str, bl: list[dict]) -> str | None:
         if n and (n == t or n in t or t in n):
             return b["name"]
     return None
+
+
+@_st.cache_data(max_entries=4, show_spinner=False)
+def _background(t, lat, lon, h):
+    """Sun/Moon 24 h paths, Milky Way, stars and ecliptic: they move slowly, computed once a minute, so the live
+    refresh every 3 s only moves the dish and the bodies near it."""
+    from emelab import astro
+    trk = astro.track(t, 24.0, 10.0, lat, lon, h)
+    tracks = {"Luna": [(s.t, s.moon.az, s.moon.el) for s in trk], "Sole": [(s.t, s.sun.az, s.sun.el) for s in trk]}
+    mw_rd = skydome.milky_way()
+    mw = [(a, e, w) for (a, e), (_, _, w) in zip(skydome.radec_to_azel([(r, d) for r, d, _ in mw_rd], t, lat, lon), mw_rd)]
+    stars = [(n, a, e, m) for (n, _, _, m), (a, e) in
+             zip(skydome.STARS, skydome.radec_to_azel([(r, d) for _, r, d, _ in skydome.STARS], t, lat, lon))]
+    ecl = skydome.radec_to_azel(skydome.ecliptic(t), t, lat, lon)
+    return tracks, mw, stars, ecl
 
 
 def _tracking() -> dict | None:
@@ -307,10 +323,23 @@ def tab(D):
                "quando punti la Luna o il Sole, e quanti kelvin aggiunge.")
     live = bool(openems_local.load_settings().get("dd_live"))
     f = getattr(_st, "fragment", None)
-    if live and f:                       # DriverDish read in real time: the dome follows the dish every 3 s
-        f(run_every=LIVE_REFRESH_S)(_body)(D, stn)
-    else:
+    if live and f and _tracking():       # DriverDish is tracking: the dome follows the dish every 3 s
+        f(run_every=LIVE_REFRESH_S)(_live_body)(D, stn)
+    else:                                # not tracking: drawn once, still; a tiny watcher notices when tracking starts
         _body(D, stn)
+        if live and f:
+            f(run_every=WATCH_S)(_watch)()
+
+
+def _watch():
+    if _tracking():
+        _st.rerun()
+
+
+def _live_body(D, stn):
+    if not _tracking():                  # tracking stopped: back to the still dome
+        _st.rerun()
+    _body(D, stn)
 
 
 def _body(D, stn):
@@ -390,14 +419,7 @@ def _body(D, stn):
         else:
             st.success("🎯 " + i18n.tr("Tracking in corso: nessun oggetto vicino al fascio") +
                        f" ({sum(r['dt_k'] for r in vis_rows):.2f} K " + i18n.tr("in tutto") + ").")
-    from emelab import astro
-    trk = astro.track(t.replace(second=0), 24.0, 10.0, lat, lon, h)
-    tracks = {"Luna": [(s.t, s.moon.az, s.moon.el) for s in trk], "Sole": [(s.t, s.sun.az, s.sun.el) for s in trk]}
-    mw_rd = skydome.milky_way()
-    mw = [(a, e, w) for (a, e), (_, _, w) in zip(skydome.radec_to_azel([(r, d) for r, d, _ in mw_rd], t, lat, lon), mw_rd)]
-    stars = [(n, a, e, m) for (n, _, _, m), (a, e) in
-             zip(skydome.STARS, skydome.radec_to_azel([(r, d) for _, r, d, _ in skydome.STARS], t, lat, lon))]
-    ecl = skydome.radec_to_azel(skydome.ecliptic(t), t, lat, lon)
+    tracks, mw, stars, ecl = _background(t.replace(second=0), lat, lon, h)
     hz = openems_local.load_settings().get("horizon") or None
     point = (tg["az"], tg["el"], "🎯 " + i18n.tr("Parabola")) if az_el is not None else None
     st.plotly_chart(_dome(bl, f, wx, tracks, hz, tg, res["hpbw"], mw, stars, ecl, point,
