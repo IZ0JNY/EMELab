@@ -7,14 +7,14 @@
 - **🌌 Volta celeste senza ricarica continua:** si aggiorna ogni 3 secondi solo mentre DriverDish traccia; altrimenti resta ferma. Lo sfondo si calcola una volta al minuto e lo zoom resta dov'è.
 - **🕒 Giorno e ora con calendario e orologio:** al posto del cursore «Fra quante ore», il giorno con il calendario, l'ora da scrivere o scegliere, i pulsanti −60/−10/+10/+60 min e «Adesso».
 - Icone nuove: 🔧 Laboratorio e ▷ LNA (il simbolo dell'amplificatore).
-- Guida alle misure: nuova sezione sullo spettro di riferimento.
+- Guida alle misure: la procedura «Ref Spec» (spettro di riferimento) di DL3WDG passo passo.
 
 ### 🇬🇧 What's new
 - **🌌 Sky dome, daytime sky:** a lighter sky blue over the whole sky; outside the free horizon a light veil instead of black, and dark labels readable on the light sky.
 - **🌌 Sky dome without constant reloading:** it refreshes every 3 seconds only while DriverDish is tracking; otherwise it stays still. The background is computed once a minute and the zoom stays where it is.
 - **🕒 Day and time with calendar and clock:** instead of the «Hours from now» slider, the day with a calendar, the time to type or pick, the −60/−10/+10/+60 min buttons and «Now».
 - New icons: 🔧 Laboratory and ▷ LNA (the amplifier symbol).
-- Measurement guide: new section on the reference spectrum.
+- Measurement guide: DL3WDG's «Ref Spec» (reference spectrum) procedure step by step.
 
 ## EMELab 0.1.24 BETA TEST per Windows / for Windows
 
