@@ -3877,7 +3877,7 @@ def _wizard(D):
     elif goal == "chain":
         st.markdown("\n".join("- " + i18n.tr(s["text"]) for s in coach.suggestions(D) if s.get("area") in (None, "chain"))[:3000]
                     or i18n.tr("Nessun suggerimento al momento."))
-        st.info("Apri le schede 🔊 LNA, 🔥 SSPA e 💡 TWT: per ogni stadio vedi quanto pesa e quanto guadagni migliorandolo. "
+        st.info("Apri le schede LNA, 🔥 SSPA e 💡 TWT: per ogni stadio vedi quanto pesa e quanto guadagni migliorandolo. "
                 "Nel 🗓️ Pianificatore («Chi posso collegare») la «correzione appresa dai QSO» ti dice quanto la tua stazione rende "
                 "rispetto alla teoria: se ricevi peggio di come ti ricevono, il margine è in ricezione (LNA, perdite, Tsys).")
     elif goal == "setup":

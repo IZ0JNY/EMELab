@@ -342,6 +342,39 @@ def _live_body(D, stn):
     _body(D, stn)
 
 
+def _follow_now():
+    _st.session_state["sd_follow"] = True
+
+
+def _pinned():
+    _st.session_state["sd_follow"] = False
+
+
+def _shift(minutes):
+    S = _st.session_state
+    dt = datetime.combine(S["sd_day"], S["sd_time"]) + timedelta(minutes=minutes)
+    S["sd_day"], S["sd_time"], S["sd_follow"] = dt.date(), dt.time(), False
+
+
+def _when(box) -> datetime:
+    """Day and local time of the dome: now (following the clock) until you change them with the calendar, the clock,
+    by typing, or with the −60/−10/+10/+60 min buttons; «Adesso» goes back to the clock."""
+    S = _st.session_state
+    if S.get("sd_follow", True):
+        now_l = datetime.now().astimezone().replace(second=0, microsecond=0, tzinfo=None)
+        S["sd_day"], S["sd_time"] = now_l.date(), now_l.time()
+    cc = box.columns([1.3, 1])
+    day_l = cc[0].date_input("Giorno", key="sd_day", format="DD/MM/YYYY", on_change=_pinned)
+    time_l = cc[1].time_input("Ora (locale)", key="sd_time", step=60, on_change=_pinned,
+                              help="ora del tuo PC (UTC+1 in inverno, UTC+2 in estate): scrivila o sceglila dall'elenco")
+    b = box.columns(5)
+    for col, m in zip((b[0], b[1], b[3], b[4]), (-60, -10, 10, 60)):
+        col.button(f"{m:+d} min", key=f"sd_dt{m}", on_click=_shift, args=(m,), width="stretch")
+    b[2].button("🕒 Adesso", key="sd_now", on_click=_follow_now, width="stretch",
+                type="primary" if not S.get("sd_follow", True) else "secondary")
+    return datetime.combine(day_l, time_l).astimezone().astimezone(timezone.utc)
+
+
 def _body(D, stn):
     S = _st.session_state
     lat, lon, h = float(stn["lat"]), float(stn["lon"]), float(stn.get("height_m") or 0.0)
@@ -364,27 +397,18 @@ def _body(D, stn):
                       f"{i18n.tr('parabola')} AZ {trk_dd['az']:.2f}° · EL {trk_dd['el']:.2f}° · "
                       f"{trk_dd['utc'].astimezone(_local_tz()):%H:%M:%S}")
         target = tracked if tracked in ("Luna", "Sole") else None
-        az_el, exclude, hours = (trk_dd["az"], trk_dd["el"]), tracked, 0
+        az_el, exclude = (trk_dd["az"], trk_dd["el"]), tracked
     else:
         bl = None
         target = c[1].radio("Punto verso", opts, horizontal=True, key="sd_tgt", format_func=lambda k: labels[k],
                             help="con DriverDish che traccia (🎯 Tracking, «Leggi in tempo reale») si sceglie da solo")
         az_el, exclude, tracked = None, None, None
         if target == "AZ/EL":                 # simulation: where the dish points, on the day and at the time you choose
-            cc = c[2].columns([1, 1, 1.3, 1])
+            cc = c[2].columns(2)
             az_el = (cc[0].number_input("AZ (°)", 0.0, 360.0, float(S.get("sd_man_az", 180.0)), 0.1, key="sd_man_az"),
                      cc[1].number_input("EL (°)", -5.0, 90.0, float(S.get("sd_man_el", 30.0)), 0.1, key="sd_man_el"))
-            now_l = datetime.now().astimezone()
-            day_l = cc[2].date_input("Giorno", now_l.date(), key="sd_man_day", format="DD/MM/YYYY")
-            time_l = cc[3].time_input("Ora (locale)", now_l.time().replace(second=0, microsecond=0), key="sd_man_time",
-                                      step=300, help="ora del tuo PC (UTC+1 in inverno, UTC+2 in estate)")
-            t = datetime.combine(day_l, time_l).astimezone().astimezone(timezone.utc)
-            hours = None
             target = None
-        else:
-            hours = c[2].slider("Fra quante ore", 0, 48, 0, key="sd_h", help="0 = adesso")
-        if hours is not None:
-            t = t.replace(second=0) + timedelta(hours=hours)
+        t = _when(c[2])
     su, su_assumed = _setup(D, f)
     wx, wx_assumed = _weather()
     sfu = S.get("em_flux")
