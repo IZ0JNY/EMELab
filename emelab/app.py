@@ -11,8 +11,9 @@ import streamlit as _st
 import emelab
 from emelab import coach, i18n, nav, tab_order, ui, ui_camera, ui_gpsdo, ui_live, ui_horizon, ui_moon, ui_nanoham, ui_q65lab, ui_radio, ui_skydome, ui_wsjtx_panel
 from emelab import settings as openems_local
-from emelab import stallwatch, wsqueue
+from emelab import charts, stallwatch, wsqueue
 
+charts.install()                             # wheel zoom on every Plotly chart, kept across refreshes
 wsqueue.lift()                               # Streamlit drops sessions whose send queue passes 500 messages
 
 stallwatch.run_started()                     # writes the thread stacks to server.log if this run gets stuck
