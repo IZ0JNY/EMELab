@@ -50,8 +50,12 @@ def test_gpsdo_without_fix_is_bad_even_if_lock_bit_is_on():
 
 
 def test_clock_state_reads_in_background(monkeypatch):
+    import threading
     import time
     from emelab import timesync, ui_wsjtx_panel as p
+    for th in threading.enumerate():          # a background read left by an earlier test (the app pages) would
+        if th.name == "emelab-clock":         # write into the patched _CLOCK and eat the first fake answer
+            th.join(timeout=10)
     calls = []
     monkeypatch.setattr(timesync, "bkt_running", lambda: calls.append(1) or {"running": len(calls) == 1, "process": "x"})
     monkeypatch.setattr(p, "_CLOCK", {"bkt": None, "t_proc": 0.0, "ntp": None, "t_ntp": 0.0, "busy": False})
