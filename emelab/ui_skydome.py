@@ -58,8 +58,9 @@ SKY_SCALE = [[0.0, "#050b1a"], [0.25, "#0b1736"], [0.5, "#1d1f4d"], [0.7, "#4a21
 PLANET_COL = {"Venere": "#fff3c4", "Marte": "#ff6b4a", "Giove": "#e9c99a", "Saturno": "#f2d27a"}
 BG, FG = "#050b1a", "#dfe6ff"
 # daytime sky: the same steps as SKY_SCALE, blue above and a pale warm horizon (atmosphere noise) below
-DAY_SCALE = [[0.0, "#1f5fae"], [0.25, "#2f74c4"], [0.5, "#4b8fd6"], [0.7, "#7aaee0"], [0.85, "#d39a8a"], [1.0, "#f0a25a"]]
-DAY_BG = "#1f5fae"
+DAY_SCALE = [[0.0, "#5fb2ee"], [0.25, "#6dbaf0"], [0.5, "#84c6f3"], [0.7, "#a6d6f6"], [0.85, "#e6c3a4"], [1.0, "#f4b26e"]]
+DAY_BG = "#5fb2ee"
+DAY_FG = "#0b2545"                   # dark labels on the light daytime sky
 
 
 def daylight(sun_el: float) -> float:
@@ -148,10 +149,12 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=Fa
         fig.add_trace(go.Scatter(x=[a for _, a, _ in marks], y=[e for _, _, e in marks], mode="text", showlegend=False,
                                  text=[f"{t.astimezone(tz):%H}" for t, _, _ in marks], textposition="bottom center",
                                  textfont=dict(color=col.format(0.8), size=9), hoverinfo="skip"))
-    if hz:
+    if hz:                         # what is not free: a dark veil at night, a light grey one by day (the sky stays blue)
         a = list(range(0, 361))
+        veil = _mix("#02040a", "#1b3a5c", day)
+        rgb = ",".join(str(int(veil[i:i + 2], 16)) for i in (1, 3, 5))
         fig.add_trace(go.Scatter(x=a, y=[min(wizard.el_min(hz, x), 90) for x in a], fill="tozeroy", mode="lines",
-                                 line=dict(color="#6d4c41", width=1.5), fillcolor="rgba(2,4,9,0.92)",
+                                 line=dict(color="#6d4c41", width=1.5), fillcolor=f"rgba({rgb},{0.85 * night + 0.22 * day:.2f})",
                                  name=i18n.tr("Orizzonte libero"), hoverinfo="skip"))
     vis = [b for b in bl if b["el"] > 0]
     for b in vis:
@@ -191,7 +194,7 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=Fa
     if sun:
         fig.add_annotation(x=0.005, y=0.99, xref="paper", yref="paper", xanchor="left", yanchor="top", showarrow=False,
                            text=f"{phase} · {i18n.tr('Sole a')} {sun['el']:+.0f}°", font=dict(color=FG, size=12),
-                           bgcolor="rgba(0,0,0,0.25)")
+                           bgcolor="rgba(0,0,0,0.25)" if day < 0.5 else "rgba(255,255,255,0.45)")
     fig.update_layout(height=560, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor=bg, paper_bgcolor=bg,
                       font=dict(color=FG), hoverlabel=dict(bgcolor="#111a33", font=dict(color=FG)),
                       xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 15 if degrees else 45)),
@@ -201,6 +204,15 @@ def _dome(bl, f, wx, tracks, hz, tgt, hp, mw, stars, ecl, point=None, degrees=Fa
                       yaxis=dict(range=[0, 90], title="Elevazione (°)", showgrid=True,
                                  gridcolor="rgba(255,255,255,0.06)", zeroline=False),
                       legend=dict(orientation="h", y=-0.2, font=dict(color=FG), bgcolor="rgba(0,0,0,0)"))
+    if day >= 0.5:                 # light sky: dark text and grid
+        fg = DAY_FG
+        for tr in fig.data:
+            if getattr(tr, "textfont", None) is not None and tr.textfont.color == FG:
+                tr.textfont.color = fg
+        fig.update_traces(selector=dict(type="heatmap"), colorbar=dict(title=dict(font=dict(color=fg)), tickfont=dict(color=fg)))
+        fig.update_annotations(font=dict(color=fg))
+        fig.update_layout(font=dict(color=fg), legend=dict(font=dict(color=fg)),
+                          xaxis=dict(gridcolor="rgba(11,37,69,0.10)"), yaxis=dict(gridcolor="rgba(11,37,69,0.10)"))
     return i18n.translate_plotly(fig)
 
 
