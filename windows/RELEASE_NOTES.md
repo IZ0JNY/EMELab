@@ -1,3 +1,17 @@
+## EMELab 0.1.26 BETA TEST per Windows / for Windows
+
+**Installazione / Installation:** `EMELab-Setup-0.1.26.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.26-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
+
+### 🇮🇹 Novità
+- **🔍 Zoom con la rotella su tutti i grafici:** doppio clic per tornare alla vista intera; lo zoom resta anche quando il grafico si aggiorna.
+- **🏔️ Orizzonte, anche il Sole:** il percorso del Sole nelle prossime 24 ore sopra le montagne, con le ore locali e dove si trova adesso, e quando esce dalle montagne e quando entra dietro.
+- **🏔️ Montagne colorate:** prati, boschi, roccia e neve secondo l'altezza delle cime, più chiare e azzurrine in lontananza come nella foschia vera.
+
+### 🇬🇧 What's new
+- **🔍 Mouse-wheel zoom on every chart:** double-click to go back to the full view; the zoom stays while the chart refreshes.
+- **🏔️ Horizon, the Sun too:** the Sun's path over the mountains for the next 24 hours, with local hours and where it is now, and when it comes out of the mountains and goes behind them.
+- **🏔️ Coloured mountains:** meadows, woods, rock and snow by the height of the peaks, paler and bluish far away like real haze.
+
 ## EMELab 0.1.25 BETA TEST per Windows / for Windows
 
 **Installazione / Installation:** `EMELab-Setup-0.1.25.exe` (senza diritti di amministratore / no admin rights) oppure / or `EMELab-0.1.25-portable.zip` → `EMELab.bat`. Controllo del file scaricato / check the download: `SHA256SUMS.txt`.
