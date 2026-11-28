@@ -40,10 +40,10 @@ def _compute(lat, lon, agl, max_km):
         return None, str(e)
 
 
-def _track(lat, lon, h, hours=24.0, step=5.0):
+def _track(lat, lon, h, hours=24.0, step=5.0, body="moon"):
     t0 = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     t0 -= timedelta(minutes=t0.minute % int(step))               # on the 5 minutes: the hour marks fall on the track
-    return [(s.t, s.moon.az, s.moon.el_radio) for s in astro.track(t0, hours, step, lat, lon, h)]
+    return [(s.t, getattr(s, body).az, getattr(s, body).el_radio) for s in astro.track(t0, hours, step, lat, lon, h)]
 
 
 _PEAKS_FAILED: dict = {}          # place → time of the last failed download (retry after 10 minutes, not at every rerun)
@@ -60,20 +60,31 @@ def _peaks(hz):
         return None
 
 
-def _plot(hz, track, manual, title, dx_hz=None, height=380, peaks=None):
-    fig = go.Figure()
-    az, el = hz["az"] + [360.0], hz["el"] + [hz["el"][0]]
-    fig.add_trace(go.Scatter(x=az, y=el, fill="tozeroy", mode="lines", line=dict(color=TERRAIN_COLOR, width=1),
-                             fillcolor="rgba(141,110,99,0.55)", name=i18n.tr("Terreno"),
-                             customdata=[[d, h] for d, h in zip(hz["dist_km"] + [hz["dist_km"][0]],
-                                                                 hz["obs_h_m"] + [hz["obs_h_m"][0]])],
-                             hovertemplate="AZ %{x:.0f}° · EL %{y:.1f}° · %{customdata[0]:.1f} km · "
-                                           "%{customdata[1]:.0f} m<extra></extra>"))
-    if manual:
-        a = list(range(0, 361))
-        fig.add_trace(go.Scatter(x=a, y=[min(wizard.el_min(manual, x), 45) for x in a], mode="lines",
-                                 line=dict(color="#555", dash="dash", width=1.5),
-                                 name=i18n.tr("Orizzonte libero salvato")))
+def _mix(c1, c2, k):
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * k):02x}" for x, y in zip(a, b))
+
+
+# height of the obstacle (m) → colour: meadows, woods, bare slopes, rock; snow on the highest peaks
+ZONES = ((400, "#7a9a55"), (1000, "#4f7a3a"), (1600, "#7c6a4c"), (2200, "#8e8780"), (9999, "#9a9690"))
+HAZE = "#b4c3d4"                    # far away the mountains turn pale blue (aerial perspective)
+SNOW_M = 2000.0
+
+
+def _terrain_colors(hz):
+    """One colour per azimuth for the skyline: by the height of the obstacle, paler with distance; and the snow cap
+    (degrees) on peaks above SNOW_M in winter-ish style."""
+    cols, snow = [], []
+    for e, h, d in zip(hz["el"], hz["obs_h_m"], hz["dist_km"]):
+        c = next(col for top, col in ZONES if h < top)
+        cols.append(_mix(c, HAZE, min(0.65, (d / max(hz.get("max_km", 60.0), 1.0)) * 0.9)))
+        snow.append(round(min(max(e, 0) * 0.25, 0.08 * (h - SNOW_M) / 100), 2) if h > SNOW_M and e > 0 else 0.0)
+    return cols, snow
+
+
+def _draw_track(fig, track, group, name, color, mark_color, icon, now_color, now_name):
+    """A body over the horizon: its path (above −1°), the local hours on it and where it is now."""
     segs, cur = [], []
     for p in track:
         if p[2] >= -1:
@@ -85,18 +96,50 @@ def _plot(hz, track, manual, title, dx_hz=None, height=380, peaks=None):
         segs.append(cur)
     tz = _local_tz()
     for i, s in enumerate(segs):
-        fig.add_trace(go.Scatter(x=[p[1] for p in s], y=[p[2] for p in s], mode="lines", name=i18n.tr("Luna, prossime 24 ore"),
-                                 line=dict(color="#9e9e9e", width=2), legendgroup="m", showlegend=i == 0,
+        fig.add_trace(go.Scatter(x=[p[1] for p in s], y=[p[2] for p in s], mode="lines", name=name,
+                                 line=dict(color=color, width=2), legendgroup=group, showlegend=i == 0,
                                  text=[f"{p[0].astimezone(tz):%H:%M}" for p in s],
-                                 hovertemplate="%{text} · AZ %{x:.0f}° · EL %{y:.1f}°<extra></extra>"))
+                                 hovertemplate=f"{icon} " + "%{text} · AZ %{x:.0f}° · EL %{y:.1f}°<extra></extra>"))
         hours = [p for p in s if p[0].minute == 0]
         fig.add_trace(go.Scatter(x=[p[1] for p in hours], y=[p[2] for p in hours], mode="markers+text",
-                                 marker=dict(size=5, color="#757575"), text=[f"{p[0].astimezone(tz):%H}" for p in hours],
-                                 textposition="top center", textfont=dict(size=10), showlegend=False, hoverinfo="skip"))
+                                 marker=dict(size=5, color=mark_color), text=[f"{p[0].astimezone(tz):%H}" for p in hours],
+                                 textposition="top center", textfont=dict(size=10, color=mark_color), showlegend=False,
+                                 hoverinfo="skip"))
     if track and track[0][2] > -1:
-        fig.add_trace(go.Scatter(x=[track[0][1]], y=[track[0][2]], mode="markers+text", text=["🌙"],
-                                 textposition="top center", marker=dict(size=14, color="#f5f0d0", line=dict(color="#555", width=1)),
-                                 name=i18n.tr("Luna adesso")))
+        fig.add_trace(go.Scatter(x=[track[0][1]], y=[track[0][2]], mode="markers+text", text=[icon],
+                                 textposition="top center", marker=dict(size=14, color=now_color, line=dict(color="#555", width=1)),
+                                 name=now_name))
+
+
+def _plot(hz, track, manual, title, dx_hz=None, height=380, peaks=None, sun_track=None):
+    fig = go.Figure()
+    az, el = hz["az"] + [360.0], hz["el"] + [hz["el"][0]]
+    cols, snow = _terrain_colors(hz)
+    a0 = hz["az"]
+    fig.add_trace(go.Bar(x=a0, y=hz["el"], width=1.02, marker=dict(color=cols, line=dict(width=0)), showlegend=False,
+                         hoverinfo="skip", offset=0))
+    for k, a in ((0.66, 0.10), (0.33, 0.12)):                  # darker towards the valley floor: some depth
+        fig.add_trace(go.Bar(x=a0, y=[max(e, 0) * k for e in hz["el"]], width=1.02, offset=0, showlegend=False,
+                             marker=dict(color=f"rgba(30,40,20,{a})", line=dict(width=0)), hoverinfo="skip"))
+    if any(snow):
+        fig.add_trace(go.Bar(x=a0, y=snow, base=[e - s for e, s in zip(hz["el"], snow)], width=1.02, offset=0,
+                             marker=dict(color="rgba(250,250,252,0.95)", line=dict(width=0)), showlegend=False,
+                             hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=az, y=el, mode="lines", line=dict(color="#4a3b2f", width=1.2),
+                             name=i18n.tr("Terreno"),
+                             customdata=[[d, h] for d, h in zip(hz["dist_km"] + [hz["dist_km"][0]],
+                                                                 hz["obs_h_m"] + [hz["obs_h_m"][0]])],
+                             hovertemplate="AZ %{x:.0f}° · EL %{y:.1f}° · %{customdata[0]:.1f} km · "
+                                           "%{customdata[1]:.0f} m<extra></extra>"))
+    if manual:
+        a = list(range(0, 361))
+        fig.add_trace(go.Scatter(x=a, y=[min(wizard.el_min(manual, x), 45) for x in a], mode="lines",
+                                 line=dict(color="#555", dash="dash", width=1.5),
+                                 name=i18n.tr("Orizzonte libero salvato")))
+    _draw_track(fig, track, "m", i18n.tr("Luna, prossime 24 ore"), "#9e9e9e", "#757575", "🌙", "#f5f0d0", i18n.tr("Luna adesso"))
+    if sun_track:
+        _draw_track(fig, sun_track, "s", i18n.tr("Sole, prossime 24 ore"), "#f4a300", "#e08e00", "☀️", "#ffc107",
+                    i18n.tr("Sole adesso"))
     if peaks:
         fig.add_trace(go.Scatter(x=[p["az"] for p in peaks], y=[p["el"] for p in peaks], mode="markers",
                                  marker=dict(symbol="triangle-up", size=7, color="#4e342e"), name=i18n.tr("Cime (OpenStreetMap)"),
@@ -106,8 +149,8 @@ def _plot(hz, track, manual, title, dx_hz=None, height=380, peaks=None):
         for p in peaks:
             fig.add_annotation(x=p["az"], y=p["el"], text=html.escape(p["name"]), showarrow=False, textangle=-60,
                                xanchor="left", yanchor="bottom", xshift=-2, yshift=4, font=dict(size=9, color="#4e342e"))
-    ymax = max(20.0, max(hz["el"]) + (12 if peaks else 6), max((p[2] for p in track), default=0) + 2 if track else 0)
-    fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10),
+    ymax = max(20.0, max(hz["el"]) + (12 if peaks else 6), max((p[2] for p in track + (sun_track or [])), default=0) + 2 if track else 0)
+    fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10), bargap=0, barmode="overlay",
                       xaxis=dict(range=[0, 360], tickvals=list(range(0, 361, 15)),
                                  ticktext=[f"{a}°" for a in range(0, 361, 15)], title="Azimut (°)",
                                  showgrid=True, gridcolor="rgba(0,0,0,0.12)", tickfont=dict(size=10)),
@@ -189,8 +232,17 @@ def tab(D):
                        "Entra dietro le montagne": _hm(p["clear_to"]), "Tramonta": _hm(p["set"]),
                        "Minuti persi": int(p["minutes_blocked"])} for p in bl["passes"]], hide_index=True, width="stretch")
     peaks = _peaks(hz)
-    st.plotly_chart(_plot(hz, track, manual, i18n.tr("Il tuo orizzonte e la Luna (ore locali)"), peaks=peaks),
+    sun = _track(lat, lon, h, body="sun")
+    st.plotly_chart(_plot(hz, track, manual, i18n.tr("Il tuo orizzonte, la Luna e il Sole (ore locali)"), peaks=peaks,
+                          sun_track=sun),
                     width="stretch", key="hz_me")
+    sp = next((p for p in terrain.moon_blocked(sun, hz)["passes"] if p["clear_from"]), None)
+    if sp:
+        head = i18n.tr("Sole: già sopra le montagne") if sp["clear_from"] == sun[0][0] else \
+            i18n.tr("Sole: esce dalle montagne") + f" {_hm(sp['clear_from'])}"
+        st.caption("☀️ " + head + ", " +
+                   i18n.tr("entra dietro le montagne") + f" {_hm(sp['clear_to'])} · " +
+                   i18n.tr("minuti persi") + f" {sp['minutes_blocked']:.0f}")
     if peaks is None:
         st.caption("Nomi delle montagne non disponibili: servono internet la prima volta (OpenStreetMap).")
 
